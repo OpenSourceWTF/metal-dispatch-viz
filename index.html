@@ -1,0 +1,1651 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>metal-dispatch-viz</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --surface-raised: #ffffff;
+
+    /* categorical slots 1-5, fixed order, light steps */
+    --series-1: #2a78d6; /* compute */
+    --series-2: #eb6834; /* blit */
+    --series-3: #1baf7a; /* fill */
+    --series-4: #eda100; /* copy */
+    --series-5: #e87ba4; /* other */
+
+    --status-warning: #fab219;
+    --status-good:    #0ca30c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --surface-raised: #232322;
+
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --series-4: #c98500;
+      --series-5: #d55181;
+
+      --status-warning: #fab219;
+      --status-good:    #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --surface-raised: #232322;
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--page-plane);
+    color: var(--text-primary);
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+  body {
+    font: 13px/1.5 ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    padding: 0 0 48px;
+  }
+  a { color: var(--series-1); }
+
+  header.top {
+    padding: 20px clamp(12px, 3vw, 32px) 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-1);
+  }
+  header.top h1 {
+    font-size: 17px;
+    margin: 0 0 2px;
+    letter-spacing: 0.01em;
+  }
+  header.top h1 .dim { color: var(--text-muted); font-weight: 400; }
+  header.top p.tagline {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  main {
+    padding: 16px clamp(12px, 3vw, 32px) 0;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  section { margin-bottom: 22px; }
+  section > h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin: 0 0 8px;
+    font-weight: 600;
+  }
+
+  .panel {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  /* ---- toolbar / input ---- */
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  button, .btn {
+    font: inherit;
+    font-size: 12px;
+    background: var(--surface-raised);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 11px;
+    cursor: pointer;
+  }
+  button:hover, .btn:hover { border-color: var(--text-muted); }
+  button:active { transform: translateY(1px); }
+  button.primary {
+    background: var(--series-1);
+    color: #fff;
+    border-color: transparent;
+  }
+  #themeToggle { margin-left: auto; }
+
+  #dropzone {
+    border: 1.5px dashed var(--baseline);
+    border-radius: 10px;
+    padding: 28px 16px;
+    text-align: center;
+    color: var(--text-secondary);
+    background: var(--surface-1);
+    transition: border-color .12s, background .12s;
+  }
+  #dropzone.drag { border-color: var(--series-1); background: var(--surface-raised); }
+  #dropzone .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  #fileStatus {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  #fileStatus.show { display: flex; }
+  #fileStatus strong { color: var(--text-primary); }
+  #fileStatus .warn { color: var(--status-warning); }
+
+  /* ---- summary stat cards ---- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--surface-1);
+    padding: 12px 14px;
+  }
+  .stat .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-muted);
+  }
+  .stat .value {
+    font-size: 20px;
+    font-variant-numeric: tabular-nums;
+    margin-top: 3px;
+  }
+  .stat .sub { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+  .stat.headline .value { color: var(--series-1); }
+
+  /* ---- gantt ---- */
+  .gantt-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  #ganttWrap {
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    touch-action: none;
+  }
+  #ganttCanvas { display: block; width: 100%; cursor: grab; }
+  #ganttCanvas.panning { cursor: grabbing; }
+
+  #tooltip {
+    position: fixed;
+    z-index: 50;
+    pointer-events: none;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 11.5px;
+    line-height: 1.45;
+    max-width: 340px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    display: none;
+    white-space: pre-wrap;
+  }
+  #tooltip.show { display: block; }
+  #tooltip .t-title { font-weight: 700; margin-bottom: 3px; }
+  #tooltip .t-row { color: var(--text-secondary); }
+  #tooltip .t-row b { color: var(--text-primary); font-weight: 600; }
+
+  /* ---- legend ---- */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 10px 12px;
+    font-size: 11.5px;
+  }
+  .legend .chip { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+  .legend .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .legend .chip b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .legend .chip.zero { opacity: 0.45; }
+
+  /* ---- census grid ---- */
+  .census-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .census-card {
+    padding: 12px 14px;
+  }
+  .census-card h3 {
+    font-size: 11px;
+    margin: 0 0 8px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    font-weight: 600;
+  }
+  .bar-row {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    gap: 8px;
+    align-items: center;
+    font-size: 11.5px;
+    margin-bottom: 5px;
+  }
+  .bar-row .name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-secondary);
+  }
+  .bar-row .name .sw { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:1px; }
+  .bar-row .count { font-variant-numeric: tabular-nums; color: var(--text-primary); white-space: nowrap; }
+  .bar-track {
+    position: relative;
+    height: 5px;
+    background: var(--gridline);
+    border-radius: 3px;
+    margin-top: 2px;
+    grid-column: 1 / -1;
+  }
+  .bar-fill { position: absolute; left:0; top:0; bottom:0; border-radius: 3px; background: var(--series-1); }
+  .empty-note { color: var(--text-muted); font-size: 11.5px; padding: 4px 0; }
+
+  /* ---- tables ---- */
+  .table-scroll { overflow-x: auto; max-width: 100%; }
+  table { border-collapse: collapse; width: 100%; font-size: 11.5px; min-width: 480px; }
+  th, td {
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }
+  th {
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: .05em;
+  }
+  td.cause { color: var(--text-primary); }
+  td.muted { color: var(--text-muted); }
+  .flag { color: var(--status-warning); margin-right: 4px; }
+
+  footer.foot {
+    max-width: 1400px;
+    margin: 24px auto 0;
+    padding: 12px clamp(12px, 3vw, 32px) 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    border-top: 1px solid var(--border);
+  }
+  footer.foot code { color: var(--text-secondary); }
+
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>metal-dispatch-viz <span class="dim">&mdash; overlap gantt</span></h1>
+  <p class="tagline">Host-encode vs GPU-execute overlap for Metal dispatch streams. Everything renders locally, no upload, no network.</p>
+  <div class="toolbar">
+    <button id="loadSampleBtn" class="primary" type="button">Load sample</button>
+    <button id="chooseFileBtn" type="button">Choose .jsonl file&hellip;</button>
+    <button id="resetZoomBtn" type="button" title="Fit the full trace back into view">Reset zoom</button>
+    <button id="clearBtn" type="button">Clear</button>
+    <input id="fileInput" class="visually-hidden" type="file" accept=".jsonl,.ndjson,.log,.txt,application/json,text/plain">
+    <button id="themeToggle" type="button" title="Toggle light / dark theme">Toggle theme</button>
+  </div>
+</header>
+
+<main>
+
+  <section id="loadSection">
+    <div id="dropzone" class="panel">
+      <div><strong>Drop a .jsonl dispatch trace here</strong>, or use "Choose file" / "Load sample" above.</div>
+      <div class="hint">Two record kinds accepted per the schema (census rows + command-buffer timeline rows), plus optional wait rows. Unknown fields and record kinds are ignored, not rejected. See schema.md.</div>
+    </div>
+    <div id="fileStatus" class="panel"></div>
+  </section>
+
+  <section id="summarySection" style="display:none">
+    <h2>Overlap summary</h2>
+    <div class="stats" id="statsGrid"></div>
+  </section>
+
+  <section id="gantt-section" style="display:none">
+    <h2>Overlap gantt</h2>
+    <div class="gantt-toolbar">
+      <span>scroll / pinch to zoom &middot; drag to pan &middot; hover a bar or mark for detail</span>
+    </div>
+    <div id="ganttWrap" class="panel">
+      <canvas id="ganttCanvas"></canvas>
+    </div>
+  </section>
+
+  <section id="legendSection" style="display:none">
+    <h2>Kind legend</h2>
+    <div class="legend panel" id="legendRow"></div>
+  </section>
+
+  <section id="censusSection" style="display:none">
+    <h2>Census</h2>
+    <div class="census-grid">
+      <div class="panel census-card">
+        <h3>Top kernels by count</h3>
+        <div id="topKernels"></div>
+      </div>
+      <div class="panel census-card">
+        <h3>Counts by kind</h3>
+        <div id="kindCounts"></div>
+      </div>
+      <div class="panel census-card">
+        <h3>setBytes totals (top kernels)</h3>
+        <div id="setBytesTotals"></div>
+      </div>
+      <div class="panel census-card">
+        <h3>buffer_binds histogram</h3>
+        <div id="bindsHistogram"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="waitsSection" style="display:none">
+    <h2>Wait annotations</h2>
+    <div class="panel table-scroll">
+      <table>
+        <thead><tr><th>Cause</th><th>Duration</th><th>Anchor</th><th>cb_index</th></tr></thead>
+        <tbody id="waitsTable"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  metal-dispatch-viz &mdash; single static page, no build, no network. Field reference: <code>schema.md</code>.
+</footer>
+
+<div id="tooltip"></div>
+
+<script>
+'use strict';
+
+/* =========================================================================
+   Part 1 -- pure data logic (no DOM access). Kept free of `document`/`window`
+   so it can be lifted out and exercised under a plain JS runtime (node -e).
+   ========================================================================= */
+
+var KIND_ORDER = ['compute', 'blit', 'fill', 'copy', 'other'];
+var KIND_LABEL = { compute: 'compute', blit: 'blit', fill: 'fill', copy: 'copy', other: 'other' };
+
+function normalizeKind(k) {
+  var s = (typeof k === 'string' ? k : '').toLowerCase();
+  return KIND_ORDER.indexOf(s) !== -1 ? s : 'other';
+}
+
+function isFiniteNum(v) { return typeof v === 'number' && isFinite(v); }
+
+function hasAnyField(obj, keys) {
+  for (var i = 0; i < keys.length; i++) if (obj[keys[i]] !== undefined) return true;
+  return false;
+}
+
+var TIMELINE_FIELDS = ['encode_start_ns', 'encode_end_ns', 'gpu_start_ns', 'gpu_end_ns'];
+
+// Classify one parsed JSON record into one of: 'timeline', 'command', 'wait', 'unknown'.
+// Order matters: an explicit kind:"wait" always wins; otherwise presence of any
+// encode_*/gpu_* timestamp field marks a command-buffer timeline row; otherwise
+// seq+cb_index together mark a per-command census row.
+function classifyRecord(rec) {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return 'unknown';
+  if (rec.kind === 'wait') return 'wait';
+  if (hasAnyField(rec, TIMELINE_FIELDS)) return 'timeline';
+  if (rec.seq !== undefined && rec.cb_index !== undefined) return 'command';
+  return 'unknown';
+}
+
+// JSONL parse: one JSON value per non-empty line. Bad lines are collected as
+// errors (with 1-based line numbers) rather than aborting the whole file.
+function parseJSONL(text) {
+  var lines = text.split(/\r\n|\r|\n/);
+  var records = [];
+  var errors = [];
+  for (var i = 0; i < lines.length; i++) {
+    var raw = lines[i];
+    var trimmed = raw.trim();
+    if (trimmed === '') continue;
+    try {
+      records.push(JSON.parse(trimmed));
+    } catch (e) {
+      errors.push({ line: i + 1, text: trimmed.slice(0, 200), message: String((e && e.message) || e) });
+    }
+  }
+  return { records: records, errors: errors };
+}
+
+// Bucket raw records into the shapes the rest of the app consumes. cb_index
+// may appear on more than one timeline row (e.g. a partial row emitted early,
+// completed later); later fields win via Object.assign merge. Timeline rows
+// missing cb_index get a synthetic key so they still render, isolated.
+function buildDataset(records) {
+  var cbMap = new Map();
+  var commands = [];
+  var waits = [];
+  var unknown = [];
+  var syntheticSeq = 0;
+
+  for (var i = 0; i < records.length; i++) {
+    var rec = records[i];
+    var kind = classifyRecord(rec);
+    if (kind === 'timeline') {
+      var key = isFiniteNum(rec.cb_index) ? rec.cb_index : '__no_cb_index_' + (syntheticSeq++);
+      var prev = cbMap.get(key) || {};
+      cbMap.set(key, Object.assign({}, prev, rec, { cb_index: isFiniteNum(rec.cb_index) ? rec.cb_index : prev.cb_index }));
+    } else if (kind === 'command') {
+      commands.push(rec);
+    } else if (kind === 'wait') {
+      waits.push(rec);
+    } else {
+      unknown.push(rec);
+    }
+  }
+
+  var cbs = Array.from(cbMap.values()).sort(function (a, b) {
+    var av = isFiniteNum(a.cb_index) ? a.cb_index : Infinity;
+    var bv = isFiniteNum(b.cb_index) ? b.cb_index : Infinity;
+    return av - bv;
+  });
+
+  return { cbs: cbs, commands: commands, waits: waits, unknown: unknown };
+}
+
+/* ---- interval helpers (all ns-based, {start,end}) ---- */
+
+function mergeIntervals(intervals) {
+  var clean = [];
+  for (var i = 0; i < intervals.length; i++) {
+    var iv = intervals[i];
+    if (isFiniteNum(iv.start) && isFiniteNum(iv.end) && iv.end >= iv.start) clean.push({ start: iv.start, end: iv.end });
+  }
+  clean.sort(function (a, b) { return a.start - b.start; });
+  var out = [];
+  for (var j = 0; j < clean.length; j++) {
+    var cur = clean[j];
+    var last = out[out.length - 1];
+    if (last && cur.start <= last.end) {
+      if (cur.end > last.end) last.end = cur.end;
+    } else {
+      out.push({ start: cur.start, end: cur.end });
+    }
+  }
+  return out;
+}
+
+function sumDuration(intervals) {
+  var s = 0;
+  for (var i = 0; i < intervals.length; i++) s += (intervals[i].end - intervals[i].start);
+  return s;
+}
+
+// Intersection of two already-merged, sorted, non-overlapping interval lists.
+function intersectMerged(a, b) {
+  var out = [];
+  var i = 0, j = 0;
+  while (i < a.length && j < b.length) {
+    var s = Math.max(a[i].start, b[j].start);
+    var e = Math.min(a[i].end, b[j].end);
+    if (s < e) out.push({ start: s, end: e });
+    if (a[i].end < b[j].end) i++; else j++;
+  }
+  return out;
+}
+
+// Headline overlap stats. "Overlap" = time during which the union of host
+// encode spans and the union of GPU execute spans are simultaneously busy --
+// i.e. real host/GPU concurrency, not merely two bars sharing an x-range.
+function computeSummary(cbs) {
+  var hostIvs = [], gpuIvs = [];
+  for (var i = 0; i < cbs.length; i++) {
+    var cb = cbs[i];
+    if (isFiniteNum(cb.encode_start_ns) && isFiniteNum(cb.encode_end_ns) && cb.encode_end_ns >= cb.encode_start_ns) {
+      hostIvs.push({ start: cb.encode_start_ns, end: cb.encode_end_ns });
+    }
+    if (isFiniteNum(cb.gpu_start_ns) && isFiniteNum(cb.gpu_end_ns) && cb.gpu_end_ns >= cb.gpu_start_ns) {
+      gpuIvs.push({ start: cb.gpu_start_ns, end: cb.gpu_end_ns });
+    }
+  }
+  var hostMerged = mergeIntervals(hostIvs);
+  var gpuMerged = mergeIntervals(gpuIvs);
+  var totalEncodeNs = sumDuration(hostIvs);
+  var totalGpuNs = sumDuration(gpuIvs);
+  var overlapIvs = intersectMerged(hostMerged, gpuMerged);
+  var overlapNs = sumDuration(overlapIvs);
+
+  var bounds = [];
+  for (var h = 0; h < hostIvs.length; h++) { bounds.push(hostIvs[h].start, hostIvs[h].end); }
+  for (var g = 0; g < gpuIvs.length; g++) { bounds.push(gpuIvs[g].start, gpuIvs[g].end); }
+  var wallStart = bounds.length ? Math.min.apply(null, bounds) : 0;
+  var wallEnd = bounds.length ? Math.max.apply(null, bounds) : 0;
+  var wallSpanNs = Math.max(0, wallEnd - wallStart);
+
+  var busyMerged = mergeIntervals(hostIvs.concat(gpuIvs));
+  var busyNs = sumDuration(busyMerged);
+  var idleNs = Math.max(0, wallSpanNs - busyNs);
+
+  return {
+    totalEncodeNs: totalEncodeNs,
+    totalGpuNs: totalGpuNs,
+    wallSpanNs: wallSpanNs,
+    wallStart: wallStart,
+    wallEnd: wallEnd,
+    overlapNs: overlapNs,
+    overlapPct: wallSpanNs > 0 ? (overlapNs / wallSpanNs * 100) : 0,
+    idleNs: idleNs,
+    idlePct: wallSpanNs > 0 ? (idleNs / wallSpanNs * 100) : 0,
+    hostMerged: hostMerged,
+    gpuMerged: gpuMerged
+  };
+}
+
+// Greedy interval-graph row packing so overlapping bars on one lane stack
+// into extra sub-rows instead of drawing on top of each other.
+function packLanes(items, getStart, getEnd) {
+  var order = items.map(function (_, idx) { return idx; });
+  order.sort(function (a, b) { return getStart(items[a]) - getStart(items[b]); });
+  var rowEnds = [];
+  var rowOf = new Array(items.length).fill(0);
+  for (var k = 0; k < order.length; k++) {
+    var idx = order[k];
+    var s = getStart(items[idx]), e = getEnd(items[idx]);
+    var placed = false;
+    for (var r = 0; r < rowEnds.length; r++) {
+      if (rowEnds[r] <= s) { rowOf[idx] = r; rowEnds[r] = e; placed = true; break; }
+    }
+    if (!placed) { rowOf[idx] = rowEnds.length; rowEnds.push(e); }
+  }
+  return { rowOf: rowOf, rowCount: Math.max(1, rowEnds.length) };
+}
+
+var WAIT_TS_FIELDS = ['ts_ns', 'at_ns', 'start_ns', 'time_ns', 'timestamp_ns'];
+var WAIT_DURATION_FIELDS = ['ns', 'wait_ns', 'duration_ns', 'dur_ns'];
+
+function firstFiniteField(obj, keys) {
+  for (var i = 0; i < keys.length; i++) if (isFiniteNum(obj[keys[i]])) return obj[keys[i]];
+  return undefined;
+}
+
+// Decide where a wait annotation belongs on the timeline. Priority: an
+// explicit timestamp field wins; otherwise anchor to the owning command
+// buffer's encode window (encode_end preferred -- a wait typically blocks
+// *after* encoding, before submit/reuse); otherwise it cannot be placed and
+// is reported only in the text table.
+function anchorWait(wait, cbByIndex) {
+  var ts = firstFiniteField(wait, WAIT_TS_FIELDS);
+  if (ts !== undefined) return { ns: ts, source: 'timestamp' };
+  if (isFiniteNum(wait.cb_index) && cbByIndex.has(wait.cb_index)) {
+    var cb = cbByIndex.get(wait.cb_index);
+    if (isFiniteNum(cb.encode_end_ns)) return { ns: cb.encode_end_ns, source: 'cb_index (encode_end_ns)' };
+    if (isFiniteNum(cb.encode_start_ns)) return { ns: cb.encode_start_ns, source: 'cb_index (encode_start_ns)' };
+    if (isFiniteNum(cb.gpu_start_ns)) return { ns: cb.gpu_start_ns, source: 'cb_index (gpu_start_ns)' };
+  }
+  return null;
+}
+
+function waitDurationNs(wait) {
+  return firstFiniteField(wait, WAIT_DURATION_FIELDS);
+}
+
+// Rank-based x-position for a command within its command buffer's encode
+// span: command order (by seq) is spread evenly across [encode_start_ns,
+// encode_end_ns], since raw seq values are a global counter and may not be
+// contiguous per cb. Commands whose cb has no encode span are unplaceable.
+function placeCommandsOnStrip(commands, cbByIndex) {
+  var byCb = new Map();
+  for (var i = 0; i < commands.length; i++) {
+    var c = commands[i];
+    var key = c.cb_index;
+    if (!byCb.has(key)) byCb.set(key, []);
+    byCb.get(key).push(c);
+  }
+  var placed = [];
+  var unplaced = [];
+  byCb.forEach(function (list, cbIndex) {
+    list.sort(function (a, b) { return (a.seq - b.seq); });
+    var cb = cbByIndex.get(cbIndex);
+    var s = cb && isFiniteNum(cb.encode_start_ns) ? cb.encode_start_ns : undefined;
+    var e = cb && isFiniteNum(cb.encode_end_ns) ? cb.encode_end_ns : undefined;
+    if (s === undefined || e === undefined) {
+      for (var u = 0; u < list.length; u++) unplaced.push(list[u]);
+      return;
+    }
+    var n = list.length;
+    for (var k = 0; k < n; k++) {
+      var frac = n === 1 ? 0.5 : k / (n - 1);
+      placed.push({ rec: list[k], ns: s + frac * (e - s) });
+    }
+  });
+  return { placed: placed, unplaced: unplaced };
+}
+
+/* ---- formatting helpers ---- */
+
+function pickUnit(spanNs) {
+  if (spanNs < 1e3) return { div: 1, label: 'ns' };
+  if (spanNs < 1e6) return { div: 1e3, label: 'µs' };
+  if (spanNs < 1e9) return { div: 1e6, label: 'ms' };
+  return { div: 1e9, label: 's' };
+}
+
+function formatNs(ns) {
+  if (!isFiniteNum(ns)) return '–';
+  var neg = ns < 0;
+  var v = Math.abs(ns);
+  var u = pickUnit(v);
+  var out = (v / u.div);
+  var digits = u.div === 1 ? 0 : (out < 10 ? 3 : (out < 100 ? 2 : 1));
+  return (neg ? '-' : '') + out.toFixed(digits) + ' ' + u.label;
+}
+
+function formatBytes(n) {
+  if (!isFiniteNum(n)) return '–';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+function formatPct(p) {
+  if (!isFiniteNum(p)) return '–';
+  return p.toFixed(1) + '%';
+}
+
+// "Nice" tick step (1/2/5 * 10^n) for an axis covering `spanNs` over
+// `pixelWidth` px, targeting ~ `targetPx` px between ticks.
+function niceStep(spanNs, pixelWidth, targetPx) {
+  var raw = spanNs * targetPx / Math.max(1, pixelWidth);
+  if (raw <= 0 || !isFinite(raw)) return 1;
+  var pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  var frac = raw / pow;
+  var step = frac < 1.5 ? 1 : frac < 3.5 ? 2 : frac < 7.5 ? 5 : 10;
+  return step * pow;
+}
+
+function cbHue(cbIndex) {
+  var n = isFiniteNum(cbIndex) ? cbIndex : 0;
+  return ((n * 137.508) % 360 + 360) % 360;
+}
+
+// Expose the pure layer for both the in-page app (below) and for headless
+// testing (node -e can pull this off globalThis without touching the DOM).
+var MDV = {
+  KIND_ORDER: KIND_ORDER,
+  normalizeKind: normalizeKind,
+  classifyRecord: classifyRecord,
+  parseJSONL: parseJSONL,
+  buildDataset: buildDataset,
+  mergeIntervals: mergeIntervals,
+  sumDuration: sumDuration,
+  intersectMerged: intersectMerged,
+  computeSummary: computeSummary,
+  packLanes: packLanes,
+  anchorWait: anchorWait,
+  waitDurationNs: waitDurationNs,
+  placeCommandsOnStrip: placeCommandsOnStrip,
+  pickUnit: pickUnit,
+  formatNs: formatNs,
+  formatBytes: formatBytes,
+  formatPct: formatPct,
+  niceStep: niceStep,
+  cbHue: cbHue,
+  isFiniteNum: isFiniteNum
+};
+if (typeof globalThis !== 'undefined') globalThis.MDV = MDV;
+
+/* =========================================================================
+   Part 2 -- embedded sample trace, used by the "Load sample" button.
+   ========================================================================= */
+
+var SAMPLE_JSONL = [
+  '{"cb_index":0,"encode_start_ns":0,"encode_end_ns":550,"gpu_start_ns":600,"gpu_end_ns":2100,"op_count":6,"first_op_seq":0,"last_op_seq":5}',
+  '{"cb_index":1,"encode_start_ns":560,"encode_end_ns":1150,"gpu_start_ns":2150,"gpu_end_ns":3600,"op_count":5,"first_op_seq":6,"last_op_seq":10}',
+  '{"cb_index":2,"encode_start_ns":1160,"encode_end_ns":1700,"gpu_start_ns":3650,"gpu_end_ns":5000,"op_count":7,"first_op_seq":11,"last_op_seq":17}',
+  '{"cb_index":3,"encode_start_ns":1710,"encode_end_ns":2300,"gpu_start_ns":5050,"gpu_end_ns":6400,"op_count":4,"first_op_seq":18,"last_op_seq":21}',
+  '{"cb_index":4,"encode_start_ns":2310,"encode_end_ns":2900,"gpu_start_ns":6450,"gpu_end_ns":7900,"op_count":6,"first_op_seq":22,"last_op_seq":27}',
+  '{"cb_index":5,"encode_start_ns":2910,"encode_end_ns":3500,"gpu_start_ns":7950,"gpu_end_ns":9300,"op_count":5,"first_op_seq":28,"last_op_seq":32}',
+  '{"cb_index":6,"encode_start_ns":3510,"encode_end_ns":4200,"gpu_start_ns":9350,"gpu_end_ns":10800,"op_count":6,"first_op_seq":33,"last_op_seq":38}',
+  '{"cb_index":7,"encode_start_ns":4210,"encode_end_ns":4700,"gpu_start_ns":10850,"gpu_end_ns":12100,"op_count":4,"first_op_seq":39,"last_op_seq":42}',
+  '{"seq":0,"cb_index":0,"kind":"compute","kernel_name":"qmm_n64","set_bytes_calls":2,"set_bytes_total":96,"buffer_binds":5,"grid":[32,128,32],"threadgroup":[32,4,1]}',
+  '{"seq":1,"cb_index":0,"kind":"blit","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":2,"cb_index":0,"kind":"compute","kernel_name":"rmsnorm","set_bytes_calls":1,"set_bytes_total":16,"buffer_binds":3,"grid":[64,1,1],"threadgroup":[64,1,1]}',
+  '{"seq":3,"cb_index":0,"kind":"fill","kernel_name":"fill_zero","set_bytes_calls":1,"set_bytes_total":8,"buffer_binds":1}',
+  '{"seq":4,"cb_index":0,"kind":"compute","kernel_name":"attn_flash","set_bytes_calls":3,"set_bytes_total":128,"buffer_binds":6,"grid":[16,64,1],"threadgroup":[16,4,1]}',
+  '{"seq":5,"cb_index":0,"kind":"copy","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":6,"cb_index":1,"kind":"compute","kernel_name":"qmm_n64","set_bytes_calls":2,"set_bytes_total":96,"buffer_binds":5,"grid":[32,128,32],"threadgroup":[32,4,1]}',
+  '{"seq":7,"cb_index":1,"kind":"compute","kernel_name":"rmsnorm","set_bytes_calls":1,"set_bytes_total":16,"buffer_binds":3,"grid":[64,1,1],"threadgroup":[64,1,1]}',
+  '{"seq":8,"cb_index":1,"kind":"blit","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":9,"cb_index":1,"kind":"compute","kernel_name":"attn_flash","set_bytes_calls":3,"set_bytes_total":128,"buffer_binds":6,"grid":[16,64,1],"threadgroup":[16,4,1]}',
+  '{"seq":10,"cb_index":1,"kind":"other","kernel_name":"misc_barrier","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":0}',
+  '{"seq":11,"cb_index":2,"kind":"compute","kernel_name":"qmm_n64","set_bytes_calls":2,"set_bytes_total":96,"buffer_binds":5,"grid":[32,128,32],"threadgroup":[32,4,1]}',
+  '{"seq":12,"cb_index":2,"kind":"compute","kernel_name":"moe_gather","set_bytes_calls":4,"set_bytes_total":256,"buffer_binds":8,"grid":[8,8,8],"threadgroup":[8,8,1]}',
+  '{"seq":13,"cb_index":2,"kind":"blit","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":14,"cb_index":2,"kind":"compute","kernel_name":"rmsnorm","set_bytes_calls":1,"set_bytes_total":16,"buffer_binds":3,"grid":[64,1,1],"threadgroup":[64,1,1]}',
+  '{"seq":15,"cb_index":2,"kind":"compute","kernel_name":"attn_flash","set_bytes_calls":3,"set_bytes_total":128,"buffer_binds":6,"grid":[16,64,1],"threadgroup":[16,4,1]}',
+  '{"seq":16,"cb_index":2,"kind":"fill","kernel_name":"fill_zero","set_bytes_calls":1,"set_bytes_total":8,"buffer_binds":1}',
+  '{"seq":17,"cb_index":2,"kind":"copy","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":18,"cb_index":3,"kind":"compute","kernel_name":"qmm_n64","set_bytes_calls":2,"set_bytes_total":96,"buffer_binds":5,"grid":[32,128,32],"threadgroup":[32,4,1]}',
+  '{"seq":19,"cb_index":3,"kind":"compute","kernel_name":"rmsnorm","set_bytes_calls":1,"set_bytes_total":16,"buffer_binds":3,"grid":[64,1,1],"threadgroup":[64,1,1]}',
+  '{"seq":20,"cb_index":3,"kind":"blit","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":21,"cb_index":3,"kind":"compute","kernel_name":"attn_flash","set_bytes_calls":3,"set_bytes_total":128,"buffer_binds":6,"grid":[16,64,1],"threadgroup":[16,4,1]}',
+  '{"seq":22,"cb_index":4,"kind":"compute","kernel_name":"qmm_n64","set_bytes_calls":2,"set_bytes_total":96,"buffer_binds":5,"grid":[32,128,32],"threadgroup":[32,4,1]}',
+  '{"seq":23,"cb_index":4,"kind":"compute","kernel_name":"moe_gather","set_bytes_calls":4,"set_bytes_total":256,"buffer_binds":8,"grid":[8,8,8],"threadgroup":[8,8,1]}',
+  '{"seq":24,"cb_index":4,"kind":"compute","kernel_name":"rmsnorm","set_bytes_calls":1,"set_bytes_total":16,"buffer_binds":3,"grid":[64,1,1],"threadgroup":[64,1,1]}',
+  '{"seq":25,"cb_index":4,"kind":"blit","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":26,"cb_index":4,"kind":"compute","kernel_name":"attn_flash","set_bytes_calls":3,"set_bytes_total":128,"buffer_binds":6,"grid":[16,64,1],"threadgroup":[16,4,1]}',
+  '{"seq":27,"cb_index":4,"kind":"copy","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":28,"cb_index":5,"kind":"compute","kernel_name":"qmm_n64","set_bytes_calls":2,"set_bytes_total":96,"buffer_binds":5,"grid":[32,128,32],"threadgroup":[32,4,1]}',
+  '{"seq":29,"cb_index":5,"kind":"compute","kernel_name":"rmsnorm","set_bytes_calls":1,"set_bytes_total":16,"buffer_binds":3,"grid":[64,1,1],"threadgroup":[64,1,1]}',
+  '{"seq":30,"cb_index":5,"kind":"blit","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":31,"cb_index":5,"kind":"compute","kernel_name":"attn_flash","set_bytes_calls":3,"set_bytes_total":128,"buffer_binds":6,"grid":[16,64,1],"threadgroup":[16,4,1]}',
+  '{"seq":32,"cb_index":5,"kind":"fill","kernel_name":"fill_zero","set_bytes_calls":1,"set_bytes_total":8,"buffer_binds":1}',
+  '{"seq":33,"cb_index":6,"kind":"compute","kernel_name":"qmm_n64","set_bytes_calls":2,"set_bytes_total":96,"buffer_binds":5,"grid":[32,128,32],"threadgroup":[32,4,1]}',
+  '{"seq":34,"cb_index":6,"kind":"compute","kernel_name":"moe_gather","set_bytes_calls":4,"set_bytes_total":256,"buffer_binds":8,"grid":[8,8,8],"threadgroup":[8,8,1]}',
+  '{"seq":35,"cb_index":6,"kind":"compute","kernel_name":"rmsnorm","set_bytes_calls":1,"set_bytes_total":16,"buffer_binds":3,"grid":[64,1,1],"threadgroup":[64,1,1]}',
+  '{"seq":36,"cb_index":6,"kind":"blit","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":37,"cb_index":6,"kind":"compute","kernel_name":"attn_flash","set_bytes_calls":3,"set_bytes_total":128,"buffer_binds":6,"grid":[16,64,1],"threadgroup":[16,4,1]}',
+  '{"seq":38,"cb_index":6,"kind":"copy","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":39,"cb_index":7,"kind":"compute","kernel_name":"qmm_n64","set_bytes_calls":2,"set_bytes_total":96,"buffer_binds":5,"grid":[32,128,32],"threadgroup":[32,4,1]}',
+  '{"seq":40,"cb_index":7,"kind":"compute","kernel_name":"rmsnorm","set_bytes_calls":1,"set_bytes_total":16,"buffer_binds":3,"grid":[64,1,1],"threadgroup":[64,1,1]}',
+  '{"seq":41,"cb_index":7,"kind":"blit","kernel_name":"copy_kv","set_bytes_calls":0,"set_bytes_total":0,"buffer_binds":2}',
+  '{"seq":42,"cb_index":7,"kind":"compute","kernel_name":"attn_flash","set_bytes_calls":3,"set_bytes_total":128,"buffer_binds":6,"grid":[16,64,1],"threadgroup":[16,4,1]}',
+  '{"kind":"wait","cause":"active_tasks_cap","cb_index":1,"ns":150}',
+  '{"kind":"wait","cause":"command_buffer_pool_exhausted","ts_ns":4650,"ns":400}',
+  '{"kind":"wait","cause":"unattributed_stall","ns":90}',
+  '{"note":"synthetic trace v1","engine":"mlx-metal-dispatch-census"}'
+].join('\n') + '\n';
+
+/* =========================================================================
+   Part 3 -- app wiring (DOM). Nothing above this point touches `document`
+   or `window`; everything below only runs once the page has loaded.
+   ========================================================================= */
+
+(function () {
+  var state = {
+    cbs: [],
+    commands: [],
+    waits: [],
+    unknownCount: 0,
+    parseErrorCount: 0,
+    summary: null,
+    cbByIndex: new Map(),
+    hostPack: { rowOf: [], rowCount: 1 },
+    gpuPack: { rowOf: [], rowCount: 1 },
+    strip: { placed: [], unplaced: [] },
+    waitPlacements: [],
+    view: { start: 0, end: 1 },
+    dataBounds: { start: 0, end: 1 },
+    displayOrigin: 0,
+    hitRects: [],
+    hoverKey: null
+  };
+
+  var els = {};
+  function q(id) { return document.getElementById(id); }
+
+  function init() {
+    els.dropzone = q('dropzone');
+    els.fileInput = q('fileInput');
+    els.fileStatus = q('fileStatus');
+    els.chooseFileBtn = q('chooseFileBtn');
+    els.loadSampleBtn = q('loadSampleBtn');
+    els.clearBtn = q('clearBtn');
+    els.resetZoomBtn = q('resetZoomBtn');
+    els.themeToggle = q('themeToggle');
+    els.summarySection = q('summarySection');
+    els.statsGrid = q('statsGrid');
+    els.ganttSection = q('gantt-section');
+    els.ganttWrap = q('ganttWrap');
+    els.canvas = q('ganttCanvas');
+    els.tooltip = q('tooltip');
+    els.legendSection = q('legendSection');
+    els.legendRow = q('legendRow');
+    els.censusSection = q('censusSection');
+    els.topKernels = q('topKernels');
+    els.kindCounts = q('kindCounts');
+    els.setBytesTotals = q('setBytesTotals');
+    els.bindsHistogram = q('bindsHistogram');
+    els.waitsSection = q('waitsSection');
+    els.waitsTable = q('waitsTable');
+
+    els.ctx = els.canvas.getContext('2d');
+
+    wireInputs();
+    wireGanttInteraction();
+    wireTheme();
+
+    if (window.ResizeObserver) {
+      new ResizeObserver(function () { render(); }).observe(els.ganttWrap);
+    } else {
+      window.addEventListener('resize', function () { render(); });
+    }
+  }
+
+  /* ---- loading ---- */
+
+  function wireInputs() {
+    els.dropzone.addEventListener('click', function () { els.fileInput.click(); });
+    els.chooseFileBtn.addEventListener('click', function () { els.fileInput.click(); });
+    els.fileInput.addEventListener('change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (f) readFile(f);
+    });
+
+    ['dragenter', 'dragover'].forEach(function (evt) {
+      els.dropzone.addEventListener(evt, function (e) {
+        e.preventDefault();
+        els.dropzone.classList.add('drag');
+      });
+    });
+    ['dragleave', 'drop'].forEach(function (evt) {
+      els.dropzone.addEventListener(evt, function (e) {
+        e.preventDefault();
+        els.dropzone.classList.remove('drag');
+      });
+    });
+    els.dropzone.addEventListener('drop', function (e) {
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) readFile(f);
+    });
+
+    // Also accept a drop anywhere on the page, not just the dropzone box.
+    window.addEventListener('dragover', function (e) { e.preventDefault(); });
+    window.addEventListener('drop', function (e) {
+      if (e.target === els.dropzone || els.dropzone.contains(e.target)) return;
+      e.preventDefault();
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) readFile(f);
+    });
+
+    els.loadSampleBtn.addEventListener('click', function () {
+      loadFromText(SAMPLE_JSONL, 'sample.jsonl (embedded)');
+    });
+
+    els.clearBtn.addEventListener('click', clearAll);
+    els.resetZoomBtn.addEventListener('click', function () { fitView(); render(); });
+  }
+
+  function readFile(file) {
+    var reader = new FileReader();
+    reader.onload = function () { loadFromText(String(reader.result), file.name); };
+    reader.onerror = function () {
+      showError('Could not read "' + file.name + '".');
+    };
+    reader.readAsText(file);
+  }
+
+  function showError(message) {
+    els.fileStatus.innerHTML = '<span class="warn">' + escapeHtml(message) + '</span>';
+    els.fileStatus.classList.add('show');
+  }
+
+  function loadFromText(text, sourceName) {
+    var parsed = MDV.parseJSONL(text);
+    var ds = MDV.buildDataset(parsed.records);
+
+    state.cbs = ds.cbs;
+    state.commands = ds.commands;
+    state.waits = ds.waits;
+    state.unknownCount = ds.unknown.length;
+    state.parseErrorCount = parsed.errors.length;
+
+    if (parsed.errors.length) {
+      var shown = parsed.errors.slice(0, 20);
+      shown.forEach(function (er) {
+        console.warn('metal-dispatch-viz: line ' + er.line + ' failed to parse: ' + er.message);
+      });
+      if (parsed.errors.length > shown.length) {
+        console.warn('metal-dispatch-viz: ' + (parsed.errors.length - shown.length) + ' more parse errors not shown.');
+      }
+    }
+
+    state.cbByIndex = new Map();
+    state.cbs.forEach(function (cb) { state.cbByIndex.set(cb.cb_index, cb); });
+
+    state.summary = MDV.computeSummary(state.cbs);
+
+    var hostItems = state.cbs.filter(function (cb) { return MDV.isFiniteNum(cb.encode_start_ns) && MDV.isFiniteNum(cb.encode_end_ns); });
+    var gpuItems = state.cbs.filter(function (cb) { return MDV.isFiniteNum(cb.gpu_start_ns) && MDV.isFiniteNum(cb.gpu_end_ns); });
+    state.hostItems = hostItems;
+    state.gpuItems = gpuItems;
+    state.hostPack = MDV.packLanes(hostItems, function (cb) { return cb.encode_start_ns; }, function (cb) { return cb.encode_end_ns; });
+    state.gpuPack = MDV.packLanes(gpuItems, function (cb) { return cb.gpu_start_ns; }, function (cb) { return cb.gpu_end_ns; });
+
+    state.strip = MDV.placeCommandsOnStrip(state.commands, state.cbByIndex);
+
+    state.waitPlacements = state.waits.map(function (w) {
+      var anchor = MDV.anchorWait(w, state.cbByIndex);
+      return { rec: w, anchor: anchor, durationNs: MDV.waitDurationNs(w) };
+    });
+
+    state.displayOrigin = state.summary.wallStart;
+
+    fitView();
+    showStatus(sourceName);
+    revealSections();
+    renderSummary();
+    renderLegend();
+    renderCensus();
+    renderWaits();
+    render();
+  }
+
+  function clearAll() {
+    state.cbs = []; state.commands = []; state.waits = [];
+    state.unknownCount = 0; state.parseErrorCount = 0;
+    state.summary = null; state.cbByIndex = new Map();
+    els.fileInput.value = '';
+    hideSections();
+    hideStatus();
+  }
+
+  function showStatus(sourceName) {
+    var n = state.cbs.length, c = state.commands.length, w = state.waits.length;
+    var extras = [];
+    if (state.unknownCount) extras.push(state.unknownCount + ' unrecognized record(s) ignored');
+    if (state.parseErrorCount) extras.push(state.parseErrorCount + ' line(s) failed to parse (see console)');
+    if (state.strip.unplaced.length) extras.push(state.strip.unplaced.length + ' command(s) with no matching cb timeline row');
+    var waitUnanchored = state.waitPlacements.filter(function (wp) { return !wp.anchor; }).length;
+    if (waitUnanchored) extras.push(waitUnanchored + ' wait(s) without a placeable timestamp');
+
+    els.fileStatus.innerHTML =
+      '<span><strong>' + escapeHtml(sourceName) + '</strong></span>' +
+      '<span>' + n + ' command buffer(s), ' + c + ' command(s), ' + w + ' wait(s)</span>' +
+      (extras.length ? '<span class="warn">' + escapeHtml(extras.join(' · ')) + '</span>' : '');
+    els.fileStatus.classList.add('show');
+  }
+  function hideStatus() { els.fileStatus.classList.remove('show'); els.fileStatus.innerHTML = ''; }
+
+  function revealSections() {
+    els.summarySection.style.display = '';
+    els.ganttSection.style.display = '';
+    els.legendSection.style.display = '';
+    els.censusSection.style.display = '';
+    els.waitsSection.style.display = state.waits.length ? '' : 'none';
+  }
+  function hideSections() {
+    [els.summarySection, els.ganttSection, els.legendSection, els.censusSection, els.waitsSection].forEach(function (s) { s.style.display = 'none'; });
+  }
+
+  /* ---- summary cards ---- */
+
+  function renderSummary() {
+    var s = state.summary;
+    var cards = [
+      { label: 'Total encode', value: MDV.formatNs(s.totalEncodeNs), sub: state.hostItems.length + ' cb encode span(s)' },
+      { label: 'Total GPU', value: MDV.formatNs(s.totalGpuNs), sub: state.gpuItems.length + ' cb execute span(s)' },
+      { label: 'Wall span', value: MDV.formatNs(s.wallSpanNs), sub: 'first event → last event' },
+      { label: 'Overlap', value: MDV.formatPct(s.overlapPct), sub: MDV.formatNs(s.overlapNs) + ' concurrent', headline: true },
+      { label: 'Idle', value: MDV.formatPct(s.idlePct), sub: MDV.formatNs(s.idleNs) + ' neither busy' }
+    ];
+    els.statsGrid.innerHTML = cards.map(function (c) {
+      return '<div class="stat' + (c.headline ? ' headline' : '') + '">' +
+        '<div class="label">' + c.label + '</div>' +
+        '<div class="value">' + c.value + '</div>' +
+        '<div class="sub">' + c.sub + '</div></div>';
+    }).join('');
+  }
+
+  /* ---- legend ---- */
+
+  function kindColorVar(kind) {
+    var idx = MDV.KIND_ORDER.indexOf(kind);
+    return 'var(--series-' + (idx + 1) + ')';
+  }
+
+  function renderLegend() {
+    var counts = {};
+    MDV.KIND_ORDER.forEach(function (k) { counts[k] = 0; });
+    state.commands.forEach(function (c) { counts[MDV.normalizeKind(c.kind)]++; });
+    els.legendRow.innerHTML = MDV.KIND_ORDER.map(function (k) {
+      return '<span class="chip' + (counts[k] === 0 ? ' zero' : '') + '">' +
+        '<span class="swatch" style="background:' + kindColorVar(k) + '"></span>' +
+        k + ' <b>' + counts[k] + '</b></span>';
+    }).join('');
+    state._kindCounts = counts;
+  }
+
+  /* ---- census panel ---- */
+
+  function barRows(container, rows, opts) {
+    opts = opts || {};
+    if (!rows.length) { container.innerHTML = '<div class="empty-note">No data.</div>'; return; }
+    var max = Math.max.apply(null, rows.map(function (r) { return r.value; })) || 1;
+    container.innerHTML = rows.map(function (r) {
+      var pct = (r.value / max * 100).toFixed(1);
+      var sw = r.color ? '<span class="sw" style="background:' + r.color + '"></span>' : '';
+      return '<div class="bar-row">' +
+        '<div class="name" title="' + escapeHtml(r.label) + '">' + sw + escapeHtml(r.label) + '</div>' +
+        '<div class="count">' + (r.display !== undefined ? r.display : r.value) + '</div>' +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;' + (r.color ? 'background:' + r.color : '') + '"></div></div>' +
+        '</div>';
+    }).join('');
+  }
+
+  function renderCensus() {
+    // top kernels by count
+    var byKernel = new Map();
+    state.commands.forEach(function (c) {
+      var name = (typeof c.kernel_name === 'string' && c.kernel_name) ? c.kernel_name : '(unnamed)';
+      byKernel.set(name, (byKernel.get(name) || 0) + 1);
+    });
+    var topKernels = Array.from(byKernel.entries()).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 15)
+      .map(function (e) { return { label: e[0], value: e[1] }; });
+    barRows(els.topKernels, topKernels);
+
+    // counts by kind
+    var kindRows = MDV.KIND_ORDER.map(function (k) {
+      return { label: k, value: state._kindCounts[k] || 0, color: kindColorVar(k) };
+    });
+    barRows(els.kindCounts, kindRows);
+
+    // setBytes totals by kernel
+    var byBytes = new Map();
+    state.commands.forEach(function (c) {
+      if (!MDV.isFiniteNum(c.set_bytes_total)) return;
+      var name = (typeof c.kernel_name === 'string' && c.kernel_name) ? c.kernel_name : '(unnamed)';
+      byBytes.set(name, (byBytes.get(name) || 0) + c.set_bytes_total);
+    });
+    var bytesRows = Array.from(byBytes.entries()).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 10)
+      .map(function (e) { return { label: e[0], value: e[1], display: MDV.formatBytes(e[1]) }; });
+    barRows(els.setBytesTotals, bytesRows);
+
+    // buffer_binds histogram
+    var bindsVals = state.commands.map(function (c) { return c.buffer_binds; }).filter(MDV.isFiniteNum);
+    if (!bindsVals.length) {
+      els.bindsHistogram.innerHTML = '<div class="empty-note">No buffer_binds field present.</div>';
+    } else {
+      var distinct = Array.from(new Set(bindsVals)).sort(function (a, b) { return a - b; });
+      var histRows;
+      if (distinct.length <= 20) {
+        var counts = new Map();
+        bindsVals.forEach(function (v) { counts.set(v, (counts.get(v) || 0) + 1); });
+        histRows = Array.from(counts.entries()).sort(function (a, b) { return a[0] - b[0]; })
+          .map(function (e) { return { label: String(e[0]) + ' bind(s)', value: e[1] }; });
+      } else {
+        var min = Math.min.apply(null, bindsVals), max = Math.max.apply(null, bindsVals);
+        var buckets = 10, width = (max - min) / buckets || 1;
+        var bucketCounts = new Array(buckets).fill(0);
+        bindsVals.forEach(function (v) {
+          var idx = Math.min(buckets - 1, Math.floor((v - min) / width));
+          bucketCounts[idx]++;
+        });
+        histRows = bucketCounts.map(function (cnt, i) {
+          var lo = (min + i * width).toFixed(0), hi = (min + (i + 1) * width).toFixed(0);
+          return { label: lo + '–' + hi, value: cnt };
+        });
+      }
+      barRows(els.bindsHistogram, histRows);
+    }
+  }
+
+  /* ---- waits table ---- */
+
+  function renderWaits() {
+    if (!state.waitPlacements.length) { els.waitsTable.innerHTML = ''; return; }
+    els.waitsTable.innerHTML = state.waitPlacements.map(function (wp) {
+      var cause = (typeof wp.rec.cause === 'string' && wp.rec.cause) ? wp.rec.cause : '(no cause field)';
+      var dur = wp.durationNs !== undefined ? MDV.formatNs(wp.durationNs) : '–';
+      var anchor = wp.anchor ? (wp.anchor.source + ' @ ' + MDV.formatNs(wp.anchor.ns - state.displayOrigin) + ' from trace start') : '(unplaced — no timestamp or matching cb_index)';
+      var cbIdx = MDV.isFiniteNum(wp.rec.cb_index) ? wp.rec.cb_index : '–';
+      return '<tr><td class="cause"><span class="flag">&#9650;</span>' + escapeHtml(cause) + '</td>' +
+        '<td>' + dur + '</td>' +
+        '<td class="muted">' + escapeHtml(anchor) + '</td>' +
+        '<td>' + cbIdx + '</td></tr>';
+    }).join('');
+  }
+
+  /* ---- gantt: layout constants ---- */
+
+  var LAYOUT = {
+    rulerH: 24,
+    rowH: 20,
+    rowGap: 3,
+    laneLabelGap: 16,
+    waitRowH: 14,
+    stripRowH: 12,
+    stripGap: 1,
+    topPad: 8,
+    bottomPad: 10,
+    leftLabelW: 96
+  };
+
+  function computeCanvasHeight() {
+    var h = LAYOUT.topPad + LAYOUT.rulerH + LAYOUT.waitRowH;
+    h += state.hostPack.rowCount * (LAYOUT.rowH + LAYOUT.rowGap);
+    h += LAYOUT.laneLabelGap;
+    h += state.gpuPack.rowCount * (LAYOUT.rowH + LAYOUT.rowGap);
+    h += LAYOUT.laneLabelGap;
+    h += MDV.KIND_ORDER.length * (LAYOUT.stripRowH + LAYOUT.stripGap);
+    h += LAYOUT.bottomPad;
+    return h;
+  }
+
+  function fitView() {
+    var s = state.summary;
+    if (!s || s.wallSpanNs <= 0) { state.view = { start: 0, end: 1 }; state.dataBounds = { start: 0, end: 1 }; return; }
+    var pad = s.wallSpanNs * 0.04;
+    state.dataBounds = { start: s.wallStart, end: s.wallEnd };
+    state.view = { start: s.wallStart - pad, end: s.wallEnd + pad };
+  }
+
+  /* ---- gantt: drawing ---- */
+
+  function themeColor(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function render() {
+    if (!state.summary) return;
+    var wrap = els.ganttWrap;
+    var cssWidth = Math.max(200, wrap.clientWidth);
+    var cssHeight = computeCanvasHeight();
+    var dpr = window.devicePixelRatio || 1;
+
+    var canvas = els.canvas;
+    canvas.style.height = cssHeight + 'px';
+    if (canvas.width !== Math.round(cssWidth * dpr) || canvas.height !== Math.round(cssHeight * dpr)) {
+      canvas.width = Math.round(cssWidth * dpr);
+      canvas.height = Math.round(cssHeight * dpr);
+    }
+    var ctx = els.ctx;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+    var colors = {
+      surface: themeColor('--surface-1'),
+      ink: themeColor('--text-primary'),
+      inkSecondary: themeColor('--text-secondary'),
+      muted: themeColor('--text-muted'),
+      grid: themeColor('--gridline'),
+      baseline: themeColor('--baseline'),
+      warning: themeColor('--status-warning'),
+      series: MDV.KIND_ORDER.map(function (_, i) { return themeColor('--series-' + (i + 1)); })
+    };
+
+    var plotX0 = LAYOUT.leftLabelW;
+    var plotW = Math.max(10, cssWidth - plotX0 - 8);
+    var view = state.view;
+    var span = Math.max(1e-6, view.end - view.start);
+    var pxPerNs = plotW / span;
+    function nsToX(ns) { return plotX0 + (ns - view.start) * pxPerNs; }
+
+    state.hitRects = [];
+    var y = LAYOUT.topPad;
+
+    // layout pass (no drawing yet) -- need the final content bottom before
+    // the full-height gridlines can be drawn behind everything else.
+    y += LAYOUT.rulerH;
+    var waitRowTop = y;
+    y += LAYOUT.waitRowH;
+    var hostTop = y;
+    var hostRowsPx = state.hostPack.rowCount * (LAYOUT.rowH + LAYOUT.rowGap);
+    y += hostRowsPx;
+    y += LAYOUT.laneLabelGap;
+    var gpuTop = y;
+    var gpuRowsPx = state.gpuPack.rowCount * (LAYOUT.rowH + LAYOUT.rowGap);
+    y += gpuRowsPx;
+    y += LAYOUT.laneLabelGap;
+    var stripTop = y;
+    var stripRows = MDV.KIND_ORDER.length;
+    y += stripRows * (LAYOUT.stripRowH + LAYOUT.stripGap);
+    var contentBottom = y;
+
+    drawGridlines(ctx, waitRowTop, contentBottom, plotX0, cssWidth, view, colors);
+    drawRuler(ctx, LAYOUT.topPad, LAYOUT.rulerH, plotX0, cssWidth, view, colors);
+    drawLaneLabel(ctx, 'HOST ENCODE', hostTop, colors);
+    drawLaneLabel(ctx, 'GPU EXECUTE', gpuTop, colors);
+
+    // background row shading for readability
+    ctx.fillStyle = colors.grid;
+    ctx.globalAlpha = 0.35;
+    ctx.fillRect(plotX0, hostTop, plotW, hostRowsPx - LAYOUT.rowGap);
+    ctx.fillRect(plotX0, gpuTop, plotW, gpuRowsPx - LAYOUT.rowGap);
+    ctx.globalAlpha = 1;
+
+    // connectors (drawn first, under the bars)
+    state.cbs.forEach(function (cb) {
+      var hasHost = MDV.isFiniteNum(cb.encode_start_ns) && MDV.isFiniteNum(cb.encode_end_ns);
+      var hasGpu = MDV.isFiniteNum(cb.gpu_start_ns) && MDV.isFiniteNum(cb.gpu_end_ns);
+      if (!hasHost || !hasGpu) return;
+      var hi = state.hostItems.indexOf(cb);
+      var gi = state.gpuItems.indexOf(cb);
+      if (hi < 0 || gi < 0) return;
+      var hRow = state.hostPack.rowOf[hi];
+      var gRow = state.gpuPack.rowOf[gi];
+      var x1 = nsToX(cb.encode_end_ns);
+      var y1 = hostTop + hRow * (LAYOUT.rowH + LAYOUT.rowGap) + LAYOUT.rowH;
+      var x2 = nsToX(cb.gpu_start_ns);
+      var y2 = gpuTop + gRow * (LAYOUT.rowH + LAYOUT.rowGap);
+      var hue = MDV.cbHue(cb.cb_index);
+      ctx.save();
+      ctx.strokeStyle = 'hsla(' + hue + ',55%,50%,0.55)';
+      ctx.setLineDash([3, 2]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    // host bars
+    state.hostItems.forEach(function (cb, i) {
+      var row = state.hostPack.rowOf[i];
+      var by = hostTop + row * (LAYOUT.rowH + LAYOUT.rowGap);
+      drawBar(ctx, cb, cb.encode_start_ns, cb.encode_end_ns, by, nsToX, colors, 'host');
+    });
+
+    // gpu bars
+    state.gpuItems.forEach(function (cb, i) {
+      var row = state.gpuPack.rowOf[i];
+      var by = gpuTop + row * (LAYOUT.rowH + LAYOUT.rowGap);
+      drawBar(ctx, cb, cb.gpu_start_ns, cb.gpu_end_ns, by, nsToX, colors, 'gpu');
+    });
+
+    // wait markers on the host lane's flag row
+    state.waitPlacements.forEach(function (wp) {
+      if (!wp.anchor) return;
+      var x = nsToX(wp.anchor.ns);
+      if (x < plotX0 - 20 || x > cssWidth + 20) return;
+      var cy = waitRowTop + LAYOUT.waitRowH / 2;
+      ctx.fillStyle = colors.warning;
+      ctx.beginPath();
+      ctx.moveTo(x, cy - 5);
+      ctx.lineTo(x + 5, cy + 5);
+      ctx.lineTo(x - 5, cy + 5);
+      ctx.closePath();
+      ctx.fill();
+      state.hitRects.push({ x0: x - 6, y0: cy - 6, x1: x + 6, y1: cy + 6, type: 'wait', data: wp });
+    });
+
+    // dispatch strip: one row per kind
+    MDV.KIND_ORDER.forEach(function (kind, ki) {
+      var ry = stripTop + ki * (LAYOUT.stripRowH + LAYOUT.stripGap);
+      ctx.fillStyle = colors.grid;
+      ctx.globalAlpha = 0.28;
+      ctx.fillRect(plotX0, ry, plotW, LAYOUT.stripRowH - 1);
+      ctx.globalAlpha = 1;
+    });
+    state.strip.placed.forEach(function (p) {
+      var kind = MDV.normalizeKind(p.rec.kind);
+      var ki = MDV.KIND_ORDER.indexOf(kind);
+      var ry = stripTop + ki * (LAYOUT.stripRowH + LAYOUT.stripGap);
+      var x = nsToX(p.ns);
+      if (x < plotX0 - 4 || x > cssWidth + 4) return;
+      var cy = ry + LAYOUT.stripRowH / 2;
+      ctx.fillStyle = colors.series[ki];
+      ctx.beginPath();
+      ctx.arc(x, cy, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      state.hitRects.push({ x0: x - 4, y0: ry, x1: x + 4, y1: ry + LAYOUT.stripRowH, type: 'command', data: p.rec });
+    });
+
+    // pinned left-side labels for lanes / strip rows (drawn after data so they sit on top)
+    ctx.textBaseline = 'middle';
+    ctx.font = '10px ui-monospace, Menlo, monospace';
+    MDV.KIND_ORDER.forEach(function (kind, ki) {
+      var ry = stripTop + ki * (LAYOUT.stripRowH + LAYOUT.stripGap);
+      drawPinnedLabel(ctx, kind, ry + LAYOUT.stripRowH / 2, colors, colors.series[ki]);
+    });
+
+    ctx.strokeStyle = colors.baseline;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(plotX0 - 8, stripTop - 4);
+    ctx.lineTo(plotX0 - 8, y);
+    ctx.stroke();
+  }
+
+  function drawPinnedLabel(ctx, text, cy, colors, dotColor) {
+    ctx.save();
+    ctx.fillStyle = colors.surface;
+    ctx.globalAlpha = 0.92;
+    ctx.fillRect(0, cy - 7, LAYOUT.leftLabelW - 4, 14);
+    ctx.globalAlpha = 1;
+    if (dotColor) {
+      ctx.fillStyle = dotColor;
+      ctx.beginPath();
+      ctx.arc(6, cy, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = colors.inkSecondary;
+    ctx.fillText(text, dotColor ? 13 : 4, cy);
+    ctx.restore();
+  }
+
+  function drawLaneLabel(ctx, text, top, colors) {
+    ctx.save();
+    ctx.fillStyle = colors.surface;
+    ctx.fillRect(0, top - 2, LAYOUT.leftLabelW - 4, 14);
+    ctx.fillStyle = colors.muted;
+    ctx.font = '9px ui-monospace, Menlo, monospace';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 4, top + 5);
+    ctx.restore();
+  }
+
+  function drawBar(ctx, cb, startNs, endNs, by, nsToX, colors, phase) {
+    var x0 = nsToX(startNs), x1 = nsToX(endNs);
+    var w = Math.max(1, x1 - x0);
+    var hue = MDV.cbHue(cb.cb_index);
+    var fill = phase === 'host' ? 'hsl(' + hue + ',60%,54%)' : 'hsl(' + hue + ',68%,40%)';
+    ctx.fillStyle = fill;
+    var radius = Math.min(4, w / 2, LAYOUT.rowH / 2);
+    roundRect(ctx, x0, by, w, LAYOUT.rowH, radius);
+    ctx.fill();
+    if (w > 22) {
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.font = '9px ui-monospace, Menlo, monospace';
+      ctx.textBaseline = 'middle';
+      var label = 'cb' + cb.cb_index;
+      var maxChars = Math.floor((w - 8) / 5.5);
+      if (label.length > maxChars && maxChars > 1) label = label.slice(0, maxChars);
+      ctx.fillText(label, x0 + 4, by + LAYOUT.rowH / 2 + 1);
+    }
+    state.hitRects.push({ x0: x0, y0: by, x1: x0 + w, y1: by + LAYOUT.rowH, type: phase === 'host' ? 'host' : 'gpu', data: cb });
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // Full-height vertical gridlines behind all lane content, aligned to the
+  // same tick step the ruler labels use (computed the same deterministic way
+  // in both places, so no shared state is needed to keep them in sync).
+  function drawGridlines(ctx, top, bottom, plotX0, cssWidth, view, colors) {
+    var plotW = cssWidth - plotX0 - 8;
+    var span = view.end - view.start;
+    if (span <= 0 || plotW <= 0) return;
+    var step = MDV.niceStep(span, plotW, 84);
+    var startTick = Math.ceil(view.start / step) * step;
+    ctx.save();
+    ctx.strokeStyle = colors.grid;
+    ctx.lineWidth = 1;
+    for (var t = startTick; t <= view.end; t += step) {
+      var x = plotX0 + (t - view.start) * (plotW / span);
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawRuler(ctx, top, h, plotX0, cssWidth, view, colors) {
+    var plotW = cssWidth - plotX0 - 8;
+    var span = view.end - view.start;
+    if (span <= 0 || plotW <= 0) return;
+    var unit = MDV.pickUnit(span);
+    var step = MDV.niceStep(span, plotW, 84);
+    var startTick = Math.ceil(view.start / step) * step;
+    ctx.fillStyle = colors.muted;
+    ctx.font = '10px ui-monospace, Menlo, monospace';
+    ctx.textBaseline = 'top';
+    ctx.strokeStyle = colors.baseline;
+    ctx.lineWidth = 1;
+    for (var t = startTick; t <= view.end; t += step) {
+      var x = plotX0 + (t - view.start) * (plotW / span);
+      var rel = t - state.displayOrigin;
+      var label = (rel / unit.div).toFixed(unit.div === 1 ? 0 : 1) + ' ' + unit.label;
+      ctx.beginPath();
+      ctx.moveTo(x, top + h - 6);
+      ctx.lineTo(x, top + h);
+      ctx.stroke();
+      ctx.fillText(label, x + 3, top + 2);
+    }
+    ctx.beginPath();
+    ctx.moveTo(plotX0, top + h);
+    ctx.lineTo(cssWidth - 8, top + h);
+    ctx.stroke();
+  }
+
+  /* ---- gantt: zoom / pan / hover ---- */
+
+  function wireGanttInteraction() {
+    var canvas = els.canvas;
+    var panning = false;
+    var panStartX = 0;
+    var panStartView = null;
+
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      var rect = canvas.getBoundingClientRect();
+      var plotX0 = LAYOUT.leftLabelW;
+      var mouseX = e.clientX - rect.left;
+      var view = state.view;
+      var span = view.end - view.start;
+      var plotW = Math.max(10, rect.width - plotX0 - 8);
+      var ns = view.start + (mouseX - plotX0) / plotW * span;
+      var factor = Math.pow(1.0015, e.deltaY);
+      var minSpan = Math.max(1, (state.dataBounds.end - state.dataBounds.start) / 5000);
+      var maxSpan = Math.max(minSpan * 2, (state.dataBounds.end - state.dataBounds.start) * 8 || 1e6);
+      var newSpan = Math.min(maxSpan, Math.max(minSpan, span * factor));
+      var frac = plotW > 0 ? (mouseX - plotX0) / plotW : 0.5;
+      state.view = { start: ns - frac * newSpan, end: ns + (1 - frac) * newSpan };
+      render();
+    }, { passive: false });
+
+    canvas.addEventListener('mousedown', function (e) {
+      panning = true;
+      panStartX = e.clientX;
+      panStartView = { start: state.view.start, end: state.view.end };
+      canvas.classList.add('panning');
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (!panning) { hoverAt(e); return; }
+      var rect = canvas.getBoundingClientRect();
+      var plotW = Math.max(10, rect.width - LAYOUT.leftLabelW - 8);
+      var span = panStartView.end - panStartView.start;
+      var dx = e.clientX - panStartX;
+      var dNs = -dx / plotW * span;
+      state.view = { start: panStartView.start + dNs, end: panStartView.end + dNs };
+      hideTooltip();
+      render();
+    });
+    window.addEventListener('mouseup', function () {
+      panning = false;
+      canvas.classList.remove('panning');
+    });
+    canvas.addEventListener('mouseleave', function () { if (!panning) hideTooltip(); });
+    canvas.addEventListener('dblclick', function () { fitView(); render(); });
+  }
+
+  function hoverAt(e) {
+    var rect = els.canvas.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    var y = e.clientY - rect.top;
+    var hit = null;
+    for (var i = state.hitRects.length - 1; i >= 0; i--) {
+      var r = state.hitRects[i];
+      if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) { hit = r; break; }
+    }
+    if (!hit) { hideTooltip(); return; }
+    showTooltip(e.clientX, e.clientY, hit);
+  }
+
+  function hideTooltip() { els.tooltip.classList.remove('show'); state.hoverKey = null; }
+
+  function showTooltip(clientX, clientY, hit) {
+    var html = '';
+    if (hit.type === 'host' || hit.type === 'gpu') {
+      var cb = hit.data;
+      html += '<div class="t-title">cb_index ' + cb.cb_index + ' — ' + (hit.type === 'host' ? 'host encode' : 'gpu execute') + '</div>';
+      html += fieldRows(cb, ['cb_index']);
+    } else if (hit.type === 'command') {
+      var c = hit.data;
+      html += '<div class="t-title">' + escapeHtml((c.kernel_name || '(unnamed)')) + ' — ' + MDV.normalizeKind(c.kind) + '</div>';
+      html += fieldRows(c, []);
+    } else if (hit.type === 'wait') {
+      var wp = hit.data;
+      html += '<div class="t-title">wait — ' + escapeHtml(wp.rec.cause || '(no cause)') + '</div>';
+      html += '<div class="t-row"><b>duration</b> ' + (wp.durationNs !== undefined ? MDV.formatNs(wp.durationNs) : '–') + '</div>';
+      html += '<div class="t-row"><b>anchor</b> ' + escapeHtml(wp.anchor ? wp.anchor.source : 'none') + '</div>';
+      if (MDV.isFiniteNum(wp.rec.cb_index)) html += rowLine('cb_index', String(wp.rec.cb_index));
+      html += fieldRows(wp.rec, ['cause', 'ns', 'wait_ns', 'duration_ns', 'dur_ns', 'ts_ns', 'at_ns', 'start_ns', 'time_ns', 'timestamp_ns', 'cb_index']);
+    }
+    els.tooltip.innerHTML = html;
+    els.tooltip.classList.add('show');
+    positionTooltip(clientX, clientY);
+  }
+
+  function positionTooltip(clientX, clientY) {
+    var pad = 14;
+    var t = els.tooltip;
+    var tw = t.offsetWidth || 260, th = t.offsetHeight || 80;
+    var left = clientX + pad;
+    var top = clientY + pad;
+    if (left + tw > window.innerWidth - 8) left = clientX - tw - pad;
+    if (top + th > window.innerHeight - 8) top = clientY - th - pad;
+    t.style.left = Math.max(4, left) + 'px';
+    t.style.top = Math.max(4, top) + 'px';
+  }
+
+  var KNOWN_FIELDS = {
+    cb_index: 1, encode_start_ns: 1, encode_end_ns: 1, gpu_start_ns: 1, gpu_end_ns: 1,
+    op_count: 1, first_op_seq: 1, last_op_seq: 1,
+    seq: 1, kind: 1, kernel_name: 1, set_bytes_calls: 1, set_bytes_total: 1, buffer_binds: 1,
+    grid: 1, threadgroup: 1
+  };
+
+  function fieldRows(rec, skip) {
+    var out = '';
+    var skipSet = {};
+    (skip || []).forEach(function (k) { skipSet[k] = 1; });
+    var order = ['encode_start_ns', 'encode_end_ns', 'gpu_start_ns', 'gpu_end_ns', 'op_count', 'first_op_seq', 'last_op_seq',
+      'seq', 'kernel_name', 'set_bytes_calls', 'set_bytes_total', 'buffer_binds', 'grid', 'threadgroup'];
+    var displayed = {};
+    if (rec.encode_start_ns !== undefined && rec.encode_end_ns !== undefined) {
+      out += rowLine('encode span', MDV.formatNs(rec.encode_start_ns - state.displayOrigin) + ' → ' + MDV.formatNs(rec.encode_end_ns - state.displayOrigin) + '  (dur ' + MDV.formatNs(rec.encode_end_ns - rec.encode_start_ns) + ')');
+      displayed.encode_start_ns = displayed.encode_end_ns = 1;
+    }
+    if (rec.gpu_start_ns !== undefined && rec.gpu_end_ns !== undefined) {
+      out += rowLine('gpu span', MDV.formatNs(rec.gpu_start_ns - state.displayOrigin) + ' → ' + MDV.formatNs(rec.gpu_end_ns - state.displayOrigin) + '  (dur ' + MDV.formatNs(rec.gpu_end_ns - rec.gpu_start_ns) + ')');
+      displayed.gpu_start_ns = displayed.gpu_end_ns = 1;
+    }
+    order.forEach(function (k) {
+      if (displayed[k] || skipSet[k] || rec[k] === undefined) return;
+      var v = rec[k];
+      if (Array.isArray(v)) v = '[' + v.join(', ') + ']';
+      out += rowLine(k, String(v));
+      displayed[k] = 1;
+    });
+    Object.keys(rec).forEach(function (k) {
+      if (displayed[k] || skipSet[k] || KNOWN_FIELDS[k]) return;
+      var v = rec[k];
+      if (typeof v === 'object' && v !== null) v = JSON.stringify(v);
+      out += rowLine(k, String(v), true);
+    });
+    return out;
+  }
+
+  function rowLine(key, value, extra) {
+    return '<div class="t-row"' + (extra ? ' style="opacity:.8"' : '') + '><b>' + escapeHtml(key) + '</b> ' + escapeHtml(value) + '</div>';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  /* ---- theme toggle ---- */
+
+  function wireTheme() {
+    var stored = null;
+    try { stored = localStorage.getItem('mdv-theme'); } catch (e) { /* ignore (file:// may block storage) */ }
+    if (stored === 'light' || stored === 'dark') document.documentElement.setAttribute('data-theme', stored);
+
+    els.themeToggle.addEventListener('click', function () {
+      var cur = document.documentElement.getAttribute('data-theme');
+      var next;
+      if (!cur) {
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        next = prefersDark ? 'light' : 'dark';
+      } else {
+        next = cur === 'dark' ? 'light' : 'dark';
+      }
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('mdv-theme', next); } catch (e) { /* ignore */ }
+      render();
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

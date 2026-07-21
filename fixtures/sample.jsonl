@@ -1,0 +1,13 @@
+{"cb_index": 0, "encode_start_ns": 0, "encode_end_ns": 100, "gpu_start_ns": 150, "gpu_end_ns": 400, "op_count": 2, "first_op_seq": 0, "last_op_seq": 1}
+{"cb_index": 1, "encode_start_ns": 110, "encode_end_ns": 210, "gpu_start_ns": 410, "gpu_end_ns": 700, "op_count": 3, "first_op_seq": 2, "last_op_seq": 4}
+{"seq": 0, "cb_index": 0, "kind": "compute", "kernel_name": "qmm_a", "set_bytes_calls": 2, "set_bytes_total": 64, "buffer_binds": 3, "grid": [8, 1, 1], "threadgroup": [32, 1, 1]}
+{"seq": 1, "cb_index": 0, "kind": "blit", "kernel_name": "copy_a", "set_bytes_calls": 0, "set_bytes_total": 0, "buffer_binds": 2}
+{"seq": 2, "cb_index": 1, "kind": "fill", "kernel_name": "zero_b", "set_bytes_calls": 1, "set_bytes_total": 8, "buffer_binds": 1}
+{"seq": 3, "cb_index": 1, "kind": "copy", "kernel_name": "copy_b", "set_bytes_calls": 0, "set_bytes_total": 0, "buffer_binds": 2}
+{"seq": 4, "cb_index": 1, "kind": "other", "kernel_name": "misc_b", "set_bytes_calls": 1, "set_bytes_total": 16, "buffer_binds": 1}
+{"kind": "wait", "cause": "active_tasks_cap", "cb_index": 0, "ns": 20}
+{"kind": "wait", "cause": "pool_exhausted", "ts_ns": 405, "ns": 5}
+{"kind": "wait", "cause": "mystery", "ns": 10}
+{"note": "unrecognized record kind, should be tolerated"}
+
+{not valid json, should be skipped with a parse error}
