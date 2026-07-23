@@ -6,7 +6,7 @@
 
 **Architecture:** React renders the semantic shell and owns the controller lifecycle. The proven controller, parser, worker, canvas timeline, and range navigator remain the behavior authority. Vite bundles the browser graph into a staging directory, then the existing hosted builder atomically publishes it with the five manifest-authorized traces.
 
-**Tech Stack:** React 19, React DOM 19, Vite 8, Vitest 4, jsdom 29, Express 5, Node 20.19+, npm, GitHub Pages.
+**Tech Stack:** React 19, React DOM 19, Vite 8, Vitest 4, jsdom 29, Express 5, supported Node lines (`^20.19.0 || ^22.13.0 || >=24.0.0`), npm, GitHub Pages.
 
 **Assumptions:**
 
@@ -24,12 +24,12 @@
 
 **Security flag:** security
 
-- [ ] Add exact runtime dependencies `react@19.2.8` and `react-dom@19.2.8`.
-- [ ] Add exact dev dependencies `vite@8.1.5`, `@vitejs/plugin-react@6.0.4`, `vitest@4.1.10`, `jsdom@29.1.1`, and `yaml@2.8.2`.
-- [ ] Raise the Node engine to `>=20.19.0`, matching Vite's supported runtime.
-- [ ] Update the package-contract test before each package change and observe its failure.
-- [ ] After each tightly coupled dependency group, run `npm test` and `npm audit`.
-- [ ] Commit with `Add the React profiler toolchain`.
+- [x] Add exact runtime dependencies `react@19.2.8` and `react-dom@19.2.8`.
+- [x] Add exact dev dependencies `vite@8.1.5`, `@vitejs/plugin-react@6.0.4`, `vitest@4.1.10`, `jsdom@29.1.1`, and patched `yaml@2.9.0`.
+- [x] Set the Node engine to the supported intersection `^20.19.0 || ^22.13.0 || >=24.0.0`.
+- [x] Update the package-contract test before each package change and observe its failure.
+- [x] After each tightly coupled dependency group, run `npm test`, `npm ls --all`, and `npm audit`.
+- [x] Commit with `Add the React profiler toolchain`.
 
 ### Task 2: Render the proven workbench from React
 
@@ -40,20 +40,24 @@
 - Create: `src/ProfilerApp.jsx`
 - Create: `test/react-shell.test.jsx`
 - Modify: `public/app.js`
+- Modify: `public/analysis-session.js`
 - Modify: `test/ui-contract.test.mjs`
+- Modify: `test/app-integration.test.mjs`
 - Remove: `public/index.html`
 
 **Security flag:** none
 
-- [ ] Write a failing React shell test that renders `ProfilerApp` in jsdom and asserts every ID consumed by `bootstrap()` exists exactly once.
-- [ ] Write a failing lifecycle test with an injected bootstrap function; assert mount starts once and unmount calls the returned `destroy()` once.
-- [ ] Convert the current semantic HTML to JSX without changing IDs, class names, accessible names, initial copy, table headings, or control states.
-- [ ] Split presentational sections only when the output contract remains byte-for-role equivalent.
-- [ ] Add an idempotent controller `destroy()` method and remove document-driven auto-bootstrap.
-- [ ] Mount through `src/main.jsx`; import the existing CSS and controller modules through Vite.
-- [ ] Update the UI contract to inspect the React shell rather than deleted static HTML.
-- [ ] Run focused React, integration, range, timeline, and UI-contract tests.
-- [ ] Commit with `Render the profiler workbench from React`.
+- [x] Write a failing React shell test that renders `ProfilerApp` in jsdom and asserts every ID consumed by `bootstrap()` exists exactly once.
+- [x] Write failing lifecycle tests for resolved and pending bootstrap; assert teardown occurs exactly once.
+- [x] Convert the current semantic HTML to JSX without changing IDs, class names, accessible names, initial copy, table headings, or control states.
+- [x] Split presentational sections only when the output contract remains role-equivalent.
+- [x] Add an idempotent controller `destroy()` method and remove document-driven auto-bootstrap.
+- [x] Import `dataset-worker.js?worker&url` in the React entry and inject the generated absolute URL through `analysisSessionFactory`.
+- [x] Resolve registry, API, and hosted-trace URLs from `document.baseURI`; add root and `/metal-dispatch-viz/` tests.
+- [x] Mount through `src/main.jsx`; import the existing CSS and controller modules through Vite.
+- [x] Update the UI contract to inspect the React shell rather than deleted static HTML.
+- [x] Run focused React, integration, range, timeline, and UI-contract tests.
+- [x] Commit with `Render the profiler workbench from React`.
 
 ### Task 3: Make the authoritative build and Express runtime serve React
 
@@ -61,6 +65,7 @@
 
 - Create: `vite.config.js`
 - Modify: `package.json`
+- Modify: `.gitignore`
 - Modify: `scripts/build_hosted.mjs`
 - Modify: `server.mjs`
 - Modify: `server/app.mjs`
@@ -69,14 +74,17 @@
 
 **Security flag:** security
 
-- [ ] Write failing tests that require the hosted builder to consume a compiled client root and Express to serve `dist/client`.
-- [ ] Configure Vite with `publicDir: false` and a staging output outside `dist`.
-- [ ] Make `npm run build` run Vite followed by the existing atomic hosted builder.
-- [ ] Preserve `dist/client`, the Sites worker, hosting metadata, generated registry, and exactly five traces.
-- [ ] Make `npm start` build first, then launch the single folder-driven Express app.
-- [ ] Smoke fallback from `/api/traces` to `/hosted-traces.json`.
-- [ ] Run the full Node and Vitest suites plus `npm run build`.
-- [ ] Commit with `Build and serve the React profiler`.
+- [x] Write failing tests that require the hosted builder to consume a compiled client root and Express to serve `dist/client`.
+- [x] Configure Vite with `publicDir: false` and a staging output outside `dist`.
+- [x] Configure `base: "./"` and `emptyOutDir: true`; ignore the staging directory and prove a stale sentinel is removed.
+- [x] Reject a symlink or non-directory hosted output leaf while canonicalizing only its parent; prove an external symlink target survives.
+- [x] Add a builder-only fail-closed manifest allowlist; reject absent, malformed, or symlinked manifests and unlisted supported traces without changing Express folder discovery.
+- [x] Make `npm run build` run Vite followed by the existing atomic hosted builder.
+- [x] Preserve `dist/client`, the Sites worker, hosting metadata, generated registry, and exactly five traces.
+- [x] Make `npm start` build first, then launch the single folder-driven Express app.
+- [x] Smoke fallback from `/api/traces` to `/hosted-traces.json`.
+- [x] Run the full Node and Vitest suites plus `npm run build`.
+- [x] Commit with `Build and serve the React profiler`.
 
 ### Task 4: Add the hardened Pages artifact verifier and workflow
 
@@ -91,19 +99,19 @@
 
 **Security flag:** security
 
-- [ ] Write failing verifier tests for valid output, root and intermediate symlinks, non-trace files, `.ndjson`, uppercase extensions, Windows absolute paths, and supported trace files outside the showcase subtree.
-- [ ] Require the source manifest and every required asset to be regular non-symlink files.
-- [ ] Prove exact manifest-registry-artifact equality and reject every extra showcase entry.
-- [ ] Add `npm run verify:pages`.
-- [ ] Parse the workflow with `yaml`; assert exact triggers, split job permissions, checkout credential removal, full action SHAs, gate order, `needs`, main-only deploy, and `dist/client`.
-- [ ] Use these verified action pins:
+- [x] Write failing verifier tests for valid output, root and intermediate symlinks, non-trace files, `.ndjson`, uppercase extensions, Windows absolute paths, and supported trace files outside the showcase subtree.
+- [x] Require the source manifest and every required asset to be regular non-symlink files, with ancestor-identity and full-read race checks.
+- [x] Prove exact manifest-registry-artifact equality and reject every extra showcase entry.
+- [x] Enforce relative hashed boot assets and add `npm run verify:pages`.
+- [x] Parse the workflow with `yaml`; assert exact triggers, split job permissions, checkout credential removal, full action SHAs, gate order, `needs`, main-only deploy, concurrency, and `dist/client`.
+- [x] Use these verified action pins:
   - `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (`v7.0.1`)
   - `actions/setup-node@820762786026740c76f36085b0efc47a31fe5020` (`v7.0.0`)
   - `actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d` (`v6.0.0`)
   - `actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9` (`v5.0.0`)
   - `actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128` (`v5.0.0`)
-- [ ] Run `npm test`, `npm run build`, `npm run verify:pages`, and `npm audit`.
-- [ ] Commit with `Deploy the React profiler with GitHub Pages`.
+- [x] Run `npm test`, `npm run build`, `npm run verify:pages`, and `npm audit`.
+- [x] Commit with `Deploy the React profiler with GitHub Pages`.
 
 ### Task 5: Verify UI parity and publish PR #3
 
@@ -115,7 +123,7 @@
 
 **Security flag:** none
 
-- [ ] Document React development, Express folder loading, manifest publication, Pages deployment, and exact local gates.
+- [x] Document React development, Express folder loading, manifest publication, Pages deployment, and exact local gates.
 - [ ] Run the complete test, build, verifier, audit, and stub-scan gates.
 - [ ] Start the production Express app on an available loopback port and record its PID.
 - [ ] Exercise all five traces, launch selection, View/Analyze, band and handle drags, zoom, fit, inspector pin/clear, refresh, theme, URL restoration, loading, error, empty, and degraded states.

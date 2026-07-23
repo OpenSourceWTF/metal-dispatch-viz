@@ -108,6 +108,15 @@ Vite treats these as source modules rather than an unprocessed public
 directory. Their `new URL(..., import.meta.url)` worker references are bundled
 and content-hashed.
 
+The React entry imports `dataset-worker.js?worker&url` and injects that
+Vite-produced URL into the existing `TraceAnalysisSession` factory. This makes
+the worker graph explicit to Vite; the controller's injectable worker seam
+remains available to Node tests.
+
+Registry and trace URLs are resolved from `document.baseURI`, not from `/`.
+Vite uses `base: "./"` so the same client works at the default GitHub Pages
+project path (`/metal-dispatch-viz/`) and at the custom-domain root.
+
 React never stores the complete trace dataset or per-dispatch records in
 component state. Large-data parsing and exact range analysis remain off the
 main thread.
@@ -125,6 +134,17 @@ Vite builds the React client into a staging directory outside `dist`.
 
 `npm run build` remains authoritative and produces `dist/client`.
 
+The staging directory is ignored, Vite empties it on every build, and a stale
+sentinel regression proves old hashed assets cannot survive. The hosted builder
+canonicalizes only the output parent and rejects a symlink or non-directory
+output leaf before replacement.
+
+Static publication fails closed when `traces/showcase/traces.json` is absent,
+malformed, or symlinked. The builder requires exact equality between the
+manifest paths and the registry paths before copying. Folder-driven Express
+discovery keeps its existing optional-metadata behavior; only static
+publication requires the allowlist.
+
 The Express app serves `dist/client` and the folder-driven `/api/traces`
 routes. `npm start` builds first, then starts the single Express application.
 The hosted deployment uses the static manifest fallback and requires no
@@ -135,8 +155,15 @@ Express server.
 The post-build verifier treats the source manifest as a trust anchor and
 requires it to be a regular non-symlink file.
 
+It snapshots every artifact directory and regular file, opens files without
+following the file entry, brackets every full read with ancestor identity
+checks, and compares device, inode, size, modification time, and change time.
+Only the index and generated registry are retained as decoded text; trace and
+bundle contents are streamed through a bounded buffer and discarded.
+
 It rejects:
 
+- a symlinked output leaf that could redirect atomic replacement;
 - a symlinked client root or any symlinked intermediate trace directory;
 - POSIX or Windows absolute manifest paths;
 - empty, dot, dot-dot, or backslash path segments;
@@ -145,18 +172,22 @@ It rejects:
 - any supported trace file outside that subtree;
 - registry, manifest, or artifact set mismatches;
 - missing React entrypoint, bundled worker, registry, or required browser
-  assets.
+  assets;
+- root-relative, unhashed, missing, or comment-only React boot assets.
 
 The verifier follows the same case-insensitive `.jsonl` and `.ndjson`
-extension policy as `TraceRegistry`.
+extension policy as `TraceRegistry`. Its required module, stylesheet, and
+worker paths use Vite's relative content-hashed output shape so the artifact
+works at both the project Pages path and custom-domain root.
 
 ## GitHub Actions security
 
 The Pages workflow has two jobs:
 
 - `build` receives only `contents: read`, checks out with persisted credentials
-  disabled, installs locked dependencies, tests, builds, audits, verifies, and
-  uploads the Pages artifact;
+  disabled, installs locked dependencies, tests, builds, audits, configures
+  Pages, performs a final exact-artifact verification, and immediately uploads
+  that verified Pages artifact;
 - `deploy` depends on `build`, receives only `pages: write` and
   `id-token: write`, is restricted to `refs/heads/main`, and deploys into the
   `github-pages` environment.
@@ -164,7 +195,7 @@ The Pages workflow has two jobs:
 Every action is pinned to a verified full commit SHA with its release tag in a
 comment. The workflow contract is parsed as YAML and asserts exact triggers,
 job permissions, action pins, gate ordering, dependency, branch restriction,
-and `dist/client` upload path.
+non-cancelling `pages` concurrency, and the `dist/client` upload path.
 
 ## Main-site integration
 
@@ -235,9 +266,10 @@ inspector-pin tests remain mandatory.
 
 Severity: critical.
 
-The worker remains an `import.meta.url` module asset, hosted trace URLs remain
-root-relative to the custom origin, and the built artifact is smoked rather
-than trusting source tests.
+The worker is imported through Vite's explicit `?worker&url` graph, hosted
+registry and trace URLs resolve from `document.baseURI`, and both the custom
+root and default `/metal-dispatch-viz/` build are smoked rather than trusting
+source tests.
 
 ### React rerenders raw trace data
 
