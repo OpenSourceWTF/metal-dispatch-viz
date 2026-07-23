@@ -1121,6 +1121,8 @@ export class TimelineRenderer {
     drawOrder.push("dispatch");
     this.drawSelection();
     drawOrder.push("selection");
+    this.drawRangeSelection();
+    drawOrder.push("range-selection");
     this.drawCrosshair();
     drawOrder.push("crosshair");
     this.drawLabels(densityMode);
@@ -1568,6 +1570,24 @@ export class TimelineRenderer {
     }
   }
 
+  drawRangeSelection() {
+    if (this.drag?.mode !== "range" || !this.drag.moved) return;
+    const start = Math.max(0, Math.min(this.width, this.drag.x));
+    const end = Math.max(0, Math.min(this.width, this.drag.currentX));
+    const left = Math.min(start, end);
+    const width = Math.max(1, Math.abs(end - start));
+    const context = this.context;
+    context.save?.();
+    context.globalAlpha = 0.18;
+    context.fillStyle = this.colors.gpu;
+    context.fillRect(left, 0, width, TIMELINE_LANES.totalHeight);
+    context.globalAlpha = 0.9;
+    context.strokeStyle = this.colors.gpu;
+    context.lineWidth = 1;
+    context.strokeRect(left + 0.5, 0.5, Math.max(0, width - 1), TIMELINE_LANES.totalHeight - 1);
+    context.restore?.();
+  }
+
   drawCrosshair() {
     if (!Number.isFinite(this.crosshairX)) return;
     const x = Math.max(0, Math.min(this.width, this.crosshairX));
@@ -1643,16 +1663,19 @@ export class TimelineRenderer {
     if (this.drag) {
       const dx = point.x - this.drag.x;
       if (Math.abs(dx) > 2) this.drag.moved = true;
-      const span = this.drag.viewport.endNs - this.drag.viewport.startNs;
-      const shift = -(dx / Math.max(1, this.width)) * span;
-      this.viewport = clampViewport(
-        {
-          startNs: this.drag.viewport.startNs + shift,
-          endNs: this.drag.viewport.endNs + shift,
-        },
-        this.bounds,
-      );
-      this.notifyViewportChange();
+      this.drag.currentX = point.x;
+      if (this.drag.mode === "pan") {
+        const span = this.drag.viewport.endNs - this.drag.viewport.startNs;
+        const shift = -(dx / Math.max(1, this.width)) * span;
+        this.viewport = clampViewport(
+          {
+            startNs: this.drag.viewport.startNs + shift,
+            endNs: this.drag.viewport.endNs + shift,
+          },
+          this.bounds,
+        );
+        this.notifyViewportChange();
+      }
       this.requestRender();
       return;
     }
@@ -1673,7 +1696,9 @@ export class TimelineRenderer {
     const point = this.pointForEvent(event);
     this.drag = {
       pointerId: event.pointerId,
+      mode: event.shiftKey ? "pan" : "range",
       x: point.x,
+      currentX: point.x,
       viewport: { ...this.viewport },
       moved: false,
     };
@@ -1683,10 +1708,22 @@ export class TimelineRenderer {
 
   handlePointerUp(event) {
     if (!this.drag || this.drag.pointerId !== event.pointerId) return;
-    const wasMoved = this.drag.moved;
+    const completedDrag = this.drag;
+    const wasMoved = completedDrag.moved;
     this.canvas.releasePointerCapture?.(event.pointerId);
     this.drag = null;
-    if (!wasMoved) {
+    if (wasMoved && completedDrag.mode === "range") {
+      const startX = Math.max(0, Math.min(this.width, completedDrag.x));
+      const endX = Math.max(0, Math.min(this.width, completedDrag.currentX));
+      this.viewport = clampViewport(
+        {
+          startNs: xToTime(Math.min(startX, endX), completedDrag.viewport, this.width),
+          endNs: xToTime(Math.max(startX, endX), completedDrag.viewport, this.width),
+        },
+        this.bounds,
+      );
+      this.notifyViewportChange();
+    } else if (!wasMoved) {
       const point = this.pointForEvent(event);
       const item = this.hitTest(point.x, point.y);
       if (item) {
@@ -1764,7 +1801,12 @@ export class TimelineRenderer {
       const active = this.keyboardActive ?? this.hovered;
       if (active) this.selectItem(active);
     } else if (event.key === "Escape") {
-      this.clearSelection();
+      if (this.drag) {
+        this.canvas.releasePointerCapture?.(this.drag.pointerId);
+        this.drag = null;
+      } else {
+        this.clearSelection();
+      }
     } else {
       handled = false;
     }
@@ -1918,7 +1960,8 @@ export class TimelineRenderer {
       `Metal dispatch timeline with ${total.toLocaleString()} operations: ` +
       `${this.placedDispatches.length.toLocaleString()} ordered placements and ` +
       `${this.unplacedDispatches.length.toLocaleString()} unplaced. ` +
-      "Use the arrow keys to pan, plus and minus to zoom, zero to fit, " +
+      "Drag to zoom, Shift-drag to pan, use the arrow keys to pan, " +
+      "plus and minus to zoom, zero to fit, " +
       "left and right brackets to move between marks, Enter to pin the " +
       `active mark, and Escape to clear selection.${active}`;
     this.canvas.setAttribute?.("aria-description", description);

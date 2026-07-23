@@ -6,6 +6,7 @@ import {
   analyzeTraceOffMainThread,
   buildDatasetOffMainThread,
   evidenceBadges,
+  filterTraces,
   handleTraceRailKey,
   kernelRowsForScope,
   progressState,
@@ -66,6 +67,19 @@ test("trace cache identity changes with registry size or modification time", () 
       modifiedTime: "2026-07-23T01:00:01.000Z",
     }),
   );
+});
+
+test("run search matches registry metadata case-insensitively and keeps registry order", () => {
+  const traces = [
+    { id: "a", label: "Alpha", model: "Qwen", mode: "decode", relativePath: "nightly/a.jsonl" },
+    { id: "b", label: "Beta", checkpoint: "GLM-5.2", capture: "Prefill", relativePath: "runs/b.jsonl" },
+    { id: "c", label: "Gamma", quantization: "oQ4e", relativePath: "archive/c.jsonl" },
+  ];
+  assert.deepEqual(filterTraces(traces, "glm prefill").map(({ id }) => id), ["b"]);
+  assert.deepEqual(filterTraces(traces, "RUNS").map(({ id }) => id), ["b"]);
+  assert.deepEqual(filterTraces(traces, "q").map(({ id }) => id), ["a", "c"]);
+  assert.deepEqual(filterTraces(traces, "missing"), []);
+  assert.deepEqual(filterTraces(traces, "   ").map(({ id }) => id), ["a", "b", "c"]);
 });
 
 test("dataset construction uses an asynchronous worker boundary for large inputs", async () => {

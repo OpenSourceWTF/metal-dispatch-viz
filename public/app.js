@@ -1624,6 +1624,27 @@ export function traceRailState(trace, dataset) {
   return { model, mode, evidence, evidenceValid: false };
 }
 
+export function filterTraces(traces, query) {
+  const safeTraces = Array.isArray(traces) ? traces : [];
+  const tokens = String(query ?? "").trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return [...safeTraces];
+  return safeTraces.filter((trace) => {
+    const haystack = [
+      traceLabel(trace),
+      trace?.name,
+      trace?.relativePath,
+      trace?.model,
+      trace?.mode,
+      trace?.checkpoint,
+      trace?.quantization,
+      trace?.capture,
+      trace?.capture_label,
+      trace?.capture_mode,
+    ].filter(Boolean).join(" ").toLocaleLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+  });
+}
+
 export function renderTraceRail({
   documentObject,
   track,
@@ -1631,6 +1652,7 @@ export function renderTraceRail({
   selectedId,
   evidenceByCacheKey,
   onSelect,
+  emptyMessage = "No .jsonl or .ndjson traces in this directory.",
 }) {
   const previousButtons = track.querySelectorAll?.(".trace-toggle") ?? [];
   const activeElement = documentObject.activeElement;
@@ -1644,7 +1666,7 @@ export function renderTraceRail({
       documentObject,
       track,
       "p",
-      "No .jsonl or .ndjson traces in this directory.",
+      emptyMessage,
       "trace-rail-empty",
     );
     return [];
@@ -1658,6 +1680,8 @@ export function renderTraceRail({
     const button = documentObject.createElement("button");
     button.type = "button";
     button.className = "trace-toggle";
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(trace.id === selectedId));
     button.setAttribute("aria-pressed", String(trace.id === selectedId));
     button.setAttribute("data-trace-id", trace.id);
     button.setAttribute(
@@ -1812,7 +1836,9 @@ export async function bootstrap({
     refresh: byId("refresh-button"),
     theme: byId("theme-toggle"),
     rail: byId("trace-rail"),
+    traceSearch: byId("trace-search"),
     track: byId("trace-track"),
+    selectedTraceSummary: byId("selected-trace-summary"),
     provenance: byId("provenance-strip"),
     health: byId("health-strip"),
     status: byId("trace-status"),
@@ -1995,19 +2021,49 @@ export async function bootstrap({
 
   function renderRegistry() {
     elements.rail.setAttribute("aria-busy", "false");
+    const selectedTrace = state.traces.find((trace) => trace?.id === state.currentTraceId);
+    if (
+      selectedTrace &&
+      elements.track.hidden &&
+      documentObject.activeElement !== elements.traceSearch
+    ) {
+      elements.traceSearch.value = traceLabel(selectedTrace);
+    }
+    const visibleTraces = filterTraces(state.traces, elements.traceSearch.value);
+    elements.traceSearch.disabled = state.traces.length === 0;
+    elements.traceSearch.setAttribute("aria-expanded", String(!elements.track.hidden));
     renderTraceRail({
       documentObject,
       track: elements.track,
-      traces: state.traces,
+      traces: visibleTraces,
       selectedId: state.currentTraceId,
       evidenceByCacheKey: state.evidenceByCacheKey,
+      emptyMessage:
+        state.traces.length === 0
+          ? "No .jsonl or .ndjson traces in this directory."
+          : "No runs match this search.",
       onSelect(id) {
+        const trace = state.traces.find((item) => item?.id === id);
+        elements.traceSearch.value = trace ? traceLabel(trace) : "";
+        elements.track.hidden = true;
+        elements.traceSearch.setAttribute("aria-expanded", "false");
         void selectTrace(id, {
           requestedWindow: 0,
           recordSelection: true,
         });
       },
     });
+    if (selectedTrace) {
+      const railState = traceRailState(
+        selectedTrace,
+        state.evidenceByCacheKey.get(traceCacheKey(selectedTrace)),
+      );
+      elements.selectedTraceSummary.textContent =
+        `${railState.model} · ${railState.mode} · ${railState.evidence}`;
+    } else {
+      elements.selectedTraceSummary.textContent =
+        state.traces.length === 0 ? "No runs available" : "Choose a run";
+    }
   }
 
   function renderProgress(progress, fallbackTotalBytes) {
@@ -2675,6 +2731,39 @@ export async function bootstrap({
   elements.windowSelect.addEventListener("change", () => {
     renderSelectedWindow(Number.parseInt(elements.windowSelect.value, 10));
   });
+  elements.traceSearch.addEventListener("focus", () => {
+    elements.traceSearch.value = "";
+    elements.track.hidden = false;
+    renderRegistry();
+  });
+  elements.rail.addEventListener("focusout", (event) => {
+    if (elements.rail.contains?.(event.relatedTarget)) return;
+    elements.track.hidden = true;
+    const selected = state.traces.find((trace) => trace?.id === state.currentTraceId);
+    elements.traceSearch.value = selected ? traceLabel(selected) : "";
+    elements.traceSearch.setAttribute("aria-expanded", "false");
+  });
+  elements.traceSearch.addEventListener("input", () => {
+    elements.track.hidden = false;
+    renderRegistry();
+  });
+  elements.traceSearch.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      elements.track.hidden = true;
+      const selected = state.traces.find((trace) => trace?.id === state.currentTraceId);
+      elements.traceSearch.value = selected ? traceLabel(selected) : "";
+      elements.traceSearch.setAttribute("aria-expanded", "false");
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      elements.track.hidden = false;
+      renderRegistry();
+      const first = elements.track.querySelector?.(".trace-toggle");
+      first?.focus?.({ preventScroll: true });
+      event.preventDefault();
+    }
+  });
   elements.clearSelection.addEventListener("click", () => {
     renderer.clearSelection();
   });
@@ -2685,7 +2774,7 @@ export async function bootstrap({
   elements.zoomOut.addEventListener("click", () => {
     renderer.handleKeyDown({ key: "-", preventDefault() {} });
   });
-  elements.rail.addEventListener("keydown", (event) => {
+  elements.track.addEventListener("keydown", (event) => {
     handleTraceRailKey({
       documentObject,
       track: elements.track,

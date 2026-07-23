@@ -190,6 +190,9 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     "refresh-button",
     "theme-toggle",
     "trace-rail",
+    "trace-search",
+    "trace-track",
+    "selected-trace-summary",
     "trace-status",
     "provenance-strip",
     "health-strip",
@@ -213,6 +216,10 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
   ]) {
     assert.ok(byId.has(id), `#${id}`);
   }
+
+  assert.equal(byId.get("trace-search").attributes.get("role"), "combobox");
+  assert.equal(byId.get("trace-search").attributes.get("aria-controls"), "trace-track");
+  assert.equal(byId.get("trace-track").attributes.get("role"), "listbox");
 
   const labels = nodes.filter((node) => node.name === "label");
   for (const targetId of ["window-select", "loading-progress"]) {

@@ -600,6 +600,53 @@ test("renderer coalesces frames, scales for DPR, and completely tears down lifec
   assert.equal(renderer.destroyed, true);
 });
 
+test("primary drag zooms to a selected range while Shift-drag retains panning", () => {
+  const environment = createEnvironment({ width: 600 });
+  const changes = [];
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onViewportChange(viewport) {
+      changes.push({ ...viewport });
+    },
+  });
+  renderer.setDataset(dataset({ startNs: 0, endNs: 1000 }));
+  renderer.render();
+
+  environment.emit("pointerdown", { clientX: 120 });
+  environment.emit("pointermove", { clientX: 420 });
+  assert.equal(renderer.drag.mode, "range");
+  assert.equal(renderer.viewport.endNs, 1000, "range preview does not mutate viewport");
+  environment.emit("pointerup", { clientX: 420 });
+  assert.deepEqual(renderer.viewport, { startNs: 200, endNs: 700 });
+  assert.ok(changes.length > 0);
+
+  const beforePan = { ...renderer.viewport };
+  environment.emit("pointerdown", { clientX: 300, shiftKey: true });
+  environment.emit("pointermove", { clientX: 240, shiftKey: true });
+  assert.equal(renderer.drag.mode, "pan");
+  environment.emit("pointerup", { clientX: 240, shiftKey: true });
+  assert.ok(renderer.viewport.startNs > beforePan.startNs);
+});
+
+test("tiny range drag remains a click and Escape cancels a range preview", () => {
+  const environment = createEnvironment({ width: 600 });
+  const item = dispatch(50);
+  const renderer = new TimelineRenderer(environment.canvas);
+  renderer.setDataset(dataset({ dispatches: [item] }));
+  renderer.render();
+  const original = { ...renderer.viewport };
+
+  environment.emit("pointerdown", { clientX: 100 });
+  environment.emit("pointermove", { clientX: 102 });
+  environment.emit("pointerup", { clientX: 102 });
+  assert.deepEqual(renderer.viewport, original);
+
+  environment.emit("pointerdown", { clientX: 100 });
+  environment.emit("pointermove", { clientX: 300 });
+  renderer.handleKeyDown({ key: "Escape", preventDefault() {} });
+  assert.equal(renderer.drag, null);
+  assert.deepEqual(renderer.viewport, original);
+});
+
 test("360–440px canvases keep logical lanes, hit targets, and pointer mapping aligned", () => {
   for (const height of [360, 440]) {
     const environment = createEnvironment({ width: 200, height });

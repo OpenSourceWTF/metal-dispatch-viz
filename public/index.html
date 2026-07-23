@@ -34,21 +34,31 @@
 
     <main>
       <div class="instrument">
-        <h2 class="visually-hidden">Available traces</h2>
+        <h2 class="visually-hidden">Available runs</h2>
         <nav
           id="trace-rail"
           class="trace-rail"
-          aria-label="Trace files"
+          aria-label="Run selector"
           aria-busy="true"
         >
-          <div id="trace-track" class="trace-track">
-            <button class="trace-toggle trace-toggle-placeholder" type="button" aria-pressed="false" disabled>
-              <span class="trace-name">Scanning directory</span>
-              <span class="trace-model">Model: Unknown</span>
-              <span class="trace-mode">Mode: Unknown</span>
-              <span class="trace-badge trace-evidence-pending">Evidence: Pending</span>
-            </button>
+          <div class="trace-combobox">
+            <label for="trace-search">Run</label>
+            <input
+              id="trace-search"
+              type="search"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-controls="trace-track"
+              aria-expanded="false"
+              placeholder="Search runs…"
+              autocomplete="off"
+              disabled
+            >
+            <div id="trace-track" class="trace-track" role="listbox" hidden>
+              <p class="trace-rail-empty">Scanning directory…</p>
+            </div>
           </div>
+          <output id="selected-trace-summary" class="selected-trace-summary">Waiting for registry</output>
         </nav>
 
         <section class="trace-context" aria-labelledby="trace-context-heading">
@@ -148,7 +158,7 @@
               </div>
 
               <p id="timeline-scroll-label" class="scroll-label">
-                Timeline viewport; horizontal scrolling reveals more timeline detail on narrow screens.
+                Drag to zoom · Shift-drag to pan · horizontal scrolling reveals more timeline detail on narrow screens.
               </p>
               <div class="timeline-term-legend" aria-label="Timeline terminology">
                 <span>Host encode <button class="term-trigger" type="button" data-term="host-encode" aria-label="Define Host encode" aria-controls="definition-tooltip" aria-expanded="false">ⓘ</button></span>
@@ -360,8 +370,8 @@
           <p class="manual-index">01 / OPERATE</p>
           <h3 id="manual-quick-start-heading">Quick start</h3>
           <ol>
-            <li>Select a trace from the top rail, then choose a launch when more than one is present.</li>
-            <li>Use Fit, zoom, and horizontal scroll to set the visible timeline range.</li>
+            <li>Search runs from the top dropdown, select a match, then choose a launch when more than one is present.</li>
+            <li>Drag to zoom, Shift-drag to pan, or use Fit and horizontal scroll to set the visible timeline range.</li>
             <li>Select a command buffer, dispatch, density bin, or wait to inspect linked evidence.</li>
             <li>Use Export for AI when available to package only the visible range; help never sends trace data anywhere.</li>
           </ol>
@@ -396,7 +406,9 @@
           <p class="manual-index">06 / KEYS</p>
           <h3 id="manual-keyboard-heading">Keyboard controls</h3>
           <dl class="shortcut-grid">
-            <div><dt>Trace rail</dt><dd>Arrow keys</dd></div>
+            <div><dt>Run results</dt><dd>↑ / ↓ / Enter</dd></div>
+            <div><dt>Range zoom</dt><dd>Drag</dd></div>
+            <div><dt>Pan</dt><dd>Shift-drag</dd></div>
             <div><dt>Zoom</dt><dd>+ / −</dd></div>
             <div><dt>Reset range</dt><dd>Fit</dd></div>
             <div><dt>Marks</dt><dd>[ / ]</dd></div>

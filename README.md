@@ -84,13 +84,16 @@ server-generated opaque ID. All metadata fields are optional.
 
 ## Workbench controls
 
-- Choose a trace with the button rail. Arrow keys move and select adjacent
-  traces.
+- Search runs from the top Run dropdown by label, path, model, mode,
+  checkpoint, quantization, or capture metadata. Arrow keys move through
+  matches and Enter loads the highlighted run.
 - Choose a launch when a file contains more than one launch window. The
   selector is hidden for a single launch.
-- Use the timeline buttons, mouse wheel, drag, or keyboard: arrows pan,
+- Use the timeline buttons, mouse wheel, or keyboard: arrows pan,
   `+`/`-` zoom, `0` fits, `[` and `]` move to the previous and next timeline
   mark, Enter pins the active mark, and Escape clears.
+- Drag to zoom into a horizontal timeline range. Shift-drag to pan without
+  changing the current zoom.
 - Select a command buffer, dispatch, density bin, or wait to populate the
   linked inspector.
 - Refresh rescans the folder while preserving the current opaque trace ID when

@@ -103,7 +103,8 @@ select:hover:not(:disabled) {
 }
 
 button:disabled,
-select:disabled {
+select:disabled,
+input:disabled {
   cursor: not-allowed;
   opacity: 0.62;
 }
@@ -267,21 +268,44 @@ main {
 }
 
 .trace-rail {
-  height: var(--trace-rail-height);
+  position: relative;
   min-height: var(--trace-rail-height);
-  overflow-x: auto;
-  overflow-y: hidden;
+  padding: 8px 14px;
+  display: grid;
+  grid-template-columns: minmax(240px, 520px) minmax(0, 1fr);
+  align-items: end;
+  gap: 14px;
   border-bottom: 1px solid var(--rule);
-  scrollbar-color: var(--secondary) var(--canvas);
-  scrollbar-width: thin;
+}
+
+.trace-combobox {
+  position: relative;
+  display: grid;
+  gap: 4px;
+}
+
+.trace-combobox label {
+  color: var(--secondary);
+  font: 700 9px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+#trace-search {
+  width: 100%;
 }
 
 .trace-track {
-  display: flex;
-  width: max-content;
-  min-width: 100%;
-  height: 100%;
-  align-items: stretch;
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: min(360px, 55vh);
+  overflow-y: auto;
+  border: 1px solid var(--control-border);
+  background: var(--panel);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 35%);
 }
 
 .trace-rail-empty {
@@ -293,18 +317,28 @@ main {
 
 .trace-toggle {
   position: relative;
-  min-width: 240px;
-  height: 100%;
+  width: 100%;
+  min-height: 64px;
   padding: 8px 104px 7px 13px;
   display: grid;
   align-content: center;
   justify-items: start;
   gap: 3px;
   border: 0;
-  border-right: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
   border-radius: 0;
   background: var(--panel);
   text-align: left;
+}
+
+.selected-trace-summary {
+  min-width: 0;
+  padding-bottom: 13px;
+  overflow: hidden;
+  color: var(--secondary);
+  font: 11px/1.3 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .trace-toggle[aria-pressed="true"] {
@@ -1363,6 +1397,12 @@ tbody th {
 
   .trace-rail {
     max-width: calc(100vw - 18px);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .selected-trace-summary {
+    padding-bottom: 0;
   }
 
   .provenance-strip {
