@@ -21,6 +21,7 @@ import {
   waitRowsForScope,
 } from "../public/app.js";
 import { compactDatasetForClient } from "../public/client-dataset.js";
+import { TimelineRenderer } from "../public/timeline.js";
 
 function deferred() {
   let resolve;
@@ -81,6 +82,31 @@ const BOOTSTRAP_IDS = [
   "analysis-tables",
 ];
 
+function bootstrapCanvasContext() {
+  return new Proxy(
+    {
+      createPattern() {
+        return "pattern";
+      },
+      measureText(text) {
+        return { width: String(text).length * 6 };
+      },
+      setLineDash() {},
+    },
+    {
+      get(target, property) {
+        if (property in target) return target[property];
+        if (typeof property === "symbol") return undefined;
+        return () => {};
+      },
+      set(target, property, value) {
+        target[property] = value;
+        return true;
+      },
+    },
+  );
+}
+
 class BootstrapElement {
   constructor(documentObject, id = "", tagName = "div") {
     this.ownerDocument = documentObject;
@@ -96,6 +122,8 @@ class BootstrapElement {
     this.textContent = "";
     this.value = "";
     this.max = 1;
+    this.canvasContext =
+      this.tagName === "CANVAS" ? bootstrapCanvasContext() : null;
     this.classList = {
       add: (...names) => {
         const values = new Set(this.className.split(/\s+/).filter(Boolean));
@@ -165,6 +193,16 @@ class BootstrapElement {
     this.ownerDocument.activeElement = this;
   }
 
+  getContext(kind) {
+    return kind === "2d" ? this.canvasContext : null;
+  }
+
+  setPointerCapture() {}
+
+  releasePointerCapture() {}
+
+  remove() {}
+
   querySelector(selector) {
     const tagName = selector.toLowerCase();
     let child = this.children.find(
@@ -214,6 +252,7 @@ function bootstrapDocument() {
       id === "window-select" ? "select" :
       id.includes("table-body") ? "tbody" :
       id === "loading-progress" ? "progress" :
+      id === "timeline" || id === "range-overview" ? "canvas" :
       "div";
     documentObject.elements.set(
       id,
@@ -226,7 +265,9 @@ function bootstrapDocument() {
 
 function bootstrapWindow(documentObject, href) {
   let nextTimerId = 1;
+  let nextAnimationFrameId = 1;
   const timers = new Map();
+  const animationFrames = new Map();
   const historyWrites = [];
   const windowObject = {
     document: documentObject,
@@ -250,7 +291,16 @@ function bootstrapWindow(documentObject, href) {
     getComputedStyle() {
       return { getPropertyValue: () => "" };
     },
+    devicePixelRatio: 1,
     addEventListener() {},
+    requestAnimationFrame(callback) {
+      const id = nextAnimationFrameId++;
+      animationFrames.set(id, callback);
+      return id;
+    },
+    cancelAnimationFrame(id) {
+      animationFrames.delete(id);
+    },
     setTimeout(callback, delay) {
       const id = nextTimerId++;
       timers.set(id, { callback, delay });
@@ -263,6 +313,11 @@ function bootstrapWindow(documentObject, href) {
   documentObject.defaultView = windowObject;
   return {
     historyWrites,
+    runAnimationFrames() {
+      const pending = [...animationFrames.values()];
+      animationFrames.clear();
+      pending.forEach((callback) => callback(0));
+    },
     runTimers() {
       const pending = [...timers.values()];
       timers.clear();
@@ -362,6 +417,7 @@ function createBootstrapHarness({
   datasets = new Map(),
   cached = new Map(),
   deferredLoads = false,
+  useRealRenderer = false,
 } = {}) {
   const documentObject = bootstrapDocument();
   const windowHarness = bootstrapWindow(documentObject, href);
@@ -525,6 +581,14 @@ function createBootstrapHarness({
       cached.set(key, value);
     },
   };
+  const RendererConstructor = useRealRenderer
+    ? class InstrumentedTimelineRenderer extends TimelineRenderer {
+        constructor(canvas, callbacks) {
+          super(canvas, callbacks);
+          renderers.push(this);
+        }
+      }
+    : HarnessRenderer;
   const bootPromise = bootstrap({
     fetchImpl: async () => ({
       ok: true,
@@ -537,7 +601,7 @@ function createBootstrapHarness({
     cacheObject,
     documentObject,
     windowObject: windowHarness.windowObject,
-    RendererClass: HarnessRenderer,
+    RendererClass: RendererConstructor,
     RangeNavigatorClass: HarnessNavigator,
   });
   return {
@@ -1114,6 +1178,91 @@ test("bootstrap commits timeline View ranges once, resets launch and Fit, and fa
   assert.deepEqual(app.state.selectedRange, { startNs: 500, endNs: 600 });
 });
 
+test("real timeline Analyze pan survives exact-to-launch swap and commits once on release", async () => {
+  const launch = bootstrapLaunch();
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+      modifiedTime: "2026-07-23T00:00:00.000Z",
+    }],
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+    useRealRenderer: true,
+  });
+  const app = await harness.bootPromise;
+  harness.runAnimationFrames();
+  const renderer = harness.renderers[0];
+  const navigator = harness.navigators[0];
+  const session = harness.sessions[0];
+  const canvas = harness.documentObject.getElementById("timeline");
+
+  navigator.emitCommit({ startNs: 20, endNs: 80 });
+  harness.documentObject.getElementById("range-mode-analyze").click();
+  session.analysis[0].resolve({
+    range: { startNs: 20, endNs: 80 },
+    dataset: analyzedScope({ startNs: 20, endNs: 80 }),
+  });
+  await flushMicrotasks();
+  harness.runAnimationFrames();
+  const historyBeforePan = harness.historyWrites.length;
+
+  canvas.dispatch("pointerdown", {
+    button: 0,
+    clientX: 560,
+    clientY: 150,
+    pointerId: 42,
+  });
+  canvas.dispatch("pointermove", {
+    clientX: 540,
+    clientY: 150,
+    pointerId: 42,
+  });
+  const firstViewport = { ...renderer.viewport };
+  assert.ok(renderer.drag, "first transient move retains the active pointer drag");
+  assert.equal(app.state.canvasScope, launch);
+
+  canvas.dispatch("pointermove", {
+    clientX: 520,
+    clientY: 150,
+    pointerId: 42,
+  });
+  assert.notDeepEqual(
+    renderer.viewport,
+    firstViewport,
+    "the second move continues the original pan",
+  );
+  canvas.dispatch("pointerup", {
+    clientX: 520,
+    clientY: 150,
+    pointerId: 42,
+  });
+  assert.equal(renderer.drag, null);
+  assert.equal(session.analysis.length, 2, "release issues one exact request");
+  harness.runTimers();
+  assert.equal(
+    session.analysis.length,
+    2,
+    "release cancels the transient debounce request",
+  );
+
+  const committed = session.analysis[1].request;
+  session.analysis[1].resolve({
+    range: {
+      startNs: committed.startNs,
+      endNs: committed.endNs,
+    },
+    dataset: analyzedScope({
+      startNs: committed.startNs,
+      endNs: committed.endNs,
+    }),
+  });
+  await flushMicrotasks();
+  assert.equal(harness.historyWrites.length, historyBeforePan + 1);
+});
+
 test("range URL stores launch-relative offsets and mode", () => {
   const url = rangeSelectionUrl(
     "http://localhost/?trace=t&window=1",
@@ -1148,6 +1297,10 @@ test("invalid range URL restores View over the complete launch", () => {
     "http://localhost/?range=analyze&from=&to=20",
     "http://localhost/?range=analyze&from=%20%20&to=20",
     "http://localhost/?range=analyze&from=0&to=%09",
+    "http://localhost/?from=0&to=20",
+    "http://localhost/?range=invalid&from=0&to=20",
+    "http://localhost/?range=view&from=0x10&to=20",
+    "http://localhost/?range=view&from=0&to=2e1",
   ]) {
     assert.deepEqual(parseRangeSelection(input, bounds), {
       mode: "view",

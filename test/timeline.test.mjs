@@ -1086,3 +1086,43 @@ test("sub-threshold pointer jitter still commits a viewport change on release", 
   assert.equal(changes.length, 2);
   renderer.destroy();
 });
+
+test("dataset replacement preserves a drag only within identical launch bounds", () => {
+  const environment = createEnvironment({ width: 200 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  renderer.setDataset(dataset({ startNs: 0, endNs: 100 }), {
+    bounds: { startNs: 0, endNs: 100 },
+    viewport: { startNs: 20, endNs: 80 },
+    interactionIdentity: "trace-a:launch-0",
+  });
+
+  environment.emit("pointerdown", { clientX: 100, pointerId: 9 });
+  environment.emit("pointermove", { clientX: 90, pointerId: 9 });
+  const activeDrag = renderer.drag;
+  renderer.setDataset(dataset({ startNs: 0, endNs: 100 }), {
+    bounds: { startNs: 0, endNs: 100 },
+    viewport: renderer.viewport,
+    interactionIdentity: "trace-a:launch-0",
+    preservePointerDrag: true,
+  });
+  assert.equal(renderer.drag, activeDrag);
+
+  renderer.setDataset(dataset({ startNs: 0, endNs: 100 }), {
+    bounds: { startNs: 0, endNs: 100 },
+    viewport: renderer.viewport,
+    interactionIdentity: "trace-b:launch-0",
+    preservePointerDrag: true,
+  });
+  assert.equal(renderer.drag, null);
+
+  environment.emit("pointerdown", { clientX: 100, pointerId: 10 });
+  environment.emit("pointermove", { clientX: 90, pointerId: 10 });
+  renderer.setDataset(dataset({ startNs: 200, endNs: 300 }), {
+    bounds: { startNs: 200, endNs: 300 },
+    viewport: { startNs: 220, endNs: 280 },
+    interactionIdentity: "trace-b:launch-0",
+    preservePointerDrag: true,
+  });
+  assert.equal(renderer.drag, null);
+  renderer.destroy();
+});

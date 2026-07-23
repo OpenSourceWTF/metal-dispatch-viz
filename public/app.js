@@ -135,6 +135,7 @@ export function parseRangeSelection(input, bounds) {
     throw new TypeError("Launch bounds must have positive safe-integer duration.");
   }
   const url = new URL(input, "http://localhost/");
+  const mode = url.searchParams.get("range");
   const fromValue = url.searchParams.get("from");
   const toValue = url.searchParams.get("to");
   const from = Number(fromValue);
@@ -142,10 +143,11 @@ export function parseRangeSelection(input, bounds) {
   const startNs = bounds.startNs + from;
   const endNs = bounds.startNs + to;
   const valid =
+    (mode === "view" || mode === "analyze") &&
     fromValue !== null &&
     toValue !== null &&
-    fromValue.trim() !== "" &&
-    toValue.trim() !== "" &&
+    /^-?[0-9]+$/.test(fromValue) &&
+    /^-?[0-9]+$/.test(toValue) &&
     Number.isSafeInteger(from) &&
     Number.isSafeInteger(to) &&
     to > from &&
@@ -153,7 +155,7 @@ export function parseRangeSelection(input, bounds) {
     Number.isSafeInteger(endNs);
   if (!valid) return completeLaunchSelection(bounds);
   return {
-    mode: url.searchParams.get("range") === "analyze" ? "analyze" : "view",
+    mode,
     range: clampViewport({ startNs, endNs }, bounds),
   };
 }
@@ -1253,15 +1255,28 @@ export async function bootstrap({
     renderSamplingNote(scope);
   }
 
-  function renderCanvasScope(scope, { preserveInspector = false } = {}) {
+  function renderCanvasScope(
+    scope,
+    {
+      preserveInspector = false,
+      preservePointerDrag = false,
+    } = {},
+  ) {
     const bounds = selectedLaunchBounds();
     const viewport = state.selectedRange ?? bounds;
     const pinned = preserveInspector ? state.inspectorPayload : null;
+    const interactionIdentity =
+      typeof state.currentTraceId === "string" &&
+      Number.isInteger(state.currentWindowIndex)
+        ? `${state.currentTraceId}:${state.currentWindowIndex}`
+        : undefined;
     state.canvasScope = scope;
     renderer.setDataset(scope ?? {}, {
       bounds: bounds ?? undefined,
+      interactionIdentity,
       viewport: viewport ?? undefined,
       window: bounds ?? undefined,
+      preservePointerDrag,
     });
     if (pinned) {
       state.inspectorPayload = pinned;
@@ -1406,7 +1421,10 @@ export async function bootstrap({
     });
     if (state.rangeMode === "analyze") {
       if (state.canvasScope !== state.launchScope) {
-        renderCanvasScope(state.launchScope, { preserveInspector: true });
+        renderCanvasScope(state.launchScope, {
+          preserveInspector: true,
+          preservePointerDrag: !committed,
+        });
       }
       setAnalysisBusy(true, { updateStatus: committed });
       scheduleRangeAnalysis(state.selectedRange, committed);

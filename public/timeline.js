@@ -528,6 +528,7 @@ export class TimelineRenderer {
     this.frameId = null;
     this.destroyed = false;
     this.drag = null;
+    this.interactionIdentity = null;
     this.selectedWindow = null;
     this.datasetGeneration = 0;
     this.analysisCache = null;
@@ -627,6 +628,15 @@ export class TimelineRenderer {
   }
 
   setDataset(data, options = {}) {
+    const previousBounds = this.bounds;
+    const previousInteractionIdentity = this.interactionIdentity;
+    const nextInteractionIdentity =
+      typeof options.interactionIdentity === "string" &&
+      options.interactionIdentity !== ""
+        ? options.interactionIdentity
+        : null;
+    const preservedDrag =
+      options.preservePointerDrag === true && this.drag ? this.drag : null;
     this.hideTooltip();
     this.selection = { dispatch: null, commandBuffer: null, wait: null, bin: null };
     this.hovered = null;
@@ -709,6 +719,16 @@ export class TimelineRenderer {
     this.bounds = validRange(options.bounds)
       ? normalizedBounds(options.bounds)
       : naturalBounds;
+    if (
+      preservedDrag &&
+      nextInteractionIdentity !== null &&
+      nextInteractionIdentity === previousInteractionIdentity &&
+      this.bounds.startNs === previousBounds.startNs &&
+      this.bounds.endNs === previousBounds.endNs
+    ) {
+      this.drag = preservedDrag;
+    }
+    this.interactionIdentity = nextInteractionIdentity;
     const selectedWindow =
       (validRange(options) ? options : options.window) ??
       safeData.selectedWindow ??
