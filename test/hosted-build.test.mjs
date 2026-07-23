@@ -3,7 +3,9 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -41,6 +43,11 @@ test("hosted build emits static UI, registry, and source traces", async (t) => {
       },
     }),
   );
+  await writeFile(path.join(traceRoot, ".private-token"), "do not publish");
+  await writeFile(path.join(traceRoot, "notes.txt"), "do not publish");
+  const outsideTrace = path.join(root, "outside.jsonl");
+  await writeFile(outsideTrace, '{"record":"outside"}\n');
+  await symlink(outsideTrace, path.join(traceRoot, "nested", "linked.jsonl"));
 
   const result = await buildHostedSite({
     publicRoot,
@@ -79,4 +86,89 @@ test("hosted build emits static UI, registry, and source traces", async (t) => {
   assert.equal(registry.traces[0].label, "Capture one");
   assert.equal(registry.traces[0].relativePath, "nested/capture one.jsonl");
   assert.equal("sourceUrl" in registry.traces[0], false);
+  for (const unpublished of [
+    path.join(outputRoot, "traces", "showcase", ".private-token"),
+    path.join(outputRoot, "traces", "showcase", "notes.txt"),
+    path.join(outputRoot, "traces", "showcase", "nested", "linked.jsonl"),
+  ]) {
+    await assert.rejects(readFile(unpublished), { code: "ENOENT" });
+  }
+});
+
+test("hosted build rejects nested and symlink-aliased output without deleting sources", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-output-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const publicRoot = path.join(root, "public");
+  const traceRoot = path.join(root, "showcase");
+  await mkdir(publicRoot, { recursive: true });
+  await mkdir(traceRoot, { recursive: true });
+  const publicMarker = path.join(publicRoot, "index.html");
+  const traceMarker = path.join(traceRoot, "capture.jsonl");
+  await writeFile(publicMarker, "public marker");
+  await writeFile(traceMarker, '{"record":"summary"}\n');
+
+  await assert.rejects(
+    buildHostedSite({
+      publicRoot,
+      traceRoot,
+      outputRoot: path.join(publicRoot, "dist"),
+    }),
+    /must not overlap/i,
+  );
+  assert.equal(await readFile(publicMarker, "utf8"), "public marker");
+
+  const publicAlias = path.join(root, "public-alias");
+  await symlink(publicRoot, publicAlias);
+  await assert.rejects(
+    buildHostedSite({
+      publicRoot,
+      traceRoot,
+      outputRoot: path.join(publicAlias, "dist"),
+    }),
+    /must not overlap/i,
+  );
+  assert.equal(await readFile(publicMarker, "utf8"), "public marker");
+  assert.match(await readFile(traceMarker, "utf8"), /summary/);
+});
+
+test("hosted build keeps the prior artifact when a registered trace path is swapped", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-swap-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const publicRoot = path.join(root, "public");
+  const traceRoot = path.join(root, "showcase");
+  const outputRoot = path.join(root, "dist");
+  await mkdir(publicRoot, { recursive: true });
+  await mkdir(traceRoot, { recursive: true });
+  await mkdir(outputRoot, { recursive: true });
+  await writeFile(path.join(publicRoot, "index.html"), "new public");
+  const tracePath = path.join(traceRoot, "capture.jsonl");
+  const originalPath = path.join(root, "original.jsonl");
+  const replacementPath = path.join(root, "replacement.jsonl");
+  await writeFile(tracePath, '{"record":"original"}\n');
+  await writeFile(replacementPath, '{"record":"replacement"}\n');
+  await writeFile(path.join(outputRoot, "sentinel.txt"), "prior artifact");
+
+  let swapped = false;
+  await assert.rejects(
+    buildHostedSite({
+      publicRoot,
+      traceRoot,
+      outputRoot,
+      registryHooks: {
+        async afterTraceOpen() {
+          if (swapped) return;
+          swapped = true;
+          await rename(tracePath, originalPath);
+          await rename(replacementPath, tracePath);
+        },
+      },
+    }),
+    /changed before it could be published/i,
+  );
+
+  assert.equal(
+    await readFile(path.join(outputRoot, "sentinel.txt"), "utf8"),
+    "prior artifact",
+  );
+  assert.match(await readFile(tracePath, "utf8"), /replacement/);
 });
