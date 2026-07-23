@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   opendir,
+  readFile,
   realpath,
   rename,
   rm,
@@ -15,6 +16,28 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { TraceRegistry } from "../server/trace-registry.mjs";
+
+const SITES_WORKER_SOURCE = `export default {
+  async fetch(request, env) {
+    if (!env?.ASSETS || typeof env.ASSETS.fetch !== "function") {
+      return new Response("Hosted assets are unavailable.", {
+        status: 503,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    const url = new URL(request.url);
+    if (
+      url.pathname === "/" &&
+      (request.method === "GET" || request.method === "HEAD")
+    ) {
+      url.pathname = "/index.html";
+      request = new Request(url, request);
+    }
+    return env.ASSETS.fetch(request);
+  },
+};
+`;
 
 function resolvedDirectory(value, label) {
   if (value instanceof URL) {
@@ -100,6 +123,33 @@ async function pathExists(targetPath) {
   }
 }
 
+async function readHostingConfig(hostingConfigPath) {
+  const source = await readFile(
+    resolvedDirectory(hostingConfigPath, "hostingConfigPath"),
+    "utf8",
+  );
+  let config;
+  try {
+    config = JSON.parse(source);
+  } catch (error) {
+    throw new SyntaxError(
+      `hostingConfigPath must contain valid JSON: ${error.message}`,
+    );
+  }
+  if (
+    config === null ||
+    typeof config !== "object" ||
+    Array.isArray(config) ||
+    typeof config.project_id !== "string" ||
+    config.project_id.trim() === ""
+  ) {
+    throw new TypeError(
+      "hostingConfigPath must contain a non-empty project_id.",
+    );
+  }
+  return source;
+}
+
 async function publishRegisteredTraces({
   registry,
   registryPayload,
@@ -136,6 +186,7 @@ export async function buildHostedSite({
   publicRoot,
   traceRoot,
   outputRoot,
+  hostingConfigPath = new URL("../.openai/hosting.json", import.meta.url),
   registryHooks = {},
   replacementHooks = {},
 }) {
@@ -156,6 +207,7 @@ export async function buildHostedSite({
       "outputRoot must not overlap either source directory.",
     );
   }
+  const hostingConfig = await readHostingConfig(hostingConfigPath);
 
   const registry = new TraceRegistry(sourceTraces, {
     hooks: registryHooks,
@@ -170,24 +222,39 @@ export async function buildHostedSite({
   let published = false;
   let backup = null;
   try {
-    await cp(sourcePublic, staging, { recursive: true });
-    await assertNoSymlinks(staging);
+    const clientRoot = path.join(staging, "client");
+    await cp(sourcePublic, clientRoot, { recursive: true });
+    await assertNoSymlinks(clientRoot);
     await assertMissing(
-      path.join(staging, "traces"),
+      path.join(clientRoot, "traces"),
       "public/traces",
     );
     await assertMissing(
-      path.join(staging, "hosted-traces.json"),
+      path.join(clientRoot, "hosted-traces.json"),
       "public/hosted-traces.json",
     );
     await publishRegisteredTraces({
       registry,
       registryPayload,
-      outputRoot: path.join(staging, "traces", "showcase"),
+      outputRoot: path.join(clientRoot, "traces", "showcase"),
     });
     await writeFile(
-      path.join(staging, "hosted-traces.json"),
+      path.join(clientRoot, "hosted-traces.json"),
       `${JSON.stringify(registryPayload)}\n`,
+    );
+    await mkdir(path.join(staging, "server"), { recursive: true });
+    await writeFile(
+      path.join(staging, "server", "index.js"),
+      SITES_WORKER_SOURCE,
+    );
+    await mkdir(path.join(staging, ".openai"), { recursive: true });
+    await writeFile(
+      path.join(staging, ".openai", "hosting.json"),
+      hostingConfig,
+    );
+    await writeFile(
+      path.join(staging, "package.json"),
+      '{"type":"module"}\n',
     );
     if (await pathExists(output)) {
       backup = await mkdtemp(

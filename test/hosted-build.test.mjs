@@ -11,8 +11,81 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { buildHostedSite } from "../scripts/build_hosted.mjs";
+
+test("hosted build emits the Sites worker artifact contract", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-sites-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const publicRoot = path.join(root, "public");
+  const traceRoot = path.join(root, "showcase");
+  const outputRoot = path.join(root, "dist");
+  const hostingConfigPath = path.join(root, ".openai", "hosting.json");
+  await mkdir(publicRoot, { recursive: true });
+  await mkdir(traceRoot, { recursive: true });
+  await mkdir(path.dirname(hostingConfigPath), { recursive: true });
+  await writeFile(
+    path.join(publicRoot, "index.html"),
+    "<!doctype html><title>Hosted profiler</title>",
+  );
+  await writeFile(
+    path.join(traceRoot, "capture.jsonl"),
+    '{"record":"summary"}\n',
+  );
+  await writeFile(
+    hostingConfigPath,
+    '{"project_id":"appgprj_test"}\n',
+  );
+
+  await buildHostedSite({
+    publicRoot,
+    traceRoot,
+    outputRoot,
+    hostingConfigPath,
+  });
+
+  assert.match(
+    await readFile(path.join(outputRoot, "client", "index.html"), "utf8"),
+    /Hosted profiler/,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(
+        path.join(outputRoot, ".openai", "hosting.json"),
+        "utf8",
+      ),
+    ),
+    { project_id: "appgprj_test" },
+  );
+
+  const workerUrl = pathToFileURL(
+    path.join(outputRoot, "server", "index.js"),
+  );
+  workerUrl.searchParams.set("test", `${Date.now()}-${Math.random()}`);
+  const worker = (await import(workerUrl.href)).default;
+  let assetPath = null;
+  const response = await worker.fetch(
+    new Request("https://profiler.example/"),
+    {
+      ASSETS: {
+        fetch(request) {
+          assetPath = new URL(request.url).pathname;
+          return new Response("asset");
+        },
+      },
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "asset");
+  assert.equal(assetPath, "/index.html");
+
+  const missingBinding = await worker.fetch(
+    new Request("https://profiler.example/"),
+    {},
+  );
+  assert.equal(missingBinding.status, 503);
+});
 
 test("hosted build emits static UI, registry, and source traces", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-hosted-"));
@@ -57,17 +130,18 @@ test("hosted build emits static UI, registry, and source traces", async (t) => {
 
   assert.equal(result.traceCount, 1);
   assert.match(
-    await readFile(path.join(outputRoot, "index.html"), "utf8"),
+    await readFile(path.join(outputRoot, "client", "index.html"), "utf8"),
     /Hosted profiler/,
   );
   assert.equal(
-    await readFile(path.join(outputRoot, "app.js"), "utf8"),
+    await readFile(path.join(outputRoot, "client", "app.js"), "utf8"),
     "export {};\n",
   );
   assert.match(
     await readFile(
       path.join(
         outputRoot,
+        "client",
         "traces",
         "showcase",
         "nested",
@@ -78,7 +152,10 @@ test("hosted build emits static UI, registry, and source traces", async (t) => {
     /"summary"/,
   );
   const registry = JSON.parse(
-    await readFile(path.join(outputRoot, "hosted-traces.json"), "utf8"),
+    await readFile(
+      path.join(outputRoot, "client", "hosted-traces.json"),
+      "utf8",
+    ),
   );
   assert.equal(registry.schemaVersion, 1);
   assert.equal(registry.rootLabel, "Hosted showcase");
@@ -87,9 +164,28 @@ test("hosted build emits static UI, registry, and source traces", async (t) => {
   assert.equal(registry.traces[0].relativePath, "nested/capture one.jsonl");
   assert.equal("sourceUrl" in registry.traces[0], false);
   for (const unpublished of [
-    path.join(outputRoot, "traces", "showcase", ".private-token"),
-    path.join(outputRoot, "traces", "showcase", "notes.txt"),
-    path.join(outputRoot, "traces", "showcase", "nested", "linked.jsonl"),
+    path.join(
+      outputRoot,
+      "client",
+      "traces",
+      "showcase",
+      ".private-token",
+    ),
+    path.join(
+      outputRoot,
+      "client",
+      "traces",
+      "showcase",
+      "notes.txt",
+    ),
+    path.join(
+      outputRoot,
+      "client",
+      "traces",
+      "showcase",
+      "nested",
+      "linked.jsonl",
+    ),
   ]) {
     await assert.rejects(readFile(unpublished), { code: "ENOENT" });
   }
@@ -241,7 +337,10 @@ test("hosted build rolls back when the final artifact rename fails", async (t) =
     await readFile(path.join(outputRoot, "sentinel.txt"), "utf8"),
     "prior artifact",
   );
-  await assert.rejects(readFile(path.join(outputRoot, "index.html")), {
-    code: "ENOENT",
-  });
+  await assert.rejects(
+    readFile(path.join(outputRoot, "client", "index.html")),
+    {
+      code: "ENOENT",
+    },
+  );
 });
