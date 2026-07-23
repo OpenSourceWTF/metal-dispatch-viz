@@ -33,9 +33,17 @@ const SITES_WORKER_SOURCE = `export default {
     }
 
     const url = new URL(request.url);
+    const readsAsset =
+      request.method === "GET" || request.method === "HEAD";
     if (
+      url.pathname === "/api/traces" &&
+      readsAsset
+    ) {
+      url.pathname = "/hosted-traces.json";
+      request = new Request(url, request);
+    } else if (
       url.pathname === "/" &&
-      (request.method === "GET" || request.method === "HEAD")
+      readsAsset
     ) {
       url.pathname = "/index.html";
       request = new Request(url, request);

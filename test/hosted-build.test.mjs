@@ -94,6 +94,21 @@ test("hosted build emits the Sites worker artifact contract", async (t) => {
   assert.equal(await response.text(), "asset");
   assert.equal(assetPath, "/index.html");
 
+  const registryResponse = await worker.fetch(
+    new Request("https://profiler.example/api/traces"),
+    {
+      ASSETS: {
+        fetch(request) {
+          assetPath = new URL(request.url).pathname;
+          return new Response("registry");
+        },
+      },
+    },
+  );
+  assert.equal(registryResponse.status, 200);
+  assert.equal(await registryResponse.text(), "registry");
+  assert.equal(assetPath, "/hosted-traces.json");
+
   const missingBinding = await worker.fetch(
     new Request("https://profiler.example/"),
     {},
