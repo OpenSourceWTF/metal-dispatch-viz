@@ -5,12 +5,25 @@ import test from "node:test";
 import {
   aggregateKernelRows,
   aggregateWaitRows,
+  captureVisibleTimelineExport,
   chooseRefreshTraceId,
   chooseTraceId,
   chooseWindowIndex,
+  dismissHelpOnEscape,
+  dismissPinnedDefinitionFromPointer,
+  downloadExportText,
   evidenceBadges,
+  filterGlossaryEntries,
+  formatVisibleTimelineExport,
+  guardHelpDrawerFocus,
   metricRows,
   publishIfCurrent,
+  copyExportText,
+  createAiExportController,
+  cycleHelpDrawerFocus,
+  setHelpDrawerState,
+  setPinnedDefinitionState,
+  selectedLaunchExportContext,
   selectionUrl,
   traceLabel,
 } from "../public/app.js";
@@ -587,4 +600,749 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
   );
   assert.doesNotMatch(source, /\.innerHTML\b/);
   assert.doesNotMatch(source, /sample(?:Data|Trace)|fixtures\/sample/i);
+});
+
+test("contextual help shell is accessible, singular, and placed with workbench controls", async () => {
+  const html = await readFile(publicHtmlUrl, "utf8");
+  const nodes = parseHtmlStartTags(html);
+  const byId = new Map(
+    nodes
+      .filter((node) => typeof node.attributes.get("id") === "string")
+      .map((node) => [node.attributes.get("id"), node]),
+  );
+
+  for (const id of [
+    "field-manual-button",
+    "utility-backdrop",
+    "field-manual-drawer",
+    "field-manual-close",
+    "manual-search",
+    "manual-content",
+    "manual-glossary-list",
+    "definition-tooltip",
+    "definition-tooltip-title",
+    "definition-tooltip-body",
+    "definition-popover",
+    "definition-popover-close",
+    "definition-popover-manual",
+  ]) {
+    assert.ok(byId.has(id), `#${id}`);
+  }
+
+  const headerActions = nodes.find((node) => hasClass(node, "header-actions"));
+  assert.ok(isDescendantOf(byId.get("field-manual-button"), headerActions));
+  assert.equal(
+    nodes.filter((node) => node.attributes.get("id") === "utility-backdrop").length,
+    1,
+    "one shared utility backdrop",
+  );
+
+  const drawer = byId.get("field-manual-drawer");
+  assert.equal(drawer.attributes.get("role"), "dialog");
+  assert.equal(drawer.attributes.get("aria-modal"), "true");
+  assert.equal(drawer.attributes.get("aria-labelledby"), "field-manual-heading");
+  assert.equal(drawer.attributes.get("hidden"), true);
+  assert.equal(byId.get("utility-backdrop").attributes.get("hidden"), true);
+  assert.equal(byId.get("definition-tooltip").attributes.get("role"), "tooltip");
+  assert.equal(byId.get("definition-tooltip").attributes.get("hidden"), true);
+  assert.equal(byId.get("definition-popover").attributes.get("role"), "dialog");
+  assert.equal(byId.get("definition-popover").attributes.get("aria-modal"), "false");
+  assert.equal(byId.get("definition-popover").attributes.get("hidden"), true);
+  assert.equal(
+    nodes.some(
+      (node) =>
+        node.name === "button" &&
+        isDescendantOf(node, byId.get("definition-tooltip")),
+    ),
+    false,
+    "role=tooltip remains noninteractive",
+  );
+
+  const manualSearch = byId.get("manual-search");
+  assert.equal(manualSearch.name, "input");
+  assert.equal(manualSearch.attributes.get("type"), "search");
+  assert.ok(
+    nodes.some(
+      (node) =>
+        node.name === "label" &&
+        node.attributes.get("for") === "manual-search",
+    ),
+    "manual search has an explicit label",
+  );
+
+  for (const node of nodes.filter((node) => hasClass(node, "term-trigger"))) {
+    assert.equal(node.name, "button");
+    assert.equal(node.attributes.get("type"), "button");
+    assert.match(String(node.attributes.get("aria-label") ?? ""), /define/i);
+    assert.ok(node.attributes.get("data-term"), "term trigger has a stable glossary id");
+  }
+  assert.ok(
+    nodes.filter((node) => hasClass(node, "term-trigger")).length >= 12,
+    "initial shell exposes contextual definitions for specialized labels",
+  );
+  for (const termId of [
+    "host-encode",
+    "gpu-execute",
+    "wait-taxonomy",
+    "dispatch",
+    "dispatch-density",
+  ]) {
+    assert.ok(
+      nodes.some(
+        (node) =>
+          hasClass(node, "term-trigger") &&
+          node.attributes.get("data-term") === termId,
+      ),
+      `timeline help trigger for ${termId}`,
+    );
+  }
+
+  for (const heading of [
+    /Quick start/i,
+    /Read the timeline/i,
+    /Measurements/i,
+    /Glossary/i,
+    /Evidence limits/i,
+    /Keyboard controls/i,
+  ]) {
+    assert.match(html, heading);
+  }
+});
+
+test("help styling preserves dense targets and responsive utility-drawer behavior", async () => {
+  const css = await readFile(publicCssUrl, "utf8");
+  const cleanCss = stripCssComments(css);
+  const rules = parseFlatCssRules(cleanCss);
+
+  const trigger = requireDeclarationRule(rules, ".term-trigger")[0];
+  assert.equal(trigger.get("min-width"), "44px");
+  assert.equal(trigger.get("min-block-size"), "44px");
+
+  const drawer = requireDeclarationRule(rules, ".utility-drawer")[0];
+  assert.equal(drawer.get("position"), "fixed");
+  assert.equal(drawer.get("right"), "0");
+  assert.match(drawer.get("width") ?? "", /min\(/);
+  assert.equal(drawer.get("display"), "flex");
+  assert.equal(drawer.get("flex-direction"), "column");
+  const manualContent = requireDeclarationRule(rules, ".manual-content")[0];
+  assert.equal(manualContent.get("flex"), "1");
+  assert.equal(manualContent.get("min-height"), "0");
+  assert.equal(manualContent.get("overflow-y"), "auto");
+  assert.equal(manualContent.has("height"), false);
+
+  const mobileDrawer = requireDeclarationRule(rules, ".utility-drawer").find(
+    (rule) => rule.get("width") === "100%",
+  );
+  assert.ok(mobileDrawer, "narrow utility drawer becomes a full-width sheet");
+  assert.equal(mobileDrawer.get("height"), "100dvh");
+  assert.match(cleanCss, /@media\s*\(max-width:\s*760px\)/);
+  assert.match(cleanCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+
+  const tooltip = requireDeclarationRule(rules, ".definition-tooltip")[0];
+  assert.equal(tooltip.get("position"), "fixed");
+  assert.equal(tooltip.get("z-index"), "30");
+  assert.match(cleanCss, /\.manual-entry:focus-visible/);
+});
+
+test("help helpers filter shared definitions, dismiss in priority order, and restore focus", () => {
+  assert.equal(filterGlossaryEntries("GPU BUSY")[0].id, "gpu-busy");
+  assert.ok(
+    filterGlossaryEntries("per-dispatch timing").some(
+      (entry) => entry.id === "ordered-placement",
+    ),
+  );
+
+  const calls = [];
+  const pinnedEvent = { key: "Escape", preventDefault() { calls.push("prevent"); } };
+  assert.equal(
+    dismissHelpOnEscape(pinnedEvent, {
+      drawerOpen: true,
+      tooltipPinned: true,
+      closeDrawer() { calls.push("drawer"); },
+      closeTooltip() { calls.push("tooltip"); },
+    }),
+    true,
+  );
+  assert.deepEqual(calls, ["prevent", "tooltip"]);
+
+  const attrs = new Map();
+  const drawer = {
+    hidden: true,
+    setAttribute(name, value) { attrs.set(name, value); },
+  };
+  const backdrop = { hidden: true };
+  const background = [{ inert: false }, { inert: false }];
+  let focused = null;
+  const opener = { focus() { focused = "opener"; } };
+  const focusTarget = { focus() { focused = "target"; } };
+  const state = { opener: null };
+
+  setHelpDrawerState({
+    drawer,
+    backdrop,
+    background,
+    open: true,
+    opener,
+    focusTarget,
+    state,
+  });
+  assert.equal(drawer.hidden, false);
+  assert.equal(backdrop.hidden, false);
+  assert.deepEqual(background.map((item) => item.inert), [true, true]);
+  assert.equal(attrs.get("aria-hidden"), "false");
+  assert.equal(focused, "target");
+
+  setHelpDrawerState({
+    drawer,
+    backdrop,
+    background,
+    open: false,
+    state,
+  });
+  assert.equal(drawer.hidden, true);
+  assert.equal(backdrop.hidden, true);
+  assert.deepEqual(background.map((item) => item.inert), [false, false]);
+  assert.equal(attrs.get("aria-hidden"), "true");
+  assert.equal(focused, "opener");
+});
+
+test("drawer focus cycles at both boundaries and pinned definition restores its trigger", () => {
+  const focused = [];
+  const first = { focus() { focused.push("first"); } };
+  const middle = { focus() { focused.push("middle"); } };
+  const last = { focus() { focused.push("last"); } };
+  const documentObject = { activeElement: last };
+  const drawer = {
+    ownerDocument: documentObject,
+    querySelectorAll() { return [first, middle, last]; },
+  };
+  const forward = {
+    key: "Tab",
+    shiftKey: false,
+    preventDefault() { focused.push("prevent-forward"); },
+  };
+  assert.equal(cycleHelpDrawerFocus(forward, drawer), true);
+  assert.deepEqual(focused, ["prevent-forward", "first"]);
+
+  documentObject.activeElement = first;
+  const backward = {
+    key: "Tab",
+    shiftKey: true,
+    preventDefault() { focused.push("prevent-backward"); },
+  };
+  assert.equal(cycleHelpDrawerFocus(backward, drawer), true);
+  assert.deepEqual(focused.slice(-2), ["prevent-backward", "last"]);
+
+  const programmaticTarget = {};
+  drawer.contains = (target) =>
+    target === first ||
+    target === middle ||
+    target === last ||
+    target === programmaticTarget;
+  documentObject.activeElement = programmaticTarget;
+  assert.equal(cycleHelpDrawerFocus(forward, drawer), true);
+  assert.deepEqual(focused.slice(-2), ["prevent-forward", "first"]);
+  documentObject.activeElement = programmaticTarget;
+  assert.equal(cycleHelpDrawerFocus(backward, drawer), true);
+  assert.deepEqual(focused.slice(-2), ["prevent-backward", "last"]);
+
+  drawer.contains = (target) => target === first || target === middle || target === last;
+  assert.equal(
+    guardHelpDrawerFocus({ target: {} }, drawer, first),
+    true,
+  );
+  assert.equal(focused.at(-1), "first");
+
+  const attrs = new Map();
+  const popover = {
+    hidden: true,
+    setAttribute(name, value) { attrs.set(name, value); },
+  };
+  const triggerAttrs = new Map();
+  const trigger = {
+    setAttribute(name, value) { triggerAttrs.set(name, value); },
+    focus() { focused.push("trigger"); },
+  };
+  const action = { focus() { focused.push("action"); } };
+  const state = {};
+  setPinnedDefinitionState({
+    popover,
+    open: true,
+    trigger,
+    focusTarget: action,
+    state,
+  });
+  assert.equal(popover.hidden, false);
+  assert.equal(attrs.get("aria-hidden"), "false");
+  assert.equal(triggerAttrs.get("aria-expanded"), "true");
+  assert.equal(focused.at(-1), "action");
+
+  setPinnedDefinitionState({ popover, open: false, state });
+  assert.equal(popover.hidden, true);
+  assert.equal(attrs.get("aria-hidden"), "true");
+  assert.equal(triggerAttrs.get("aria-expanded"), "false");
+  assert.equal(focused.at(-1), "trigger");
+});
+
+test("outside pointer dismissal preserves focus on the newly clicked control", () => {
+  const popover = {
+    contains(target) {
+      return target === "inside";
+    },
+  };
+  const calls = [];
+  assert.equal(
+    dismissPinnedDefinitionFromPointer(
+      { target: "inside" },
+      popover,
+      (options) => calls.push(options),
+    ),
+    false,
+  );
+  assert.equal(
+    dismissPinnedDefinitionFromPointer(
+      { target: "outside" },
+      popover,
+      (options) => calls.push(options),
+    ),
+    true,
+  );
+  assert.deepEqual(calls, [{ restoreFocus: false }]);
+});
+
+test("AI export shell is local-only, scoped, read-only, and initially unavailable", async () => {
+  const html = await readFile(publicHtmlUrl, "utf8");
+  const nodes = parseHtmlStartTags(html);
+  const byId = new Map(
+    nodes
+      .filter((node) => typeof node.attributes.get("id") === "string")
+      .map((node) => [node.attributes.get("id"), node]),
+  );
+  for (const id of [
+    "ai-export-button",
+    "ai-export-drawer",
+    "ai-export-close",
+    "ai-export-refresh",
+    "ai-export-format",
+    "ai-export-scope",
+    "ai-export-preview",
+    "copy-export",
+    "download-export",
+    "ai-export-status",
+  ]) {
+    assert.ok(byId.has(id), `#${id}`);
+  }
+  const exportButton = byId.get("ai-export-button");
+  assert.equal(exportButton.name, "button");
+  assert.equal(exportButton.attributes.get("disabled"), true);
+  assert.equal(exportButton.attributes.get("aria-controls"), "ai-export-drawer");
+  assert.ok(
+    isDescendantOf(
+      exportButton,
+      nodes.find((node) => hasClass(node, "timeline-actions")),
+    ),
+    "export action belongs to timeline controls",
+  );
+  const drawer = byId.get("ai-export-drawer");
+  assert.equal(drawer.attributes.get("role"), "dialog");
+  assert.equal(drawer.attributes.get("aria-modal"), "true");
+  assert.equal(drawer.attributes.get("hidden"), true);
+  assert.equal(byId.get("ai-export-preview").name, "textarea");
+  assert.equal(byId.get("ai-export-preview").attributes.get("readonly"), true);
+  assert.equal(byId.get("ai-export-status").attributes.get("role"), "status");
+  assert.equal(byId.get("ai-export-status").attributes.get("aria-live"), "polite");
+  assert.match(html, /generated locally/i);
+  assert.match(html, /nothing is uploaded/i);
+  assert.match(html, /Prompt \+ data/i);
+  assert.match(html, /Structured data/i);
+});
+
+test("AI export capture is fresh, formats without recapture, copies explicitly, and revokes downloads", async () => {
+  let snapshotCount = 0;
+  const renderer = {
+    visibleEvidenceSnapshot() {
+      snapshotCount += 1;
+      return {
+        viewport: { startNs: snapshotCount * 10, endNs: snapshotCount * 10 + 5 },
+        commandBuffers: [],
+        dispatches: [],
+        waits: [],
+        unplacedDispatchCount: 0,
+        unanchoredWaitCount: 0,
+        densityMode: false,
+      };
+    },
+  };
+  const input = {
+    renderer,
+    trace: { id: "opaque", label: "Visible trace" },
+    launchIndex: 0,
+    launch: { startNs: 0, endNs: 100, summary: {} },
+    evidenceHealth: { validEvidence: true },
+    generatedAt: "2026-07-23T12:00:00.000Z",
+  };
+  const first = captureVisibleTimelineExport(input);
+  const second = captureVisibleTimelineExport(input);
+  assert.equal(snapshotCount, 2, "each opening capture reads the renderer again");
+  assert.notDeepEqual(
+    first.selection.viewport_ns,
+    second.selection.viewport_ns,
+  );
+
+  const markdown = formatVisibleTimelineExport(first, "markdown");
+  const json = formatVisibleTimelineExport(first, "json");
+  assert.match(markdown.text, /Analyze this visible Metal dispatch/i);
+  assert.deepEqual(JSON.parse(json.text), first);
+  assert.equal(snapshotCount, 2, "format changes reuse the captured payload");
+  assert.equal(markdown.extension, "md");
+  assert.equal(json.extension, "json");
+
+  let copied = null;
+  const copyResult = await copyExportText("visible only", {
+    clipboard: {
+      async writeText(value) {
+        copied = value;
+      },
+    },
+  });
+  assert.equal(copied, "visible only");
+  assert.equal(copyResult.ok, true);
+  const unavailable = await copyExportText("visible only", {});
+  assert.equal(unavailable.ok, false);
+  assert.match(unavailable.message, /select.*preview|clipboard.*unavailable/i);
+
+  const calls = [];
+  class FakeBlob {
+    constructor(parts, options) {
+      this.parts = parts;
+      this.options = options;
+    }
+  }
+  const anchor = {
+    click() { calls.push("click"); },
+    remove() { calls.push("remove"); },
+  };
+  const documentObject = {
+    createElement(tagName) {
+      assert.equal(tagName, "a");
+      return anchor;
+    },
+    body: {
+      append(element) {
+        assert.equal(element, anchor);
+        calls.push("append");
+      },
+    },
+  };
+  const urlObject = {
+    createObjectURL(blob) {
+      assert.ok(blob instanceof FakeBlob);
+      calls.push("create");
+      return "blob:visible";
+    },
+    revokeObjectURL(url) {
+      calls.push(`revoke:${url}`);
+    },
+  };
+  downloadExportText("payload", {
+    BlobClass: FakeBlob,
+    documentObject,
+    filename: "visible.json",
+    mimeType: "application/json",
+    urlObject,
+  });
+  assert.equal(anchor.download, "visible.json");
+  assert.deepEqual(calls, [
+    "create",
+    "append",
+    "click",
+    "remove",
+    "revoke:blob:visible",
+  ]);
+});
+
+test("AI export controller requires a real selected launch and wires local actions end to end", async () => {
+  assert.equal(
+    selectedLaunchExportContext({
+      currentTrace: { id: "trace" },
+      currentDataset: { summary: { wallSpanNs: 10 }, launchWindows: [] },
+      currentWindowIndex: null,
+    }),
+    null,
+    "whole-dataset fallback is not mislabeled as a selected launch",
+  );
+  assert.equal(
+    selectedLaunchExportContext({
+      currentTrace: { id: "trace" },
+      currentDataset: { launchWindows: [{ summary: { wallSpanNs: 10 } }] },
+      currentWindowIndex: 3,
+    }),
+    null,
+    "stale launch index is unavailable",
+  );
+  assert.equal(
+    selectedLaunchExportContext({
+      currentTrace: { id: "trace" },
+      currentDataset: {
+        health: { validEvidence: true },
+        launchWindows: [{ summary: { wallSpanNs: 10 } }],
+      },
+      currentWindowIndex: 0,
+    }).launchIndex,
+    0,
+  );
+
+  class FakeElement {
+    constructor(documentObject) {
+      this.ownerDocument = documentObject;
+      this.listeners = new Map();
+      this.attributes = new Map();
+      this.hidden = false;
+      this.disabled = false;
+      this.value = "";
+      this.textContent = "";
+      this.focusCount = 0;
+    }
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+    removeEventListener(type, listener) {
+      if (this.listeners.get(type) === listener) this.listeners.delete(type);
+    }
+    async emit(type, event = {}) {
+      return this.listeners.get(type)?.({ target: this, ...event });
+    }
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+    }
+    focus() {
+      this.ownerDocument.activeElement = this;
+      this.focusCount += 1;
+    }
+    contains(target) {
+      return target === this || this.children?.includes(target);
+    }
+    querySelectorAll() {
+      return this.children ?? [];
+    }
+  }
+
+  const documentListeners = new Map();
+  const background = [{ inert: false }, { inert: false }];
+  const anchorCalls = [];
+  const anchor = {
+    click() { anchorCalls.push("click"); },
+    remove() { anchorCalls.push("remove"); },
+  };
+  const documentObject = {
+    activeElement: null,
+    querySelector(selector) {
+      return selector === ".site-header" ? background[0] : background[1];
+    },
+    addEventListener(type, listener) {
+      documentListeners.set(type, listener);
+    },
+    removeEventListener(type, listener) {
+      if (documentListeners.get(type) === listener) documentListeners.delete(type);
+    },
+    createElement(tagName) {
+      assert.equal(tagName, "a");
+      return anchor;
+    },
+    body: {
+      append(value) {
+        assert.equal(value, anchor);
+        anchorCalls.push("append");
+      },
+    },
+  };
+  const make = () => new FakeElement(documentObject);
+  const elements = {
+    exportButton: make(),
+    exportDrawer: make(),
+    exportClose: make(),
+    exportRefresh: make(),
+    exportFormat: make(),
+    exportScope: make(),
+    exportPreview: make(),
+    copyExport: make(),
+    downloadExport: make(),
+    exportStatus: make(),
+    utilityBackdrop: make(),
+    timelineScroller: {
+      scrollLeft: 120,
+      clientWidth: 300,
+      scrollWidth: 900,
+    },
+    canvas: {
+      clientWidth: 720,
+    },
+  };
+  elements.exportDrawer.hidden = true;
+  elements.utilityBackdrop.hidden = true;
+  elements.exportFormat.value = "markdown";
+  elements.exportDrawer.children = [
+    elements.exportClose,
+    elements.exportFormat,
+    elements.exportRefresh,
+    elements.exportPreview,
+    elements.copyExport,
+    elements.downloadExport,
+  ];
+
+  let currentContext = null;
+  let snapshotCount = 0;
+  const snapshotWindows = [];
+  let closeOtherCount = 0;
+  let clipboardText = null;
+  const revoked = [];
+  const timestamps = [
+    new Date("2026-07-23T12:00:00.000Z"),
+    new Date("2026-07-23T12:00:01.000Z"),
+    new Date("2026-07-23T12:00:02.000Z"),
+  ];
+  class FakeBlob {
+    constructor(parts, options) {
+      this.parts = parts;
+      this.options = options;
+    }
+  }
+  const windowObject = {
+    Blob: FakeBlob,
+    navigator: {
+      clipboard: {
+        async writeText(value) {
+          clipboardText = value;
+        },
+      },
+    },
+    URL: {
+      createObjectURL(blob) {
+        assert.ok(blob instanceof FakeBlob);
+        return "blob:controller";
+      },
+      revokeObjectURL(url) {
+        revoked.push(url);
+      },
+    },
+  };
+  const renderer = {
+    visibleEvidenceSnapshot(pixelWindow) {
+      snapshotCount += 1;
+      snapshotWindows.push(pixelWindow);
+      return {
+        viewport: {
+          startNs: pixelWindow.scrollLeft,
+          endNs: pixelWindow.scrollLeft + pixelWindow.clientWidth,
+        },
+        commandBuffers: [],
+        dispatches: [],
+        waits: [],
+        unplacedDispatchCount: 0,
+        unanchoredWaitCount: 0,
+        densityMode: false,
+      };
+    },
+  };
+  const controller = createAiExportController({
+    documentObject,
+    windowObject,
+    elements,
+    renderer,
+    getContext: () => currentContext,
+    closeOtherDrawer() {
+      closeOtherCount += 1;
+    },
+    now: () => timestamps.shift(),
+  });
+
+  controller.setAvailable(true);
+  assert.equal(elements.exportButton.disabled, true, "no launch stays unavailable");
+  await elements.exportButton.emit("click");
+  assert.equal(snapshotCount, 0);
+  assert.equal(elements.exportDrawer.hidden, true);
+
+  const validContext = {
+    trace: { id: "visible", label: "Visible" },
+    launchIndex: 0,
+    launch: {
+      startNs: 0,
+      endNs: 100,
+      summary: {},
+      renderSampling: {
+        active: true,
+        dispatches: { displayed: 4, total: 40 },
+      },
+    },
+    evidenceHealth: { validEvidence: true },
+  };
+  currentContext = validContext;
+  controller.setAvailable(true);
+  assert.equal(elements.exportButton.disabled, false);
+  await elements.exportButton.emit("click");
+  assert.equal(snapshotCount, 1);
+  assert.deepEqual(snapshotWindows[0], {
+    scrollLeft: 96,
+    clientWidth: 240,
+  });
+  assert.equal(closeOtherCount, 1);
+  assert.equal(elements.exportDrawer.hidden, false);
+  assert.equal(elements.utilityBackdrop.hidden, false);
+  assert.equal(elements.exportFormat.focusCount, 1);
+  assert.equal(controller.state.payload.generated_at, "2026-07-23T12:00:00.000Z");
+  assert.match(elements.exportPreview.value, /Analyze this visible Metal dispatch/i);
+  assert.match(elements.exportScope.textContent, /displayed sample records/i);
+
+  elements.timelineScroller.scrollLeft = 240;
+  await elements.exportRefresh.emit("click");
+  assert.equal(snapshotCount, 2);
+  assert.deepEqual(snapshotWindows[1], {
+    scrollLeft: 192,
+    clientWidth: 240,
+  });
+  assert.notEqual(
+    controller.state.payload.selection.viewport_ns.start,
+    96,
+    "changed horizontal scroll produces a newly scoped capture",
+  );
+  assert.equal(controller.state.payload.generated_at, "2026-07-23T12:00:01.000Z");
+  elements.exportFormat.value = "json";
+  await elements.exportFormat.emit("change");
+  assert.equal(snapshotCount, 2, "format change does not recapture");
+  assert.deepEqual(JSON.parse(elements.exportPreview.value), controller.state.payload);
+
+  await elements.copyExport.emit("click");
+  assert.equal(clipboardText, elements.exportPreview.value);
+  assert.match(elements.exportStatus.textContent, /copied/i);
+  await elements.downloadExport.emit("click");
+  assert.deepEqual(revoked, ["blob:controller"]);
+  assert.deepEqual(anchorCalls, ["append", "click", "remove"]);
+
+  await documentListeners.get("keydown")({
+    key: "Escape",
+    preventDefault() {},
+  });
+  assert.equal(elements.exportDrawer.hidden, true);
+  assert.equal(elements.exportButton.focusCount, 1);
+
+  currentContext = null;
+  await elements.exportButton.emit("click");
+  assert.equal(elements.exportButton.disabled, true, "stale context disables on open");
+  assert.equal(snapshotCount, 2);
+  currentContext = validContext;
+  controller.setAvailable(true);
+  await elements.exportButton.emit("click");
+  assert.equal(snapshotCount, 3, "reopening captures fresh viewport evidence");
+  assert.deepEqual(snapshotWindows[2], {
+    scrollLeft: 192,
+    clientWidth: 240,
+  });
+  assert.equal(controller.state.payload.generated_at, "2026-07-23T12:00:02.000Z");
+  await elements.exportClose.emit("click");
+  assert.equal(elements.exportButton.focusCount, 2);
+
+  currentContext = null;
+  controller.setAvailable(true);
+  assert.equal(elements.exportButton.disabled, true);
+  controller.destroy();
 });
