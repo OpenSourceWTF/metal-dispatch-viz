@@ -711,7 +711,10 @@ export class TimelineRenderer {
         this.waitsByCommandBuffer.set(wait.commandBufferIndex, wait);
       }
     }
-    this.bounds = traceBounds(safeData, this.placedDispatches);
+    const naturalBounds = traceBounds(safeData, this.placedDispatches);
+    this.bounds = validRange(options.bounds)
+      ? normalizedBounds(options.bounds)
+      : naturalBounds;
     const selectedWindow =
       (validRange(options) ? options : options.window) ??
       safeData.selectedWindow ??
@@ -719,7 +722,10 @@ export class TimelineRenderer {
         ? safeData.launchWindows?.[safeData.selectedWindowIndex]
         : null);
     this.selectedWindow = validRange(selectedWindow) ? selectedWindow : null;
-    this.fit(this.selectedWindow ?? this.bounds, false);
+    const requestedViewport = validRange(options.viewport)
+      ? options.viewport
+      : this.selectedWindow ?? this.bounds;
+    this.setViewport(requestedViewport, { notify: false });
     this.updateAccessibleSummary();
     this.requestRender();
     return this;
@@ -731,14 +737,20 @@ export class TimelineRenderer {
       range = this.dataset?.launchWindows?.[target];
     }
     if (!validRange(range)) range = this.bounds;
-    this.viewport = clampViewport(
-      { startNs: range.startNs, endNs: range.endNs },
-      this.bounds,
-    );
     if (validRange(range) && range !== this.bounds) this.selectedWindow = range;
+    return this.setViewport(
+      { startNs: range.startNs, endNs: range.endNs },
+      { notify },
+    );
+  }
+
+  setViewport(viewport, { notify = true } = {}) {
+    this.viewport = clampViewport(viewport, this.bounds);
+    this.analysisCache = null;
+    this.staticLayerCache = null;
     if (notify) this.notifyViewportChange();
     this.requestRender();
-    return { ...this.viewport };
+    return Object.freeze({ ...this.viewport });
   }
 
   notifyViewportChange() {
@@ -1522,15 +1534,12 @@ export class TimelineRenderer {
       if (Math.abs(dx) > 2) this.drag.moved = true;
       const span = this.drag.viewport.endNs - this.drag.viewport.startNs;
       const shift = -(dx / Math.max(1, this.width)) * span;
-      this.viewport = clampViewport(
+      this.setViewport(
         {
           startNs: this.drag.viewport.startNs + shift,
           endNs: this.drag.viewport.endNs + shift,
         },
-        this.bounds,
       );
-      this.notifyViewportChange();
-      this.requestRender();
       return;
     }
     this.hovered = this.hitTest(point.x, point.y);
@@ -1597,15 +1606,12 @@ export class TimelineRenderer {
     const factor = event.deltaY < 0 ? 0.8 : event.deltaY > 0 ? 1.25 : 1;
     const nextSpan = oldSpan * factor;
     const fraction = Math.max(0, Math.min(1, point.x / Math.max(1, this.width)));
-    this.viewport = clampViewport(
+    this.setViewport(
       {
         startNs: anchor - nextSpan * fraction,
         endNs: anchor + nextSpan * (1 - fraction),
       },
-      this.bounds,
     );
-    this.notifyViewportChange();
-    this.requestRender();
   }
 
   handleKeyDown(event) {
@@ -1614,23 +1620,19 @@ export class TimelineRenderer {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       const direction = event.key === "ArrowLeft" ? -1 : 1;
       const shift = direction * span * 0.1;
-      this.viewport = clampViewport(
+      this.setViewport(
         {
           startNs: this.viewport.startNs + shift,
           endNs: this.viewport.endNs + shift,
         },
-        this.bounds,
       );
-      this.notifyViewportChange();
     } else if (event.key === "+" || event.key === "=" || event.key === "-") {
       const factor = event.key === "-" ? 1.25 : 0.8;
       const center = (this.viewport.startNs + this.viewport.endNs) / 2;
       const nextSpan = span * factor;
-      this.viewport = clampViewport(
+      this.setViewport(
         { startNs: center - nextSpan / 2, endNs: center + nextSpan / 2 },
-        this.bounds,
       );
-      this.notifyViewportChange();
     } else if (event.key === "0") {
       this.fit(this.selectedWindow);
     } else if (event.key === "]" || event.key === "}") {
@@ -1671,14 +1673,12 @@ export class TimelineRenderer {
     if (atNs !== null) {
       const span = this.viewport.endNs - this.viewport.startNs;
       if (atNs < this.viewport.startNs || atNs > this.viewport.endNs) {
-        this.viewport = clampViewport(
+        this.setViewport(
           {
             startNs: atNs - span / 2,
             endNs: atNs + span / 2,
           },
-          this.bounds,
         );
-        this.notifyViewportChange();
       }
       this.crosshairX = timeToX(atNs, this.viewport, this.width);
     }

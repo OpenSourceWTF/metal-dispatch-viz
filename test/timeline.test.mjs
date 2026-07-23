@@ -861,3 +861,53 @@ test("bracket keys move an active timeline mark and Enter pins it", () => {
   assert.deepEqual(keys, ["]", "]", "[", "Enter"]);
   renderer.destroy();
 });
+
+test("range dataset keeps complete launch navigation bounds", () => {
+  const environment = createEnvironment();
+  const changes = [];
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onViewportChange(range) {
+      changes.push(range);
+    },
+  });
+  renderer.setDataset(
+    {
+      startNs: 40,
+      endNs: 60,
+      commandBuffers: [],
+      dispatches: [],
+      waits: [],
+    },
+    {
+      bounds: { startNs: 0, endNs: 100 },
+      viewport: { startNs: 40, endNs: 60 },
+    },
+  );
+
+  assert.deepEqual(renderer.bounds, { startNs: 0, endNs: 100 });
+  assert.deepEqual(renderer.viewport, { startNs: 40, endNs: 60 });
+  assert.deepEqual(renderer.setViewport({ startNs: 90, endNs: 120 }), {
+    startNs: 70,
+    endNs: 100,
+  });
+  assert.deepEqual(changes.at(-1), { startNs: 70, endNs: 100 });
+  renderer.destroy();
+});
+
+test("external viewport update can avoid a synchronization callback", () => {
+  const environment = createEnvironment();
+  let notifications = 0;
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onViewportChange() {
+      notifications += 1;
+    },
+  });
+  renderer.setDataset(
+    { startNs: 0, endNs: 100 },
+    { bounds: { startNs: 0, endNs: 100 } },
+  );
+  renderer.setViewport({ startNs: 10, endNs: 30 }, { notify: false });
+  assert.equal(notifications, 0);
+  assert.deepEqual(renderer.viewport, { startNs: 10, endNs: 30 });
+  renderer.destroy();
+});
