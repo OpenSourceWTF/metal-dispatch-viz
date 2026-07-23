@@ -1,9 +1,11 @@
 import { formatBytes, formatDuration } from "./data.js";
+import { TraceAnalysisSession } from "./analysis-session.js";
+import { RangeNavigator } from "./range-navigator.js";
 import {
   SelectionCoordinator,
   TraceCache,
 } from "./trace-loader.js";
-import { TimelineRenderer } from "./timeline.js";
+import { clampViewport, TimelineRenderer } from "./timeline.js";
 import {
   buildVisibleTimelineExport,
   exportFilename,
@@ -383,6 +385,74 @@ export function traceLabel(trace) {
   );
 }
 
+function browserRequestUrl(path, baseUrl) {
+  return baseUrl === undefined || baseUrl === null
+    ? `/${path}`
+    : new URL(path, baseUrl).href;
+}
+
+export function traceSourceUrl(
+  trace,
+  { hosted = false, baseUrl } = {},
+) {
+  if (hosted) {
+    const relativePath = stringValue(trace?.relativePath);
+    const segments = relativePath?.split("/") ?? [];
+    if (
+      segments.length === 0 ||
+      segments.some(
+        (segment) => segment === "" || segment === "." || segment === "..",
+      )
+    ) {
+      throw new TypeError("Hosted traces require a safe relativePath.");
+    }
+    return browserRequestUrl(
+      `traces/showcase/${segments.map(encodeURIComponent).join("/")}`,
+      baseUrl,
+    );
+  }
+  const id = stringValue(trace?.id);
+  if (!id) {
+    throw new TypeError("Server traces require a non-empty ID.");
+  }
+  return browserRequestUrl(`api/traces/${encodeURIComponent(id)}`, baseUrl);
+}
+
+function registryRequestError(response) {
+  const error = new Error(
+    `Registry request failed with HTTP ${response?.status ?? "unknown"}`,
+  );
+  error.status = response?.status;
+  return error;
+}
+
+export async function loadTraceRegistry(fetchImpl, { baseUrl } = {}) {
+  if (typeof fetchImpl !== "function") {
+    throw new TypeError("Trace registry loading requires fetch.");
+  }
+  const response = await fetchImpl(browserRequestUrl("api/traces", baseUrl));
+  if (response?.ok) {
+    return {
+      hosted:
+        response.headers?.get?.("x-metal-dispatch-registry") === "hosted",
+      registry: await response.json(),
+    };
+  }
+  if (response?.status !== 404) {
+    throw registryRequestError(response);
+  }
+  const hostedResponse = await fetchImpl(
+    browserRequestUrl("hosted-traces.json", baseUrl),
+  );
+  if (!hostedResponse?.ok) {
+    throw registryRequestError(hostedResponse);
+  }
+  return {
+    hosted: true,
+    registry: await hostedResponse.json(),
+  };
+}
+
 export function chooseWindowIndex(windows, requestedIndex) {
   if (!Array.isArray(windows) || windows.length === 0) {
     return null;
@@ -409,6 +479,109 @@ export function selectionUrl(input, traceId, windowIndex) {
     url.searchParams.delete("window");
   }
   return url;
+}
+
+function validRangeBounds(bounds) {
+  return (
+    Number.isSafeInteger(bounds?.startNs) &&
+    Number.isSafeInteger(bounds?.endNs) &&
+    bounds.endNs > bounds.startNs
+  );
+}
+
+function positiveFiniteRange(range) {
+  return (
+    Number.isFinite(range?.startNs) &&
+    Number.isFinite(range?.endNs) &&
+    range.endNs > range.startNs
+  );
+}
+
+function completeLaunchSelection(bounds) {
+  return {
+    mode: "view",
+    range: Object.freeze({
+      startNs: bounds.startNs,
+      endNs: bounds.endNs,
+    }),
+  };
+}
+
+export function rangeSelectionUrl(input, { mode, bounds, range }) {
+  if (!validRangeBounds(bounds) || !positiveFiniteRange(range)) {
+    throw new TypeError("Range URL state requires positive finite bounds.");
+  }
+  const from = Math.round(range.startNs - bounds.startNs);
+  const to = Math.round(range.endNs - bounds.startNs);
+  if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || to <= from) {
+    throw new RangeError("Range URL offsets must be ordered safe integers.");
+  }
+  const url = new URL(input, "http://localhost/");
+  url.searchParams.set("range", mode === "analyze" ? "analyze" : "view");
+  url.searchParams.set("from", String(from));
+  url.searchParams.set("to", String(to));
+  return url;
+}
+
+export function parseRangeSelection(input, bounds) {
+  if (!validRangeBounds(bounds)) {
+    throw new TypeError("Launch bounds must have positive safe-integer duration.");
+  }
+  const url = new URL(input, "http://localhost/");
+  const mode = url.searchParams.get("range");
+  const fromValue = url.searchParams.get("from");
+  const toValue = url.searchParams.get("to");
+  const from = Number(fromValue);
+  const to = Number(toValue);
+  const startNs = bounds.startNs + from;
+  const endNs = bounds.startNs + to;
+  const valid =
+    (mode === "view" || mode === "analyze") &&
+    fromValue !== null &&
+    toValue !== null &&
+    /^-?[0-9]+$/.test(fromValue) &&
+    /^-?[0-9]+$/.test(toValue) &&
+    Number.isSafeInteger(from) &&
+    Number.isSafeInteger(to) &&
+    to > from &&
+    Number.isSafeInteger(startNs) &&
+    Number.isSafeInteger(endNs);
+  if (!valid) return completeLaunchSelection(bounds);
+  return {
+    mode,
+    range: clampViewport({ startNs, endNs }, bounds),
+  };
+}
+
+export class RangeRequestAuthority {
+  constructor() {
+    this.generation = 0;
+  }
+
+  begin(launchIndex) {
+    if (!Number.isSafeInteger(launchIndex) || launchIndex < 0) {
+      throw new TypeError(
+        "launchIndex must be a non-negative safe integer.",
+      );
+    }
+    return Object.freeze({
+      generation: (this.generation += 1),
+      launchIndex,
+    });
+  }
+
+  isCurrent(token, launchIndex) {
+    return (
+      Number.isSafeInteger(launchIndex) &&
+      launchIndex >= 0 &&
+      token?.generation === this.generation &&
+      token.launchIndex === launchIndex
+    );
+  }
+
+  invalidate() {
+    this.generation += 1;
+  }
 }
 
 export function metricRows(datasetOrWindow) {
@@ -778,77 +951,30 @@ export function analyzeTraceOffMainThread(
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    let worker;
+    let session;
     const finish = (callback, value, stateName) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener?.("abort", onAbort);
-      worker?.removeEventListener?.("message", onMessage);
-      worker?.removeEventListener?.("error", onError);
-      worker?.terminate?.();
+      session?.terminate();
       if (stateName) onStateChange?.(stateName);
       callback(value);
     };
     const onAbort = () => finish(reject, abortError(), "aborted");
-    const onMessage = (event) => {
-      if (event?.data?.type === "progress") {
-        onProgress?.(event.data.progress);
-        return;
-      }
-      if (event?.data?.type === "state") {
-        onStateChange?.(event.data.state);
-        return;
-      }
-      if (
-        event?.data?.type === "complete" &&
-        event.data.ok === true
-      ) {
-        finish(
-          resolve,
-          {
-            dataset: event.data.dataset,
-            diagnostics:
-              event.data.diagnostics ??
-              event.data.dataset?.diagnostics ??
-              {},
-          },
-          "completed",
-        );
-        return;
-      }
-      if (event?.data?.ok === false) {
-        const error = new Error(
-          event?.data?.error?.message ?? "Trace analysis failed.",
-        );
-        error.name =
-          event?.data?.error?.name ?? "DatasetWorkerError";
-        if (Number.isInteger(event?.data?.error?.status)) {
-          error.status = event.data.error.status;
-        }
-        if (typeof event?.data?.error?.code === "string") {
-          error.code = event.data.error.code;
-        }
-        finish(reject, error, "failed");
-      }
-    };
-    const onError = (event) => {
-      const error =
-        event?.error instanceof Error
-          ? event.error
-          : new Error(event?.message ?? "Trace worker failed.");
-      finish(reject, error, "failed");
-    };
 
     try {
-      worker = new WorkerClass(workerUrl, {
-        type: "module",
-        name: "metal-dispatch-trace",
+      session = new TraceAnalysisSession({
+        WorkerClass,
+        workerUrl,
+        generation: 1,
+        onProgress,
+        onStateChange,
       });
-      worker.addEventListener("message", onMessage);
-      worker.addEventListener("error", onError);
       signal?.addEventListener?.("abort", onAbort, { once: true });
-      worker.postMessage({ type: "load", url: traceUrl });
-      onStateChange?.("posted");
+      session.load(traceUrl).then(
+        (loaded) => finish(resolve, loaded, "completed"),
+        (error) => finish(reject, error, "failed"),
+      );
     } catch (error) {
       finish(reject, error, "failed");
     }
@@ -1812,18 +1938,39 @@ function errorDescription(error) {
 
 export async function bootstrap({
   fetchImpl = globalThis.fetch,
-  traceAnalyzer = analyzeTraceOffMainThread,
+  analysisSessionFactory = (options) => new TraceAnalysisSession(options),
+  analysisDebounceMs = 100,
+  cacheObject = new TraceCache(),
+  documentObject = globalThis.document,
+  windowObject = documentObject?.defaultView ?? globalThis.window,
+  RendererClass = TimelineRenderer,
+  RangeNavigatorClass = RangeNavigator,
+  signal,
 } = {}) {
-  const documentObject = globalThis.document;
-  const windowObject = documentObject?.defaultView ?? globalThis.window;
   if (!documentObject || !windowObject) {
     throw new Error("bootstrap requires a browser document");
   }
   if (typeof fetchImpl !== "function") {
     throw new TypeError("bootstrap requires fetch");
   }
-  if (typeof traceAnalyzer !== "function") {
-    throw new TypeError("bootstrap requires a trace analyzer");
+  if (typeof analysisSessionFactory !== "function") {
+    throw new TypeError("bootstrap requires an analysis session factory");
+  }
+  if (!Number.isFinite(analysisDebounceMs) || analysisDebounceMs < 0) {
+    throw new TypeError("analysisDebounceMs must be a non-negative number");
+  }
+  if (
+    !cacheObject ||
+    typeof cacheObject.get !== "function" ||
+    typeof cacheObject.set !== "function"
+  ) {
+    throw new TypeError("bootstrap requires a trace cache");
+  }
+  if (
+    typeof RendererClass !== "function" ||
+    typeof RangeNavigatorClass !== "function"
+  ) {
+    throw new TypeError("bootstrap requires renderer constructors");
   }
 
   const byId = (id) => {
@@ -1844,6 +1991,7 @@ export async function bootstrap({
     status: byId("trace-status"),
     windowControl: byId("window-control"),
     windowSelect: byId("window-select"),
+    metricScopeLabel: byId("metric-scope-label"),
     metrics: byId("metric-grid"),
     canvas: byId("timeline"),
     timelineScroller: byId("timeline-scroller"),
@@ -1866,6 +2014,20 @@ export async function bootstrap({
     zoomOut: byId("zoom-out"),
     fit: byId("fit-timeline"),
     zoomIn: byId("zoom-in"),
+    rangeNavigator: byId("range-navigator"),
+    rangeOverview: byId("range-overview"),
+    rangeOverviewSummary: byId("range-overview-summary"),
+    rangeBand: byId("range-band"),
+    rangeStartHandle: byId("range-start-handle"),
+    rangeEndHandle: byId("range-end-handle"),
+    rangeModeView: byId("range-mode-view"),
+    rangeModeAnalyze: byId("range-mode-analyze"),
+    rangeStartReadout: byId("range-start-readout"),
+    rangeEndReadout: byId("range-end-readout"),
+    rangeDurationReadout: byId("range-duration-readout"),
+    rangeStatus: byId("range-status"),
+    rangeOmissions: byId("range-omissions"),
+    tables: byId("analysis-tables"),
     manualButton: byId("field-manual-button"),
     utilityBackdrop: byId("utility-backdrop"),
     manualDrawer: byId("field-manual-drawer"),
@@ -1900,19 +2062,35 @@ export async function bootstrap({
     exportStatus: byId("ai-export-status"),
   };
 
-  const cache = new TraceCache();
+  const cache = cacheObject;
   const coordinator = new SelectionCoordinator();
   const registrySelection = new RegistrySelectionGuard();
+  const rangeAuthority = new RangeRequestAuthority();
   const initialUrl = new URL(windowObject.location.href);
+  const requestBaseUrl = documentObject.baseURI ?? undefined;
   const state = {
     traces: [],
+    registryHosted: false,
     evidenceByCacheKey: new Map(),
     currentTraceId: null,
     currentTrace: null,
     currentDataset: null,
     currentWindowIndex: null,
+    launchScope: null,
     activeScope: null,
+    canvasScope: null,
     currentToken: null,
+    analysisSession: null,
+    analysisSessionGeneration: 0,
+    analysisReady: false,
+    analysisError: null,
+    analysisTimer: null,
+    selectedRange: null,
+    confirmedRange: null,
+    rangeMode: "view",
+    rangePending: false,
+    pendingRangeInput: null,
+    inspectorPayload: null,
     destroyed: false,
   };
   const helpController = createHelpController({
@@ -1962,12 +2140,14 @@ export async function bootstrap({
     elements.scale.textContent = `View · ${formatDuration(nanosecondsPerPixel)}/px`;
   }
 
-  const renderer = new TimelineRenderer(elements.canvas, {
+  const renderer = new RendererClass(elements.canvas, {
     onInspect(payload) {
+      state.inspectorPayload = payload;
       renderInspector(payload);
     },
-    onViewportChange(viewport) {
+    onViewportChange(viewport, metadata) {
       updateScale(viewport);
+      handleTimelineViewport(viewport, metadata);
     },
   });
   const exportController = createAiExportController({
@@ -1986,6 +2166,26 @@ export async function bootstrap({
   helpController.setBeforeOpenDrawer(() => {
     exportController.closeDrawer({ restoreFocus: false });
   });
+
+  const rangeNavigator = new RangeNavigatorClass(
+    {
+      canvas: elements.rangeOverview,
+      band: elements.rangeBand,
+      startHandle: elements.rangeStartHandle,
+      endHandle: elements.rangeEndHandle,
+      summary: elements.rangeOverviewSummary,
+      windowObject,
+    },
+    {
+      onRangeInput(range) {
+        handleNavigatorRange(range, false);
+      },
+      onRangeCommit(range) {
+        handleNavigatorRange(range, true);
+      },
+    },
+  );
+  rangeNavigator.setDisabled(true);
 
   function refreshRendererPalette() {
     const style = windowObject.getComputedStyle(elements.canvas);
@@ -2006,17 +2206,342 @@ export async function bootstrap({
     renderer.paletteSignature = Object.values(renderer.colors).join("\u0000");
   }
 
-  function updateUrl(traceId, windowIndex) {
-    const url = selectionUrl(
+  function updateUrl(traceId, windowIndex, rangeState = null) {
+    let url = selectionUrl(
       windowObject.location.href,
       traceId,
       windowIndex,
     );
+    if (rangeState) {
+      url = rangeSelectionUrl(url, rangeState);
+    } else {
+      for (const parameter of ["range", "from", "to"]) {
+        url.searchParams.delete(parameter);
+      }
+    }
     windowObject.history.replaceState(
       null,
       "",
       `${url.pathname}${url.search}${url.hash}`,
     );
+  }
+
+  function selectedLaunchBounds() {
+    const overview = state.launchScope?.overview;
+    const bounds = overview
+      ? { startNs: overview.startNs, endNs: overview.endNs }
+      : {
+          startNs: state.launchScope?.startNs,
+          endNs: state.launchScope?.endNs,
+        };
+    return validRangeBounds(bounds) ? Object.freeze(bounds) : null;
+  }
+
+  function analysisAvailable() {
+    return (
+      state.analysisReady &&
+      state.analysisSession?.ready === true &&
+      state.launchScope?.rangeAnalysis?.available === true
+    );
+  }
+
+  function clearAnalysisTimer() {
+    if (state.analysisTimer === null) return;
+    windowObject.clearTimeout(state.analysisTimer);
+    state.analysisTimer = null;
+  }
+
+  function invalidateRangeRequests() {
+    const wasPending = state.rangePending;
+    clearAnalysisTimer();
+    rangeAuthority.invalidate();
+    setAnalysisBusy(false, { updateStatus: false });
+    if (wasPending && state.activeScope) {
+      renderKernelTable(state.activeScope);
+      renderWaitTable(state.activeScope);
+    }
+  }
+
+  function updateRangeModeControls() {
+    const analyzeAvailable = analysisAvailable();
+    elements.rangeModeView.setAttribute(
+      "aria-pressed",
+      String(state.rangeMode === "view"),
+    );
+    elements.rangeModeAnalyze.setAttribute(
+      "aria-pressed",
+      String(state.rangeMode === "analyze"),
+    );
+    elements.rangeModeAnalyze.disabled = !analyzeAvailable;
+    elements.rangeModeAnalyze.textContent = analyzeAvailable
+      ? "Analyze"
+      : state.analysisReady || state.analysisError
+        ? "Analyze unavailable"
+        : "Preparing exact analysis";
+    elements.metricScopeLabel.textContent =
+      state.rangeMode === "analyze" ? "Selected range" : "Launch totals";
+  }
+
+  function updateRangeReadouts({
+    updateStatus = true,
+    announceRange = false,
+  } = {}) {
+    const bounds = selectedLaunchBounds();
+    const range = state.selectedRange;
+    if (!bounds || !range) {
+      elements.rangeStartReadout.textContent = "Start —";
+      elements.rangeEndReadout.textContent = "End —";
+      elements.rangeDurationReadout.textContent = "Duration —";
+      if (updateStatus) {
+        elements.rangeStatus.textContent = "Select a launch to navigate";
+      }
+      return;
+    }
+    elements.rangeStartReadout.textContent =
+      `Start ${formatDuration(range.startNs - bounds.startNs)}`;
+    elements.rangeEndReadout.textContent =
+      `End ${formatDuration(range.endNs - bounds.startNs)}`;
+    elements.rangeDurationReadout.textContent =
+      `Duration ${formatDuration(range.endNs - range.startNs)}`;
+    if (updateStatus) {
+      elements.rangeStatus.textContent = state.rangePending
+        ? `Analyzing ${formatDuration(range.startNs - bounds.startNs)} – ` +
+          formatDuration(range.endNs - bounds.startNs)
+        : state.rangeMode === "analyze"
+          ? "Exact selected-range aggregates"
+          : announceRange
+            ? `Viewing ${formatDuration(range.startNs - bounds.startNs)} – ` +
+              `${formatDuration(range.endNs - bounds.startNs)}; ` +
+              "metrics show launch totals"
+            : "Viewport only; metrics show launch totals";
+    }
+  }
+
+  function setAnalysisBusy(pending, { updateStatus = true } = {}) {
+    state.rangePending = Boolean(pending);
+    elements.metrics.setAttribute("aria-busy", String(state.rangePending));
+    elements.tables.setAttribute("aria-busy", String(state.rangePending));
+    elements.metrics.classList.toggle("is-busy", state.rangePending);
+    elements.tables.classList.toggle("is-busy", state.rangePending);
+    if (state.rangePending) {
+      elements.kernelState.textContent = "Analyzing selection";
+      elements.waitState.textContent = "Analyzing selection";
+    }
+    updateRangeReadouts({ updateStatus });
+  }
+
+  function renderRangeOmissions(scope) {
+    if (state.rangeMode !== "analyze") {
+      elements.rangeOmissions.hidden = true;
+      elements.rangeOmissions.textContent = "";
+      return;
+    }
+    const omissions = scope?.omissions ?? {};
+    const unplaced = finiteOrZero(omissions.unplacedDispatches);
+    const unanchored = finiteOrZero(omissions.unanchoredWaits);
+    elements.rangeOmissions.hidden = unplaced + unanchored === 0;
+    elements.rangeOmissions.textContent =
+      `${unplaced} dispatches lack ordered placement; ` +
+      `${unanchored} waits lack an anchor and are excluded ` +
+      "from selected-range analysis.";
+  }
+
+  function renderSamplingNote(scope) {
+    const disclosure = samplingDisclosure(scope);
+    elements.samplingNote.textContent =
+      disclosure === null
+        ? ""
+        : state.rangeMode === "analyze"
+          ? disclosure.replace("exact full window", "exact selected range")
+          : disclosure;
+    elements.samplingNote.hidden = disclosure === null;
+  }
+
+  function renderScopeEvidence(scope) {
+    renderMetrics(scope);
+    renderKernelTable(scope);
+    renderWaitTable(scope);
+    setAnalysisBusy(false);
+    renderRangeOmissions(scope);
+    renderSamplingNote(scope);
+  }
+
+  function renderCanvasScope(
+    scope,
+    {
+      preserveInspector = false,
+      preservePointerDrag = false,
+    } = {},
+  ) {
+    const bounds = selectedLaunchBounds();
+    const viewport = state.selectedRange ?? bounds;
+    const pinned = preserveInspector ? state.inspectorPayload : null;
+    const interactionIdentity =
+      typeof state.currentTraceId === "string" &&
+      Number.isInteger(state.currentWindowIndex)
+        ? `${state.currentTraceId}:${state.currentWindowIndex}`
+        : undefined;
+    state.canvasScope = scope;
+    renderer.setDataset(scope ?? {}, {
+      bounds: bounds ?? undefined,
+      interactionIdentity,
+      viewport: viewport ?? undefined,
+      window: bounds ?? undefined,
+      preservePointerDrag,
+    });
+    if (pinned) {
+      state.inspectorPayload = pinned;
+      renderInspector(pinned);
+    }
+    renderSamplingNote(scope);
+    if (viewport) updateScale(viewport);
+  }
+
+  function commitRangeUrl() {
+    const bounds = selectedLaunchBounds();
+    if (!bounds || !state.selectedRange) return;
+    updateUrl(state.currentTraceId, state.currentWindowIndex, {
+      mode: state.rangeMode,
+      bounds,
+      range: state.selectedRange,
+    });
+  }
+
+  function scheduleRangeAnalysis(range, immediate) {
+    clearAnalysisTimer();
+    rangeAuthority.invalidate();
+    const requestedRange = Object.freeze({ ...range });
+    if (immediate) {
+      void analyzeSelectedRange(requestedRange);
+      return;
+    }
+    state.analysisTimer = windowObject.setTimeout(() => {
+      state.analysisTimer = null;
+      void analyzeSelectedRange(requestedRange);
+    }, analysisDebounceMs);
+  }
+
+  async function analyzeSelectedRange(range) {
+    if (
+      state.rangeMode !== "analyze" ||
+      !analysisAvailable() ||
+      !positiveFiniteRange(range) ||
+      !Number.isInteger(state.currentWindowIndex)
+    ) {
+      return;
+    }
+    const launchIndex = state.currentWindowIndex;
+    const token = rangeAuthority.begin(launchIndex);
+    setAnalysisBusy(true);
+    try {
+      const result = await state.analysisSession.analyzeRange({
+        launchIndex,
+        startNs: range.startNs,
+        endNs: range.endNs,
+      });
+      if (
+        state.destroyed ||
+        state.rangeMode !== "analyze" ||
+        !rangeAuthority.isCurrent(token, state.currentWindowIndex)
+      ) {
+        return;
+      }
+      state.selectedRange = Object.freeze({ ...result.range });
+      state.confirmedRange = state.selectedRange;
+      state.activeScope = result.dataset;
+      rangeNavigator.setRange(state.selectedRange);
+      renderScopeEvidence(result.dataset);
+      renderCanvasScope(result.dataset, { preservePointerDrag: true });
+      commitRangeUrl();
+    } catch (error) {
+      if (
+        error?.name === "AbortError" ||
+        !rangeAuthority.isCurrent(token, state.currentWindowIndex)
+      ) {
+        return;
+      }
+      switchToView({
+        errorMessage: `Exact analysis failed: ${errorDescription(error)}`,
+      });
+    }
+  }
+
+  function switchToView({ errorMessage = null } = {}) {
+    if (state.rangeMode === "view" && errorMessage === null) return;
+    invalidateRangeRequests();
+    state.rangeMode = "view";
+    state.confirmedRange = null;
+    state.activeScope = state.launchScope;
+    updateRangeModeControls();
+    renderScopeEvidence(state.launchScope);
+    renderCanvasScope(state.launchScope, { preserveInspector: true });
+    commitRangeUrl();
+    if (errorMessage) {
+      elements.rangeStatus.textContent = errorMessage;
+      announce(errorMessage);
+    }
+  }
+
+  function switchToAnalyze() {
+    if (
+      state.rangeMode === "analyze" ||
+      !analysisAvailable() ||
+      !state.selectedRange
+    ) {
+      return;
+    }
+    state.rangeMode = "analyze";
+    updateRangeModeControls();
+    commitRangeUrl();
+    scheduleRangeAnalysis(state.selectedRange, true);
+  }
+
+  function handleNavigatorRange(range, committed) {
+    if (!state.launchScope) return;
+    state.pendingRangeInput = null;
+    state.selectedRange = Object.freeze({ ...range });
+    renderer.setViewport(state.selectedRange, { notify: false });
+    updateScale(state.selectedRange);
+    updateRangeReadouts({
+      updateStatus: committed && state.rangeMode === "view",
+      announceRange: committed && state.rangeMode === "view",
+    });
+    if (state.rangeMode === "view") {
+      if (committed) commitRangeUrl();
+      return;
+    }
+    if (state.canvasScope !== state.launchScope) {
+      renderCanvasScope(state.launchScope, { preserveInspector: true });
+    }
+    setAnalysisBusy(true, { updateStatus: committed });
+    scheduleRangeAnalysis(state.selectedRange, committed);
+  }
+
+  function handleTimelineViewport(
+    viewport,
+    { committed = false } = {},
+  ) {
+    const bounds = selectedLaunchBounds();
+    if (!bounds) return;
+    state.pendingRangeInput = null;
+    state.selectedRange = clampViewport(viewport, bounds);
+    rangeNavigator.setRange(state.selectedRange);
+    updateRangeReadouts({
+      updateStatus: committed,
+      announceRange: committed && state.rangeMode === "view",
+    });
+    if (state.rangeMode === "analyze") {
+      if (state.canvasScope !== state.launchScope) {
+        renderCanvasScope(state.launchScope, {
+          preserveInspector: true,
+          preservePointerDrag: !committed,
+        });
+      }
+      setAnalysisBusy(true, { updateStatus: committed });
+      scheduleRangeAnalysis(state.selectedRange, committed);
+    } else if (committed) {
+      commitRangeUrl();
+    }
   }
 
   function renderRegistry() {
@@ -2479,14 +3004,38 @@ export async function bootstrap({
     return dataset;
   }
 
+  function terminateAnalysisSession() {
+    invalidateRangeRequests();
+    state.analysisSession?.terminate();
+    state.analysisSession = null;
+    state.analysisReady = false;
+    state.analysisError = null;
+  }
+
   function clearAnalysisState() {
+    invalidateRangeRequests();
     state.currentDataset = null;
     state.currentWindowIndex = null;
+    state.launchScope = null;
     state.activeScope = null;
+    state.canvasScope = null;
+    state.selectedRange = null;
+    state.confirmedRange = null;
+    state.rangeMode = "view";
+    state.rangePending = false;
+    state.pendingRangeInput = null;
+    state.inspectorPayload = null;
     exportController.setAvailable(false);
     elements.windowControl.hidden = true;
     elements.windowSelect.disabled = true;
     elements.windowSelect.replaceChildren();
+    elements.rangeNavigator.hidden = true;
+    rangeNavigator.setDisabled(true);
+    elements.rangeOmissions.hidden = true;
+    elements.rangeOmissions.textContent = "";
+    updateRangeModeControls();
+    updateRangeReadouts();
+    setAnalysisBusy(false);
     renderMetrics(null, true);
     elements.kernelState.textContent = "Awaiting rows";
     elements.waitState.textContent = "Awaiting rows";
@@ -2504,13 +3053,21 @@ export async function bootstrap({
     elements.samplingNote.textContent = "";
   }
 
-  function renderSelectedWindow(windowIndex, { updateHistory = true } = {}) {
+  function renderSelectedWindow(
+    windowIndex,
+    { updateHistory = true, requestedRangeInput = null } = {},
+  ) {
     const dataset = state.currentDataset;
     if (!dataset) return;
+    invalidateRangeRequests();
     const selectedIndex = chooseWindowIndex(dataset.launchWindows, windowIndex);
     state.currentWindowIndex = selectedIndex;
     const scope = scopeForWindow(dataset, selectedIndex);
+    state.launchScope = scope;
     state.activeScope = scope;
+    state.canvasScope = scope;
+    state.confirmedRange = null;
+    state.rangeMode = "view";
 
     elements.windowSelect.replaceChildren();
     const windows = dataset.launchWindows ?? [];
@@ -2525,38 +3082,74 @@ export async function bootstrap({
     elements.windowControl.hidden = windows.length <= 1;
     elements.windowSelect.disabled = windows.length <= 1;
 
-    renderMetrics(scope);
-    renderKernelTable(scope);
-    renderWaitTable(scope);
-    renderInspector(null);
-    renderer.setDataset(scope, { window: scope });
-    renderer.fit(scope);
+    const bounds = selectedLaunchBounds();
+    const overview = scope?.overview;
+    let requestedMode = "view";
+    if (bounds && overview) {
+      const selection = parseRangeSelection(
+        requestedRangeInput ?? "http://localhost/",
+        bounds,
+      );
+      state.selectedRange = selection.range;
+      requestedMode = selection.mode;
+      elements.rangeNavigator.hidden = false;
+      rangeNavigator.setDisabled(false);
+      rangeNavigator.setOverview(overview);
+      rangeNavigator.setRange(state.selectedRange);
+      if (requestedMode === "analyze" && analysisAvailable()) {
+        state.rangeMode = "analyze";
+      }
+    } else {
+      state.selectedRange = bounds;
+      elements.rangeNavigator.hidden = true;
+      rangeNavigator.setDisabled(true);
+    }
+
+    updateRangeModeControls();
+    renderScopeEvidence(scope);
+    renderCanvasScope(scope);
+    updateRangeReadouts();
     exportController.setAvailable(
       selectedLaunchExportContext(state) !== null,
     );
     elements.plotFrame.classList.remove("is-loading");
     elements.timelinePlaceholder.hidden = true;
-    const disclosure = samplingDisclosure(scope);
-    elements.samplingNote.textContent = disclosure ?? "";
-    elements.samplingNote.hidden = disclosure === null;
     setHidden(elements.loading, true);
     if (updateHistory) {
-      updateUrl(state.currentTraceId, selectedIndex);
+      if (bounds && state.selectedRange) {
+        commitRangeUrl();
+      } else {
+        updateUrl(state.currentTraceId, selectedIndex);
+      }
     }
     announce(
       `${traceLabel(state.currentTrace)} · ` +
         `${windows.length > 0 ? `launch ${selectedIndex + 1} of ${windows.length}` : "no launch window"} · ` +
         `${scope.summary?.opsTotal ?? 0} dispatches`,
     );
+    if (state.rangeMode === "analyze") {
+      scheduleRangeAnalysis(state.selectedRange, true);
+    } else if (
+      requestedMode === "analyze" &&
+      scope?.rangeAnalysis?.available === false
+    ) {
+      elements.rangeStatus.textContent =
+        `Analyze unavailable: ${scope.rangeAnalysis.reason ?? "missing timing data"}`;
+    }
   }
 
-  function renderLoaded(trace, loaded, requestedWindow) {
+  function renderLoaded(
+    trace,
+    loaded,
+    requestedWindow,
+    { requestedRangeInput = null } = {},
+  ) {
     state.currentTrace = trace;
     state.currentDataset = loaded.dataset;
     state.evidenceByCacheKey.set(traceCacheKey(trace), loaded.dataset);
     renderRegistry();
     renderProvenance(trace, loaded.dataset, loaded.diagnostics);
-    renderSelectedWindow(requestedWindow);
+    renderSelectedWindow(requestedWindow, { requestedRangeInput });
     const malformed = finiteOrZero(loaded.dataset.health?.malformedRows);
     if (malformed > 0) {
       announce(
@@ -2568,10 +3161,24 @@ export async function bootstrap({
 
   async function selectTrace(
     id,
-    { requestedWindow = 0, recordSelection = true } = {},
+    {
+      requestedWindow = 0,
+      requestedRangeInput = null,
+      recordSelection = true,
+    } = {},
   ) {
     const trace = state.traces.find((item) => item?.id === id);
     if (!trace || state.destroyed) return;
+    if (
+      recordSelection &&
+      id === state.currentTraceId &&
+      (
+        state.currentDataset ||
+        (state.analysisSession && state.analysisError === null)
+      )
+    ) {
+      return;
+    }
     if (recordSelection) {
       registrySelection.select(id);
     } else {
@@ -2579,43 +3186,154 @@ export async function bootstrap({
     }
     const token = coordinator.begin(id);
     const cacheKey = traceCacheKey(trace);
+    const cached = cache.get(cacheKey);
+    const preserveCurrentView =
+      !recordSelection &&
+      id === state.currentTraceId &&
+      state.currentDataset !== null &&
+      traceCacheKey(state.currentTrace) === cacheKey;
+    terminateAnalysisSession();
     state.currentToken = token;
     state.currentTraceId = id;
     state.currentTrace = trace;
+    state.pendingRangeInput = requestedRangeInput;
     publishIfCurrent(coordinator, token, () => {
       renderRegistry();
-      clearAnalysisState();
-      renderPendingProvenance(trace);
-      showLoading(trace);
-      updateUrl(id, chooseWindowIndex([{ placeholder: true }], requestedWindow));
+      if (preserveCurrentView) {
+        updateRangeModeControls();
+        elements.rangeStatus.textContent =
+          "Preparing exact analysis; current view preserved";
+      } else {
+        clearAnalysisState();
+        state.pendingRangeInput = requestedRangeInput;
+      }
+      if (cached && !preserveCurrentView) {
+        renderLoaded(trace, cached, requestedWindow, {
+          requestedRangeInput,
+        });
+        elements.rangeStatus.textContent =
+          "Viewport ready; preparing exact analysis";
+      } else if (!preserveCurrentView) {
+        renderPendingProvenance(trace);
+        showLoading(trace);
+      }
+      if (!cached && requestedRangeInput === null) {
+        updateUrl(
+          id,
+          chooseWindowIndex([{ placeholder: true }], requestedWindow),
+        );
+      }
     });
 
+    let session;
     try {
-      let loaded = cache.get(cacheKey);
-      if (!loaded) {
-        loaded = await traceAnalyzer(
-          `/api/traces/${encodeURIComponent(id)}`,
-          {
-          signal: token.signal,
-          onProgress(progress) {
-            publishIfCurrent(coordinator, token, () => {
-              renderProgress(progress, trace.size);
-            });
-          },
-          onStateChange(workerState) {
-            if (workerState !== "analyzing") return;
-            publishIfCurrent(coordinator, token, () => {
-              announce("Building exact aggregates off the main thread…");
-            });
-          },
-          },
-        );
-        if (loaded.diagnostics.sourceBytes > 0) {
-          cache.set(cacheKey, loaded, loaded.diagnostics.sourceBytes);
-        }
+      const generation = (state.analysisSessionGeneration += 1);
+      session = analysisSessionFactory({
+        generation,
+        onError(error) {
+          publishIfCurrent(coordinator, token, () => {
+            if (state.analysisSession !== session) return;
+            state.analysisReady = false;
+            state.analysisError = error;
+            updateRangeModeControls();
+            if (state.rangeMode === "analyze") {
+              switchToView({
+                errorMessage: `Exact analysis failed: ${errorDescription(error)}`,
+              });
+            } else if (state.currentDataset) {
+              elements.rangeStatus.textContent =
+                `Exact analysis unavailable: ${errorDescription(error)}`;
+            }
+          });
+        },
+        onProgress(progress) {
+          if (cached) return;
+          publishIfCurrent(coordinator, token, () => {
+            renderProgress(progress, trace.size);
+          });
+        },
+        onStateChange(workerState) {
+          if (workerState !== "analyzing") return;
+          publishIfCurrent(coordinator, token, () => {
+            announce("Building exact aggregates off the main thread…");
+          });
+        },
+      });
+      state.analysisSession = session;
+      updateRangeModeControls();
+      const loaded = await session.load(
+        traceSourceUrl(trace, {
+          hosted: state.registryHosted,
+          baseUrl: requestBaseUrl,
+        }),
+      );
+      if (
+        !coordinator.isCurrent(token) ||
+        state.analysisSession !== session ||
+        state.destroyed
+      ) {
+        return;
+      }
+      const currentBounds = selectedLaunchBounds();
+      let restoredRangeInput = state.pendingRangeInput;
+      if (
+        restoredRangeInput === null &&
+        currentBounds &&
+        state.selectedRange
+      ) {
+        restoredRangeInput = rangeSelectionUrl(windowObject.location.href, {
+          mode: state.rangeMode,
+          bounds: currentBounds,
+          range: state.selectedRange,
+        });
+      }
+      state.analysisReady = true;
+      state.analysisError = null;
+      if (finiteOrZero(loaded.diagnostics?.sourceBytes) > 0) {
+        cache.set(cacheKey, loaded, loaded.diagnostics.sourceBytes);
       }
       publishIfCurrent(coordinator, token, () => {
-        renderLoaded(trace, loaded, requestedWindow);
+        if (cached || preserveCurrentView) {
+          state.currentDataset = loaded.dataset;
+          state.evidenceByCacheKey.set(cacheKey, loaded.dataset);
+          renderRegistry();
+          renderProvenance(trace, loaded.dataset, loaded.diagnostics);
+          if (state.pendingRangeInput !== null) {
+            const bounds = selectedLaunchBounds();
+            const selection = bounds
+              ? parseRangeSelection(state.pendingRangeInput, bounds)
+              : null;
+            if (selection) {
+              state.selectedRange = selection.range;
+              rangeNavigator.setRange(selection.range);
+              renderer.setViewport(selection.range, { notify: false });
+              if (
+                selection.mode === "analyze" &&
+                analysisAvailable()
+              ) {
+                state.rangeMode = "analyze";
+              }
+            }
+          }
+          updateRangeModeControls();
+          updateRangeReadouts();
+          commitRangeUrl();
+          if (
+            state.rangeMode === "analyze" &&
+            state.selectedRange &&
+            analysisAvailable()
+          ) {
+            scheduleRangeAnalysis(state.selectedRange, true);
+          }
+        } else {
+          renderLoaded(
+            trace,
+            loaded,
+            state.currentWindowIndex ?? requestedWindow,
+            { requestedRangeInput: restoredRangeInput },
+          );
+        }
+        state.pendingRangeInput = null;
       });
     } catch (error) {
       if (
@@ -2625,9 +3343,29 @@ export async function bootstrap({
         return;
       }
       if (!coordinator.isCurrent(token)) return;
+      if (state.analysisSession === session) {
+        session?.terminate();
+        state.analysisSession = null;
+      }
+      state.analysisReady = false;
+      state.analysisError = error;
+      updateRangeModeControls();
       if (error?.status === 404) {
         announce("Selected trace disappeared; rescanning the directory…");
         await refreshRegistry({ missingId: id });
+        return;
+      }
+      if ((cached || preserveCurrentView) && state.currentDataset) {
+        const unavailableMessage =
+          `Exact analysis unavailable: ${errorDescription(error)}`;
+        if (state.rangeMode === "analyze") {
+          switchToView({ errorMessage: unavailableMessage });
+        } else {
+          elements.rangeStatus.textContent = unavailableMessage;
+        }
+        announce(
+          `${traceLabel(trace)} loaded from cache; exact analysis is unavailable.`,
+        );
         return;
       }
       publishIfCurrent(coordinator, token, () => {
@@ -2639,21 +3377,21 @@ export async function bootstrap({
     }
   }
 
-  async function refreshRegistry({ requestedId = null, missingId = null } = {}) {
+  async function refreshRegistry({
+    requestedId = null,
+    requestedWindow = null,
+    requestedRangeInput = null,
+    missingId = null,
+  } = {}) {
     if (requestedId !== null) {
       registrySelection.adopt(requestedId);
     }
     const refreshToken = registrySelection.beginRefresh(state.traces);
     try {
-      const response = await fetchImpl("/api/traces");
-      if (!response?.ok) {
-        const error = new Error(
-          `Registry request failed with HTTP ${response?.status ?? "unknown"}`,
-        );
-        error.status = response?.status;
-        throw error;
-      }
-      const registry = await response.json();
+      const loadedRegistry = await loadTraceRegistry(fetchImpl, {
+        baseUrl: requestBaseUrl,
+      });
+      const { registry } = loadedRegistry;
       if (!registrySelection.isCurrentRefresh(refreshToken) || state.destroyed) {
         return;
       }
@@ -2661,6 +3399,7 @@ export async function bootstrap({
       const commit = registrySelection.commitRefresh(refreshToken, traces);
       if (!commit.current) return;
       const activeTraceKey = traceCacheKey(state.currentTrace);
+      state.registryHosted = loadedRegistry.hosted;
       state.traces = traces;
       elements.directory.textContent =
         stringValue(registry?.rootLabel) ?? "configured trace directory";
@@ -2670,6 +3409,7 @@ export async function bootstrap({
       renderRegistry();
       if (!nextId) {
         coordinator.clear();
+        terminateAnalysisSession();
         clearAnalysisState();
         showEmpty();
         updateUrl(null, null);
@@ -2695,9 +3435,15 @@ export async function bootstrap({
       }
       await selectTrace(nextId, {
         requestedWindow:
-          nextId === refreshToken.selectedId
+          requestedWindow !== null && nextId === requestedId
+            ? requestedWindow
+            : nextId === refreshToken.selectedId
             ? state.currentWindowIndex ?? 0
             : 0,
+        requestedRangeInput:
+          requestedRangeInput !== null && nextId === requestedId
+            ? requestedRangeInput
+            : null,
         recordSelection: false,
       });
     } catch (error) {
@@ -2708,11 +3454,11 @@ export async function bootstrap({
     }
   }
 
-  elements.refresh.addEventListener("click", () => {
+  const handleRefresh = () => {
     announce("Refreshing trace directory…");
     void refreshRegistry();
-  });
-  elements.theme.addEventListener("click", () => {
+  };
+  const handleTheme = () => {
     const current =
       documentObject.documentElement.getAttribute("data-theme") === "light"
         ? "light"
@@ -2726,61 +3472,55 @@ export async function bootstrap({
     }
     refreshRendererPalette();
     renderer.requestRender();
+    rangeNavigator.requestRender();
     announce(`${next === "light" ? "Light" : "Dark"} theme enabled.`);
-  });
-  elements.windowSelect.addEventListener("change", () => {
+  };
+  const handleWindowChange = () => {
+    state.pendingRangeInput = null;
     renderSelectedWindow(Number.parseInt(elements.windowSelect.value, 10));
-  });
-  elements.traceSearch.addEventListener("focus", () => {
-    elements.traceSearch.value = "";
-    elements.track.hidden = false;
-    renderRegistry();
-  });
-  elements.rail.addEventListener("focusout", (event) => {
-    if (elements.rail.contains?.(event.relatedTarget)) return;
-    elements.track.hidden = true;
-    const selected = state.traces.find((trace) => trace?.id === state.currentTraceId);
-    elements.traceSearch.value = selected ? traceLabel(selected) : "";
-    elements.traceSearch.setAttribute("aria-expanded", "false");
-  });
-  elements.traceSearch.addEventListener("input", () => {
-    elements.track.hidden = false;
-    renderRegistry();
-  });
-  elements.traceSearch.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      elements.track.hidden = true;
-      const selected = state.traces.find((trace) => trace?.id === state.currentTraceId);
-      elements.traceSearch.value = selected ? traceLabel(selected) : "";
-      elements.traceSearch.setAttribute("aria-expanded", "false");
-      event.preventDefault();
-      return;
-    }
-    if (event.key === "ArrowDown") {
-      elements.track.hidden = false;
-      renderRegistry();
-      const first = elements.track.querySelector?.(".trace-toggle");
-      first?.focus?.({ preventScroll: true });
-      event.preventDefault();
-    }
-  });
-  elements.clearSelection.addEventListener("click", () => {
+  };
+  const handleRangeModeView = () => {
+    state.pendingRangeInput = null;
+    switchToView();
+  };
+  const handleRangeModeAnalyze = () => {
+    state.pendingRangeInput = null;
+    switchToAnalyze();
+  };
+  const handleClearSelection = () => {
     renderer.clearSelection();
-  });
-  elements.fit.addEventListener("click", () => renderer.fit(state.activeScope));
-  elements.zoomIn.addEventListener("click", () => {
+  };
+  const handleFit = () => {
+    const bounds = selectedLaunchBounds();
+    if (!bounds) return;
+    const range = renderer.fit(bounds, false);
+    rangeNavigator.setRange(range);
+    handleNavigatorRange(range, true);
+  };
+  const handleZoomIn = () => {
     renderer.handleKeyDown({ key: "+", preventDefault() {} });
-  });
-  elements.zoomOut.addEventListener("click", () => {
+  };
+  const handleZoomOut = () => {
     renderer.handleKeyDown({ key: "-", preventDefault() {} });
-  });
-  elements.track.addEventListener("keydown", (event) => {
+  };
+  const handleRailKeydown = (event) => {
     handleTraceRailKey({
       documentObject,
       track: elements.track,
       event,
     });
-  });
+  };
+
+  elements.refresh.addEventListener("click", handleRefresh);
+  elements.theme.addEventListener("click", handleTheme);
+  elements.windowSelect.addEventListener("change", handleWindowChange);
+  elements.rangeModeView.addEventListener("click", handleRangeModeView);
+  elements.rangeModeAnalyze.addEventListener("click", handleRangeModeAnalyze);
+  elements.clearSelection.addEventListener("click", handleClearSelection);
+  elements.fit.addEventListener("click", handleFit);
+  elements.zoomIn.addEventListener("click", handleZoomIn);
+  elements.zoomOut.addEventListener("click", handleZoomOut);
+  elements.rail.addEventListener("keydown", handleRailKeydown);
 
   for (const element of [
     elements.refresh,
@@ -2792,26 +3532,55 @@ export async function bootstrap({
     element.removeAttribute("disabled");
   }
 
-  const pagehide = (event) => {
-    if (!shouldTeardownOnPageHide(event)) return;
+  function destroy() {
+    if (state.destroyed) return;
     state.destroyed = true;
+    clearAnalysisTimer();
+    rangeAuthority.invalidate();
     coordinator.clear();
+    terminateAnalysisSession();
     helpController.destroy();
     exportController.destroy();
+    rangeNavigator.destroy();
     renderer.destroy();
+    elements.refresh.removeEventListener?.("click", handleRefresh);
+    elements.theme.removeEventListener?.("click", handleTheme);
+    elements.windowSelect.removeEventListener?.("change", handleWindowChange);
+    elements.rangeModeView.removeEventListener?.("click", handleRangeModeView);
+    elements.rangeModeAnalyze.removeEventListener?.(
+      "click",
+      handleRangeModeAnalyze,
+    );
+    elements.clearSelection.removeEventListener?.(
+      "click",
+      handleClearSelection,
+    );
+    elements.fit.removeEventListener?.("click", handleFit);
+    elements.zoomIn.removeEventListener?.("click", handleZoomIn);
+    elements.zoomOut.removeEventListener?.("click", handleZoomOut);
+    elements.rail.removeEventListener?.("keydown", handleRailKeydown);
+    windowObject.removeEventListener?.("pagehide", pagehide);
+    signal?.removeEventListener?.("abort", destroy);
+  }
+  const pagehide = (event) => {
+    if (!shouldTeardownOnPageHide(event)) return;
+    destroy();
   };
   windowObject.addEventListener("pagehide", pagehide);
+  signal?.addEventListener?.("abort", destroy, { once: true });
 
   await refreshRegistry({
     requestedId: initialUrl.searchParams.get("trace"),
+    requestedWindow: initialUrl.searchParams.get("window"),
+    requestedRangeInput: initialUrl,
   });
-  if (state.currentDataset) {
-    renderSelectedWindow(initialUrl.searchParams.get("window"));
-  }
 
   return {
     cache,
     coordinator,
+    destroy,
+    rangeNavigator,
+    rangeAuthority,
     helpController,
     exportController,
     renderer,
@@ -2819,22 +3588,4 @@ export async function bootstrap({
     selectTrace,
     state,
   };
-}
-
-if (typeof globalThis.document !== "undefined") {
-  const start = () => {
-    void bootstrap().catch((error) => {
-      const status = globalThis.document?.getElementById("trace-status");
-      if (status) {
-        status.textContent = `Workbench failed to start: ${errorDescription(error)}`;
-      }
-    });
-  };
-  if (globalThis.document.readyState === "loading") {
-    globalThis.document.addEventListener("DOMContentLoaded", start, {
-      once: true,
-    });
-  } else {
-    globalThis.queueMicrotask(start);
-  }
 }

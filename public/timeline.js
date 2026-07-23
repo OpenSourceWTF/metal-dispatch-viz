@@ -44,13 +44,17 @@ function finite(value, fallback = 0) {
 }
 
 function validRange(range) {
-  return (
+  if (
     range !== null &&
     typeof range === "object" &&
     Number.isFinite(range.startNs) &&
     Number.isFinite(range.endNs) &&
     range.endNs > range.startNs
-  );
+  ) {
+    const span = range.endNs - range.startNs;
+    return Number.isFinite(span) && span > 0;
+  }
+  return false;
 }
 
 function normalizedBounds(bounds) {
@@ -90,14 +94,7 @@ function mergeKeyboardMarks(dispatches, waits) {
  * deterministic result so a malformed trace cannot poison the canvas state.
  */
 export function timeToX(timeNs, viewport, width) {
-  if (
-    viewport &&
-    Number.isFinite(viewport.startNs) &&
-    Number.isFinite(viewport.endNs) &&
-    viewport.endNs <= viewport.startNs
-  ) {
-    return 0;
-  }
+  if (viewport && !validRange(viewport)) return 0;
   const range = validRange(viewport) ? viewport : { startNs: 0, endNs: 1 };
   const safeWidth = Number.isFinite(width) && width > 0 ? width : 0;
   const safeTime = Number.isFinite(timeNs) ? timeNs : range.startNs;
@@ -109,14 +106,7 @@ export function timeToX(timeNs, viewport, width) {
  * timeToX for valid inputs.
  */
 export function xToTime(x, viewport, width) {
-  if (
-    viewport &&
-    Number.isFinite(viewport.startNs) &&
-    Number.isFinite(viewport.endNs) &&
-    viewport.endNs <= viewport.startNs
-  ) {
-    return viewport.startNs;
-  }
+  if (viewport && !validRange(viewport)) return finite(viewport.startNs);
   const range = validRange(viewport) ? viewport : { startNs: 0, endNs: 1 };
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(x)) {
     return range.startNs;
@@ -187,15 +177,16 @@ export function buildDensityBins(dispatches, { startNs, endNs, width } = {}) {
     dispatches.length === 0 ||
     !Number.isFinite(startNs) ||
     !Number.isFinite(endNs) ||
-    endNs <= startNs ||
     !Number.isFinite(width) ||
     width <= 0
   ) {
     return [];
   }
 
-  const binCount = Math.max(1, Math.floor(width));
   const span = endNs - startNs;
+  if (!Number.isFinite(span) || span <= 0) return [];
+
+  const binCount = Math.max(1, Math.floor(width));
   const bins = new Map();
   for (const item of dispatches) {
     const atNs = timeOf(item);
@@ -414,8 +405,11 @@ function traceBounds(data, placedDispatches) {
   if (!Number.isFinite(startNs) || !Number.isFinite(endNs)) {
     return { startNs: 0, endNs: 1 };
   }
-  if (endNs > startNs) return { startNs, endNs };
-  return { startNs: startNs - 0.5, endNs: endNs + 0.5 };
+  if (validRange({ startNs, endNs })) return { startNs, endNs };
+  return normalizedBounds({
+    startNs: startNs - 0.5,
+    endNs: endNs + 0.5,
+  });
 }
 
 function formatTime(value) {
@@ -582,6 +576,7 @@ export class TimelineRenderer {
     this.frameId = null;
     this.destroyed = false;
     this.drag = null;
+    this.interactionIdentity = null;
     this.selectedWindow = null;
     this.datasetGeneration = 0;
     this.analysisCache = null;
@@ -681,6 +676,15 @@ export class TimelineRenderer {
   }
 
   setDataset(data, options = {}) {
+    const previousBounds = this.bounds;
+    const previousInteractionIdentity = this.interactionIdentity;
+    const nextInteractionIdentity =
+      typeof options.interactionIdentity === "string" &&
+      options.interactionIdentity !== ""
+        ? options.interactionIdentity
+        : null;
+    const preservedDrag =
+      options.preservePointerDrag === true && this.drag ? this.drag : null;
     this.hideTooltip();
     this.selection = { dispatch: null, commandBuffer: null, wait: null, bin: null };
     this.hovered = null;
@@ -759,7 +763,20 @@ export class TimelineRenderer {
         this.waitsByCommandBuffer.set(wait.commandBufferIndex, wait);
       }
     }
-    this.bounds = traceBounds(safeData, this.placedDispatches);
+    const naturalBounds = traceBounds(safeData, this.placedDispatches);
+    this.bounds = validRange(options.bounds)
+      ? normalizedBounds(options.bounds)
+      : naturalBounds;
+    if (
+      preservedDrag &&
+      nextInteractionIdentity !== null &&
+      nextInteractionIdentity === previousInteractionIdentity &&
+      this.bounds.startNs === previousBounds.startNs &&
+      this.bounds.endNs === previousBounds.endNs
+    ) {
+      this.drag = preservedDrag;
+    }
+    this.interactionIdentity = nextInteractionIdentity;
     const selectedWindow =
       (validRange(options) ? options : options.window) ??
       safeData.selectedWindow ??
@@ -767,30 +784,55 @@ export class TimelineRenderer {
         ? safeData.launchWindows?.[safeData.selectedWindowIndex]
         : null);
     this.selectedWindow = validRange(selectedWindow) ? selectedWindow : null;
-    this.fit(this.selectedWindow ?? this.bounds, false);
+    const requestedViewport = validRange(options.viewport)
+      ? options.viewport
+      : this.selectedWindow ?? this.bounds;
+    this.setViewport(requestedViewport, { notify: false });
     this.updateAccessibleSummary();
     this.requestRender();
     return this;
   }
 
-  fit(target = this.selectedWindow ?? this.bounds, notify = true) {
+  fit(
+    target = this.selectedWindow ?? this.bounds,
+    notify = true,
+    metadata = { committed: true, source: "fit" },
+  ) {
     let range = target;
     if (Number.isInteger(target)) {
       range = this.dataset?.launchWindows?.[target];
     }
     if (!validRange(range)) range = this.bounds;
-    this.viewport = clampViewport(
-      { startNs: range.startNs, endNs: range.endNs },
-      this.bounds,
-    );
     if (validRange(range) && range !== this.bounds) this.selectedWindow = range;
-    if (notify) this.notifyViewportChange();
-    this.requestRender();
-    return { ...this.viewport };
+    return this.setViewport(
+      { startNs: range.startNs, endNs: range.endNs },
+      { notify, ...metadata },
+    );
   }
 
-  notifyViewportChange() {
-    this.onViewportChange(Object.freeze({ ...this.viewport }));
+  setViewport(
+    viewport,
+    { notify = true, committed = true, source = "external" } = {},
+  ) {
+    const nextViewport = clampViewport(viewport, this.bounds);
+    const changed =
+      nextViewport.startNs !== this.viewport.startNs ||
+      nextViewport.endNs !== this.viewport.endNs;
+    this.viewport = nextViewport;
+    if (changed) {
+      this.analysisCache = null;
+      this.staticLayerCache = null;
+    }
+    if (notify) this.notifyViewportChange({ committed, source });
+    this.requestRender();
+    return Object.freeze({ ...this.viewport });
+  }
+
+  notifyViewportChange({ committed = true, source = "external" } = {}) {
+    this.onViewportChange(
+      Object.freeze({ ...this.viewport }),
+      Object.freeze({ committed: Boolean(committed), source }),
+    );
   }
 
   requestRender() {
@@ -1667,16 +1709,16 @@ export class TimelineRenderer {
       if (this.drag.mode === "pan") {
         const span = this.drag.viewport.endNs - this.drag.viewport.startNs;
         const shift = -(dx / Math.max(1, this.width)) * span;
-        this.viewport = clampViewport(
+        this.setViewport(
           {
             startNs: this.drag.viewport.startNs + shift,
             endNs: this.drag.viewport.endNs + shift,
           },
-          this.bounds,
+          { committed: false, source: "pointer-pan" },
         );
-        this.notifyViewportChange();
+      } else {
+        this.requestRender();
       }
-      this.requestRender();
       return;
     }
     this.hovered = this.hitTest(point.x, point.y);
@@ -1710,20 +1752,36 @@ export class TimelineRenderer {
     if (!this.drag || this.drag.pointerId !== event.pointerId) return;
     const completedDrag = this.drag;
     const wasMoved = completedDrag.moved;
+    const viewportChanged =
+      this.viewport.startNs !== completedDrag.viewport.startNs ||
+      this.viewport.endNs !== completedDrag.viewport.endNs;
     this.canvas.releasePointerCapture?.(event.pointerId);
     this.drag = null;
     if (wasMoved && completedDrag.mode === "range") {
       const startX = Math.max(0, Math.min(this.width, completedDrag.x));
       const endX = Math.max(0, Math.min(this.width, completedDrag.currentX));
-      this.viewport = clampViewport(
+      this.setViewport(
         {
-          startNs: xToTime(Math.min(startX, endX), completedDrag.viewport, this.width),
-          endNs: xToTime(Math.max(startX, endX), completedDrag.viewport, this.width),
+          startNs: xToTime(
+            Math.min(startX, endX),
+            completedDrag.viewport,
+            this.width,
+          ),
+          endNs: xToTime(
+            Math.max(startX, endX),
+            completedDrag.viewport,
+            this.width,
+          ),
         },
-        this.bounds,
+        { committed: true, source: "pointer-range" },
       );
-      this.notifyViewportChange();
-    } else if (!wasMoved) {
+    } else if (completedDrag.mode === "pan" && (wasMoved || viewportChanged)) {
+      this.notifyViewportChange({
+        committed: true,
+        source: "pointer-pan",
+      });
+    }
+    if (!wasMoved) {
       const point = this.pointForEvent(event);
       const item = this.hitTest(point.x, point.y);
       if (item) {
@@ -1736,8 +1794,17 @@ export class TimelineRenderer {
 
   handlePointerCancel(event) {
     if (this.drag?.pointerId === event.pointerId) {
+      const { mode, viewport: originalViewport } = this.drag;
       this.canvas.releasePointerCapture?.(event.pointerId);
       this.drag = null;
+      if (mode === "pan") {
+        this.setViewport(originalViewport, {
+          committed: false,
+          source: "pointer-pan",
+        });
+      } else {
+        this.requestRender();
+      }
     }
   }
 
@@ -1757,15 +1824,13 @@ export class TimelineRenderer {
     const factor = event.deltaY < 0 ? 0.8 : event.deltaY > 0 ? 1.25 : 1;
     const nextSpan = oldSpan * factor;
     const fraction = Math.max(0, Math.min(1, point.x / Math.max(1, this.width)));
-    this.viewport = clampViewport(
+    this.setViewport(
       {
         startNs: anchor - nextSpan * fraction,
         endNs: anchor + nextSpan * (1 - fraction),
       },
-      this.bounds,
+      { committed: true, source: "wheel" },
     );
-    this.notifyViewportChange();
-    this.requestRender();
   }
 
   handleKeyDown(event) {
@@ -1774,25 +1839,26 @@ export class TimelineRenderer {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       const direction = event.key === "ArrowLeft" ? -1 : 1;
       const shift = direction * span * 0.1;
-      this.viewport = clampViewport(
+      this.setViewport(
         {
           startNs: this.viewport.startNs + shift,
           endNs: this.viewport.endNs + shift,
         },
-        this.bounds,
+        { committed: true, source: "keyboard" },
       );
-      this.notifyViewportChange();
     } else if (event.key === "+" || event.key === "=" || event.key === "-") {
       const factor = event.key === "-" ? 1.25 : 0.8;
       const center = (this.viewport.startNs + this.viewport.endNs) / 2;
       const nextSpan = span * factor;
-      this.viewport = clampViewport(
+      this.setViewport(
         { startNs: center - nextSpan / 2, endNs: center + nextSpan / 2 },
-        this.bounds,
+        { committed: true, source: "keyboard" },
       );
-      this.notifyViewportChange();
     } else if (event.key === "0") {
-      this.fit(this.selectedWindow);
+      this.fit(this.selectedWindow, true, {
+        committed: true,
+        source: "keyboard",
+      });
     } else if (event.key === "]" || event.key === "}") {
       this.moveKeyboardActive(1);
     } else if (event.key === "[" || event.key === "{") {
@@ -1836,14 +1902,13 @@ export class TimelineRenderer {
     if (atNs !== null) {
       const span = this.viewport.endNs - this.viewport.startNs;
       if (atNs < this.viewport.startNs || atNs > this.viewport.endNs) {
-        this.viewport = clampViewport(
+        this.setViewport(
           {
             startNs: atNs - span / 2,
             endNs: atNs + span / 2,
           },
-          this.bounds,
+          { committed: true, source: "keyboard" },
         );
-        this.notifyViewportChange();
       }
       this.crosshairX = timeToX(atNs, this.viewport, this.width);
     }

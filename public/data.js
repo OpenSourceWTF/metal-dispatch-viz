@@ -1,5 +1,20 @@
 const MIN_LAUNCH_GAP_NS = 100_000_000;
 const LAUNCH_GAP_MULTIPLIER = 20;
+const DEFAULT_OVERVIEW_BIN_COUNT = 512;
+const MAX_OVERVIEW_BIN_COUNT = 4_096;
+const TRACE_OMISSION_SCOPE = "trace-level-unattributable";
+const RANGE_ANALYSIS_AVAILABLE = Object.freeze({
+  available: true,
+  reason: null,
+});
+const RANGE_ANALYSIS_MISSING_COMMAND_BUFFER_TIMING = Object.freeze({
+  available: false,
+  reason: "missing-command-buffer-timing",
+});
+const RANGE_ANALYSIS_MISSING_LAUNCH_TIMING = Object.freeze({
+  available: false,
+  reason: "missing-launch-timing",
+});
 
 const TYPE_ALIASES = new Map([
   ["op", "op"],
@@ -631,8 +646,51 @@ export function partitionLaunchWindows(commandBuffers) {
   }));
 }
 
-function intervalDuration(intervals) {
-  return intervals.reduce((total, [start, end]) => total + (end - start), 0);
+function checkedFiniteAdd(total, value, label) {
+  if (!Number.isFinite(total) || !Number.isFinite(value)) {
+    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  }
+  const result = total + value;
+  if (!Number.isFinite(result)) {
+    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  }
+  return result;
+}
+
+function checkedFiniteDifference(end, start, label) {
+  if (!Number.isFinite(end) || !Number.isFinite(start)) {
+    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  }
+  const result = end - start;
+  if (!Number.isFinite(result)) {
+    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  }
+  return result;
+}
+
+function checkedFiniteSum(values, label) {
+  let total = 0;
+  for (const value of values) {
+    total = checkedFiniteAdd(total, value, label);
+  }
+  return total;
+}
+
+function finiteIntervalDuration(intervals, label) {
+  let duration = 0;
+  for (const [start, end] of intervals) {
+    const intervalDuration = checkedFiniteDifference(end, start, label);
+    duration = checkedFiniteAdd(duration, intervalDuration, label);
+  }
+  return duration;
+}
+
+function finitePropertyTotal(items, property, label) {
+  let total = 0;
+  for (const item of items) {
+    total = checkedFiniteAdd(total, item[property], label);
+  }
+  return total;
 }
 
 function commandBufferGpuInterval(commandBuffer) {
@@ -659,8 +717,14 @@ function classifyCommandBufferExposure(commandBuffer, gpuIntervals) {
     ...commandBuffer,
     hiddenIntervals,
     exposedIntervals,
-    hiddenHostNs: intervalDuration(hiddenIntervals),
-    exposedHostNs: intervalDuration(exposedIntervals),
+    hiddenHostNs: finiteIntervalDuration(
+      hiddenIntervals,
+      "Hidden host duration",
+    ),
+    exposedHostNs: finiteIntervalDuration(
+      exposedIntervals,
+      "Exposed host duration",
+    ),
   });
 }
 
@@ -858,9 +922,17 @@ function buildWaitTaxonomy(waits) {
           count: 0,
           waitNs: 0,
         };
-    entry.count += 1;
+    entry.count = checkedFiniteAdd(
+      entry.count,
+      1,
+      "Wait taxonomy count",
+    );
     if (Number.isFinite(wait.waitNs) && wait.waitNs >= 0) {
-      entry.waitNs += wait.waitNs;
+      entry.waitNs = checkedFiniteAdd(
+        entry.waitNs,
+        wait.waitNs,
+        "Wait taxonomy duration",
+      );
     }
     taxonomy[wait.bucket] = entry;
   }
@@ -883,10 +955,26 @@ function kernelCensus(dispatches) {
       setBytesTotalBytes: 0,
       bufferBinds: 0,
     };
-    entry.count += 1;
-    entry.setBytesCalls += dispatch.setBytesCalls ?? 0;
-    entry.setBytesTotalBytes += dispatch.setBytesTotalBytes ?? 0;
-    entry.bufferBinds += dispatch.bufferBinds ?? 0;
+    entry.count = checkedFiniteAdd(
+      entry.count,
+      1,
+      "Kernel dispatch count",
+    );
+    entry.setBytesCalls = checkedFiniteAdd(
+      entry.setBytesCalls,
+      dispatch.setBytesCalls ?? 0,
+      "Kernel setBytes calls",
+    );
+    entry.setBytesTotalBytes = checkedFiniteAdd(
+      entry.setBytesTotalBytes,
+      dispatch.setBytesTotalBytes ?? 0,
+      "Kernel setBytes bytes",
+    );
+    entry.bufferBinds = checkedFiniteAdd(
+      entry.bufferBinds,
+      dispatch.bufferBinds ?? 0,
+      "Kernel buffer binds",
+    );
     byKernel.set(dispatch.kernel, entry);
   }
   return Object.freeze(
@@ -896,23 +984,42 @@ function kernelCensus(dispatches) {
   );
 }
 
+function waitSummary(waits) {
+  const totals = { cap: 0, dependency: 0, decision: 0, other: 0 };
+  for (const wait of waits) {
+    if (
+      wait.headlineCategory !== null &&
+      Object.hasOwn(totals, wait.headlineCategory) &&
+      Number.isFinite(wait.waitNs) &&
+      wait.waitNs >= 0
+    ) {
+      totals[wait.headlineCategory] = checkedFiniteAdd(
+        totals[wait.headlineCategory],
+        wait.waitNs,
+        "Wait duration",
+      );
+    }
+  }
+  const headlineWaitNs = checkedFiniteSum(
+    [totals.cap, totals.dependency, totals.decision, totals.other],
+    "Headline wait duration",
+  );
+  return Object.freeze({
+    capWaitNs: totals.cap,
+    dependencyWaitNs: totals.dependency,
+    decisionWaitNs: totals.decision,
+    otherWaitNs: totals.other,
+    headlineWaitNs,
+  });
+}
+
 function aggregateData(commandBuffers, dispatches, waits) {
   const gpuWorkIntervals = commandBuffers
     .map(commandBufferGpuInterval)
     .filter((interval) => interval !== null);
   const gpuIntervals = mergeIntervals(gpuWorkIntervals);
   const waitTaxonomy = buildWaitTaxonomy(waits);
-  const waitTotals = { cap: 0, dependency: 0, decision: 0, other: 0 };
-  for (const wait of waits) {
-    if (
-      wait.headlineCategory !== null &&
-      Object.hasOwn(waitTotals, wait.headlineCategory) &&
-      Number.isFinite(wait.waitNs) &&
-      wait.waitNs >= 0
-    ) {
-      waitTotals[wait.headlineCategory] += wait.waitNs;
-    }
-  }
+  const waitTotals = waitSummary(waits);
 
   let startNs = null;
   let endNs = null;
@@ -938,36 +1045,570 @@ function aggregateData(commandBuffers, dispatches, waits) {
   }
   const gpuStartNs = gpuIntervals.length > 0 ? gpuIntervals[0][0] : null;
   const gpuEndNs = gpuIntervals.length > 0 ? gpuIntervals.at(-1)[1] : null;
+  const wallSpanNs =
+    startNs === null || endNs === null
+      ? 0
+      : checkedFiniteDifference(endNs, startNs, "Wall span");
+  const exposedHostNs = finitePropertyTotal(
+    commandBuffers,
+    "exposedHostNs",
+    "Exposed host duration",
+  );
+  const hiddenHostNs = finitePropertyTotal(
+    commandBuffers,
+    "hiddenHostNs",
+    "Hidden host duration",
+  );
+  const gpuBusyNs = finiteIntervalDuration(
+    gpuIntervals,
+    "GPU busy duration",
+  );
+  const gpuWorkNs = finiteIntervalDuration(
+    gpuWorkIntervals,
+    "GPU work duration",
+  );
+  const gpuSpanNs =
+    gpuStartNs === null || gpuEndNs === null
+      ? 0
+      : checkedFiniteDifference(gpuEndNs, gpuStartNs, "GPU span");
+  const exactKernelCensus = kernelCensus(dispatches);
 
   return {
     gpuIntervals: Object.freeze(gpuIntervals),
     waitTaxonomy,
-    kernelCensus: kernelCensus(dispatches),
+    kernelCensus: exactKernelCensus,
     summary: Object.freeze({
       startNs,
       endNs,
-      wallSpanNs: startNs === null || endNs === null ? 0 : endNs - startNs,
-      exposedHostNs: commandBuffers.reduce(
-        (total, commandBuffer) => total + commandBuffer.exposedHostNs,
-        0,
-      ),
-      hiddenHostNs: commandBuffers.reduce(
-        (total, commandBuffer) => total + commandBuffer.hiddenHostNs,
-        0,
-      ),
-      gpuBusyNs: intervalDuration(gpuIntervals),
-      gpuWorkNs: intervalDuration(gpuWorkIntervals),
-      gpuSpanNs: gpuStartNs === null || gpuEndNs === null ? 0 : gpuEndNs - gpuStartNs,
-      capWaitNs: waitTotals.cap,
-      dependencyWaitNs: waitTotals.dependency,
-      decisionWaitNs: waitTotals.decision,
-      otherWaitNs: waitTotals.other,
-      headlineWaitNs:
-        waitTotals.cap + waitTotals.dependency + waitTotals.decision + waitTotals.other,
+      wallSpanNs,
+      exposedHostNs,
+      hiddenHostNs,
+      gpuBusyNs,
+      gpuWorkNs,
+      gpuSpanNs,
+      ...waitTotals,
       opsTotal: dispatches.length,
       cbsTotal: commandBuffers.length,
     }),
   };
+}
+
+function clipInterval(interval, range) {
+  if (!validInterval(interval)) {
+    return null;
+  }
+  const start = Math.max(interval[0], range.startNs);
+  const end = Math.min(interval[1], range.endNs);
+  return end > start ? [start, end] : null;
+}
+
+function pointInRange(atNs, range) {
+  return (
+    Number.isFinite(atNs) &&
+    atNs >= range.startNs &&
+    atNs <= range.endNs
+  );
+}
+
+function validSelectedRange(scope, requestedRange) {
+  if (
+    !Number.isFinite(scope?.startNs) ||
+    !Number.isFinite(scope?.endNs) ||
+    !Number.isFinite(requestedRange?.startNs) ||
+    !Number.isFinite(requestedRange?.endNs)
+  ) {
+    throw new TypeError("Range and launch bounds must be finite.");
+  }
+  const launchSpanNs = scope.endNs - scope.startNs;
+  if (!Number.isFinite(launchSpanNs) || launchSpanNs <= 0) {
+    throw new RangeError("Launch must have finite positive duration.");
+  }
+  const startNs = Math.max(scope.startNs, requestedRange.startNs);
+  const endNs = Math.min(scope.endNs, requestedRange.endNs);
+  const selectedSpanNs = endNs - startNs;
+  if (!Number.isFinite(selectedSpanNs) || selectedSpanNs <= 0) {
+    throw new RangeError("Selected range must have finite positive duration.");
+  }
+  return Object.freeze({ startNs, endNs });
+}
+
+function propagatedOmissionCount(scope, key) {
+  const omissions = scope?.omissions;
+  if (
+    omissions?.scope !== TRACE_OMISSION_SCOPE ||
+    !Number.isSafeInteger(omissions[key]) ||
+    omissions[key] < 0
+  ) {
+    return 0;
+  }
+  return omissions[key];
+}
+
+function commandBufferHasFinitePositiveTiming(
+  commandBuffer,
+  hasOwnedDispatch,
+) {
+  let hasTiming = false;
+  let hasDegenerateAnchor = false;
+  for (const [start, end] of [
+    [commandBuffer.encodeStartNs, commandBuffer.encodeEndNs],
+    [commandBuffer.gpuStartNs, commandBuffer.gpuEndNs],
+  ]) {
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      continue;
+    }
+    if (end === start) {
+      hasDegenerateAnchor = true;
+      continue;
+    }
+    if (end < start) {
+      continue;
+    }
+    checkedFiniteDifference(end, start, "Command-buffer timing span");
+    hasTiming = true;
+  }
+  // The profiler emits finite zero-width hairlines for empty command buffers.
+  // They own no work or duration, but their measured point is sufficient for
+  // inclusive range membership. A degenerate CB that owns ops is unavailable.
+  return (
+    hasTiming ||
+    (
+      commandBuffer.opCount === 0 &&
+      !hasOwnedDispatch &&
+      hasDegenerateAnchor
+    )
+  );
+}
+
+function anchoredEmptyCommandBufferInRange(commandBuffer, range) {
+  if (commandBuffer.opCount !== 0) {
+    return false;
+  }
+  return [
+    [commandBuffer.encodeStartNs, commandBuffer.encodeEndNs],
+    [commandBuffer.gpuStartNs, commandBuffer.gpuEndNs],
+  ].some(
+    ([start, end]) =>
+      Number.isFinite(start) &&
+      end === start &&
+      pointInRange(start, range),
+  );
+}
+
+function rangeAnalysisForScope(scope) {
+  const startNs = scope?.startNs;
+  const endNs = scope?.endNs;
+  if (startNs === null || startNs === undefined || endNs === null || endNs === undefined) {
+    return RANGE_ANALYSIS_MISSING_LAUNCH_TIMING;
+  }
+  if (!Number.isFinite(startNs) || !Number.isFinite(endNs)) {
+    throw new TypeError("Launch bounds must be finite.");
+  }
+  const spanNs = endNs - startNs;
+  if (!Number.isFinite(spanNs)) {
+    throw new RangeError(
+      "Launch must have finite positive duration; span exceeds the finite numeric range.",
+    );
+  }
+  if (spanNs <= 0) {
+    return RANGE_ANALYSIS_MISSING_LAUNCH_TIMING;
+  }
+  const commandBuffers = Array.isArray(scope.commandBuffers)
+    ? scope.commandBuffers
+    : [];
+  const dispatches = Array.isArray(scope.dispatches) ? scope.dispatches : [];
+  const dispatchOwnerIndices = new Set(
+    dispatches
+      .map((dispatch) => dispatch.commandBufferIndex)
+      .filter(Number.isFinite),
+  );
+  let missingCommandBufferTiming = false;
+  for (const commandBuffer of commandBuffers) {
+    if (
+      !commandBufferHasFinitePositiveTiming(
+        commandBuffer,
+        dispatchOwnerIndices.has(commandBuffer.commandBufferIndex),
+      )
+    ) {
+      missingCommandBufferTiming = true;
+    }
+  }
+  if (missingCommandBufferTiming) {
+    return RANGE_ANALYSIS_MISSING_COMMAND_BUFFER_TIMING;
+  }
+  return RANGE_ANALYSIS_AVAILABLE;
+}
+
+function installedOrDerivedRangeAnalysis(scope) {
+  const installed = scope?.rangeAnalysis;
+  if (
+    installed?.available === true &&
+    installed.reason === null
+  ) {
+    return installed;
+  }
+  if (
+    installed?.available === false &&
+    (
+      installed.reason === "missing-command-buffer-timing" ||
+      installed.reason === "missing-launch-timing"
+    )
+  ) {
+    return installed;
+  }
+  return rangeAnalysisForScope(scope);
+}
+
+function assertRangeAnalysisAvailable(rangeAnalysis) {
+  if (rangeAnalysis.available) {
+    return;
+  }
+  const reason =
+    rangeAnalysis.reason === "missing-command-buffer-timing"
+      ? "missing command-buffer timing"
+      : "missing launch timing";
+  throw new RangeError(`Range analysis unavailable: ${reason}.`);
+}
+
+/**
+ * Build exact aggregates for one positive-duration selection within a launch.
+ * Point records are inclusive at both edges; measured intervals contribute
+ * only their positive-duration intersection with the selected range.
+ *
+ * The scope is expected to be an immutable launch installed by `buildDataset`.
+ * Selected point records are retained by reference; only command-buffer
+ * wrappers and clipped interval fragments are created for each range.
+ */
+export function buildRangeScope(scope, requestedRange) {
+  const rangeAnalysis = installedOrDerivedRangeAnalysis(scope);
+  assertRangeAnalysisAvailable(rangeAnalysis);
+  const range = validSelectedRange(scope, requestedRange);
+  const sourceCommandBuffers = Array.isArray(scope.commandBuffers)
+    ? scope.commandBuffers
+    : [];
+  const sourceDispatches = Array.isArray(scope.dispatches)
+    ? scope.dispatches
+    : [];
+  const sourceWaits = Array.isArray(scope.waits) ? scope.waits : [];
+  const commandBuffers = sourceCommandBuffers
+    .map((commandBuffer) => {
+      const encodeInterval = clipInterval(
+        [commandBuffer.encodeStartNs, commandBuffer.encodeEndNs],
+        range,
+      );
+      const gpuInterval = clipInterval(
+        [commandBuffer.gpuStartNs, commandBuffer.gpuEndNs],
+        range,
+      );
+      const anchoredEmpty = anchoredEmptyCommandBufferInRange(
+        commandBuffer,
+        range,
+      );
+      if (encodeInterval === null && gpuInterval === null && !anchoredEmpty) {
+        return null;
+      }
+      const sourceHiddenIntervals = Array.isArray(commandBuffer.hiddenIntervals)
+        ? commandBuffer.hiddenIntervals
+        : [];
+      const sourceExposedIntervals = Array.isArray(commandBuffer.exposedIntervals)
+        ? commandBuffer.exposedIntervals
+        : [];
+      const hiddenIntervals = sourceHiddenIntervals
+        .map((interval) => clipInterval(interval, range))
+        .filter((interval) => interval !== null);
+      const exposedIntervals = sourceExposedIntervals
+        .map((interval) => clipInterval(interval, range))
+        .filter((interval) => interval !== null);
+      const hiddenHostNs = finiteIntervalDuration(
+        hiddenIntervals,
+        "Hidden host duration",
+      );
+      const exposedHostNs = finiteIntervalDuration(
+        exposedIntervals,
+        "Exposed host duration",
+      );
+      return Object.freeze({
+        ...commandBuffer,
+        hiddenIntervals: freezeIntervals(hiddenIntervals),
+        exposedIntervals: freezeIntervals(exposedIntervals),
+        hiddenHostNs,
+        exposedHostNs,
+        rangeGpuInterval:
+          gpuInterval === null ? null : Object.freeze(gpuInterval),
+      });
+    })
+    .filter((commandBuffer) => commandBuffer !== null);
+  const dispatches = sourceDispatches.filter((dispatch) =>
+    pointInRange(dispatch.atNs, range));
+  const waits = sourceWaits.filter((wait) => pointInRange(wait.atNs, range));
+  const gpuWorkIntervals = commandBuffers
+    .map((commandBuffer) => commandBuffer.rangeGpuInterval)
+    .filter((interval) => interval !== null);
+  const gpuIntervals = mergeIntervals(gpuWorkIntervals);
+  const waitTotals = waitSummary(waits);
+  const localUnplacedDispatches = sourceDispatches.filter(
+    (dispatch) => !Number.isFinite(dispatch.atNs),
+  ).length;
+  const localUnanchoredWaits = sourceWaits.filter(
+    (wait) => !Number.isFinite(wait.atNs),
+  ).length;
+  const exposedHostNs = finitePropertyTotal(
+    commandBuffers,
+    "exposedHostNs",
+    "Exposed host duration",
+  );
+  const hiddenHostNs = finitePropertyTotal(
+    commandBuffers,
+    "hiddenHostNs",
+    "Hidden host duration",
+  );
+  const gpuBusyNs = finiteIntervalDuration(gpuIntervals, "GPU busy duration");
+  const gpuWorkNs = finiteIntervalDuration(
+    gpuWorkIntervals,
+    "GPU work duration",
+  );
+  const gpuSpanNs =
+    gpuIntervals.length === 0
+      ? 0
+      : checkedFiniteDifference(
+          gpuIntervals.at(-1)[1],
+          gpuIntervals[0][0],
+          "GPU span",
+        );
+
+  return Object.freeze({
+    index: scope.index,
+    startNs: range.startNs,
+    endNs: range.endNs,
+    range,
+    rangeAnalysis,
+    commandBuffers: Object.freeze(commandBuffers),
+    dispatches: Object.freeze(dispatches),
+    waits: Object.freeze(waits),
+    gpuIntervals,
+    kernelCensus: kernelCensus(dispatches),
+    waitTaxonomy: buildWaitTaxonomy(waits),
+    omissions: Object.freeze({
+      unplacedDispatches:
+        localUnplacedDispatches +
+        propagatedOmissionCount(scope, "unplacedDispatches"),
+      unanchoredWaits:
+        localUnanchoredWaits +
+        propagatedOmissionCount(scope, "unanchoredWaits"),
+    }),
+    summary: Object.freeze({
+      startNs: range.startNs,
+      endNs: range.endNs,
+      wallSpanNs: range.endNs - range.startNs,
+      exposedHostNs,
+      hiddenHostNs,
+      gpuBusyNs,
+      gpuWorkNs,
+      gpuSpanNs,
+      ...waitTotals,
+      opsTotal: dispatches.length,
+      cbsTotal: commandBuffers.length,
+    }),
+  });
+}
+
+function validOverviewBinCount(binCount) {
+  if (
+    !Number.isSafeInteger(binCount) ||
+    binCount < 1 ||
+    binCount > MAX_OVERVIEW_BIN_COUNT
+  ) {
+    throw new RangeError(
+      `Overview bin count must be a safe integer between 1 and ${MAX_OVERVIEW_BIN_COUNT}.`,
+    );
+  }
+  return binCount;
+}
+
+function finitePositiveSpan(startNs, endNs, label) {
+  if (!Number.isFinite(startNs) || !Number.isFinite(endNs)) {
+    throw new TypeError(`${label} bounds must be finite.`);
+  }
+  const spanNs = endNs - startNs;
+  if (!Number.isFinite(spanNs) || spanNs <= 0) {
+    throw new RangeError(`${label} must have finite positive duration.`);
+  }
+  return spanNs;
+}
+
+function overviewPointIndex(atNs, startNs, endNs, spanNs, binCount) {
+  if (!Number.isFinite(atNs) || atNs < startNs || atNs > endNs) {
+    return -1;
+  }
+  if (atNs === endNs) {
+    return binCount - 1;
+  }
+  const scaled = ((atNs - startNs) / spanNs) * binCount;
+  return Math.max(0, Math.min(binCount - 1, Math.floor(scaled)));
+}
+
+function addOverviewInterval(
+  bins,
+  interval,
+  field,
+  { startNs, endNs, spanNs, binCount },
+) {
+  if (!Array.isArray(interval)) {
+    return;
+  }
+  const intervalStartNs = interval[0];
+  const intervalEndNs = interval[1];
+  if (
+    !Number.isFinite(intervalStartNs) ||
+    !Number.isFinite(intervalEndNs) ||
+    intervalEndNs <= intervalStartNs
+  ) {
+    return;
+  }
+  const clippedStartNs = Math.max(intervalStartNs, startNs);
+  const clippedEndNs = Math.min(intervalEndNs, endNs);
+  if (clippedEndNs <= clippedStartNs) {
+    return;
+  }
+
+  const firstBin = overviewPointIndex(
+    clippedStartNs,
+    startNs,
+    endNs,
+    spanNs,
+    binCount,
+  );
+  const scaledEnd = ((clippedEndNs - startNs) / spanNs) * binCount;
+  let lastBin = Math.min(binCount - 1, Math.ceil(scaledEnd) - 1);
+  while (
+    lastBin + 1 < binCount &&
+    bins[lastBin + 1].startNs < clippedEndNs
+  ) {
+    lastBin += 1;
+  }
+  while (lastBin >= firstBin && bins[lastBin].startNs >= clippedEndNs) {
+    lastBin -= 1;
+  }
+
+  for (let index = firstBin; index <= lastBin; index += 1) {
+    const bin = bins[index];
+    const overlapStart = Math.max(clippedStartNs, bin.startNs);
+    const overlapEnd = Math.min(clippedEndNs, bin.endNs);
+    if (overlapEnd > overlapStart) {
+      const overlap = checkedFiniteDifference(
+        overlapEnd,
+        overlapStart,
+        "Overview coverage",
+      );
+      bin[field] = checkedFiniteAdd(
+        bin[field],
+        overlap,
+        "Overview coverage",
+      );
+    }
+  }
+}
+
+/**
+ * Reduce a complete launch to fixed-resolution exact coverage and point-event
+ * bins for the overview navigator.
+ */
+export function buildOverviewBins(
+  scope,
+  binCount = DEFAULT_OVERVIEW_BIN_COUNT,
+) {
+  const count = validOverviewBinCount(binCount);
+  const startNs = scope?.startNs;
+  const endNs = scope?.endNs;
+  const spanNs = finitePositiveSpan(startNs, endNs, "Launch");
+  const binEdges = Array.from({ length: count + 1 }, (_, index) => {
+    if (index === 0) {
+      return startNs;
+    }
+    if (index === count) {
+      return endNs;
+    }
+    const edge = startNs + spanNs * (index / count);
+    if (!Number.isFinite(edge)) {
+      throw new RangeError("Overview bin edge exceeds the finite numeric range.");
+    }
+    return edge;
+  });
+  const bins = Array.from({ length: count }, (_, index) => ({
+    startNs: binEdges[index],
+    endNs: binEdges[index + 1],
+    hostEncodeNs: 0,
+    gpuBusyNs: 0,
+    dispatchCount: 0,
+    waitCount: 0,
+    waitClasses: new Set(),
+  }));
+  const commandBuffers = Array.isArray(scope.commandBuffers)
+    ? scope.commandBuffers
+    : [];
+  const dispatches = Array.isArray(scope.dispatches) ? scope.dispatches : [];
+  const waits = Array.isArray(scope.waits) ? scope.waits : [];
+  const geometry = { startNs, endNs, spanNs, binCount: count };
+
+  for (const commandBuffer of commandBuffers) {
+    const exposedIntervals = Array.isArray(commandBuffer.exposedIntervals)
+      ? commandBuffer.exposedIntervals
+      : [];
+    const hiddenIntervals = Array.isArray(commandBuffer.hiddenIntervals)
+      ? commandBuffer.hiddenIntervals
+      : [];
+    for (const interval of [...exposedIntervals, ...hiddenIntervals]) {
+      addOverviewInterval(bins, interval, "hostEncodeNs", geometry);
+    }
+  }
+  const gpuIntervals = mergeIntervals(
+    commandBuffers
+      .map(commandBufferGpuInterval)
+      .filter((interval) => interval !== null),
+  );
+  for (const interval of gpuIntervals) {
+    addOverviewInterval(bins, interval, "gpuBusyNs", geometry);
+  }
+  for (const dispatch of dispatches) {
+    const index = overviewPointIndex(
+      dispatch.atNs,
+      startNs,
+      endNs,
+      spanNs,
+      count,
+    );
+    if (index >= 0) {
+      bins[index].dispatchCount += 1;
+    }
+  }
+  for (const wait of waits) {
+    const index = overviewPointIndex(
+      wait.atNs,
+      startNs,
+      endNs,
+      spanNs,
+      count,
+    );
+    if (index < 0) {
+      continue;
+    }
+    bins[index].waitCount += 1;
+    bins[index].waitClasses.add(wait.waitClass ?? "other");
+  }
+
+  return Object.freeze({
+    startNs,
+    endNs,
+    binCount: count,
+    bins: Object.freeze(
+      bins.map((bin) =>
+        Object.freeze({
+          ...bin,
+          waitClasses: Object.freeze([...bin.waitClasses].sort()),
+        }),
+      ),
+    ),
+  });
 }
 
 function buildWindowLookup(windows) {
@@ -1064,6 +1705,14 @@ function buildLaunchWindows(commandBuffers, dispatches, waits) {
       waitGroups[windowIndex].push(wait);
     }
   }
+  // These rows cannot be attributed to any launch. The same frozen trace-level
+  // counts are installed on every launch so any single-launch range analysis
+  // can disclose them without assigning a timestamp or duration.
+  const omissions = Object.freeze({
+    scope: TRACE_OMISSION_SCOPE,
+    unplacedDispatches: unassignedDispatches.length,
+    unanchoredWaits: unassignedWaits.length,
+  });
 
   const launchWindows = partitions.map((partition, index) => {
     const aggregate = aggregateData(
@@ -1071,7 +1720,7 @@ function buildLaunchWindows(commandBuffers, dispatches, waits) {
       dispatchGroups[index],
       waitGroups[index],
     );
-    return Object.freeze({
+    const launch = {
       ...partition,
       startNs: aggregate.summary.startNs,
       endNs: aggregate.summary.endNs,
@@ -1082,6 +1731,15 @@ function buildLaunchWindows(commandBuffers, dispatches, waits) {
       waitTaxonomy: aggregate.waitTaxonomy,
       kernelCensus: aggregate.kernelCensus,
       summary: aggregate.summary,
+      omissions,
+    };
+    const rangeAnalysis = rangeAnalysisForScope(launch);
+    return Object.freeze({
+      ...launch,
+      rangeAnalysis,
+      overview: rangeAnalysis.reason === "missing-launch-timing"
+        ? null
+        : buildOverviewBins(launch),
     });
   });
   return {

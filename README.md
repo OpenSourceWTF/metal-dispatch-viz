@@ -8,16 +8,51 @@ synchronization overlap within one launch?
 The server serves files and registry metadata only. It does not capture,
 instrument, modify, or upload traces.
 
-## Install and start
+## Requirements and installation
 
-Node.js 18 or newer is required.
+The supported Node.js engine lines are exactly:
+
+- Node 20 from `20.19.0` onward;
+- Node 22 from `22.13.0` onward;
+- Node 24 or newer.
+
+This is the package engine expression
+`^20.19.0 || ^22.13.0 || >=24.0.0`. Install the locked dependency graph with:
 
 ```sh
-npm install
+npm ci
+```
+
+## React development, build, and start
+
+For React component work with Vite hot reload:
+
+```sh
+npm exec -- vite --host 127.0.0.1 --port 5173
+```
+
+Open `http://127.0.0.1:5173/`. This is the source development server; it does
+not provide the folder-driven Express trace API. Use the production runtime
+below when exercising real traces and complete application behavior.
+
+Build the relocatable React client and hosted artifact with:
+
+```sh
+npm run build
+```
+
+Vite first emits a clean staging client. The hosted builder then atomically
+publishes `dist/client`, the generated browser registry, the five public
+showcase traces, and the separate hosting artifacts.
+
+Start the built React application through Express with:
+
+```sh
 npm start -- --trace-dir /path/to/trace-folder
 ```
 
-Then open `http://127.0.0.1:4173/`. With no option, the server reads
+`npm start` runs the authoritative build before starting the server. Open
+`http://127.0.0.1:4173/`. Without `--trace-dir`, Express reads
 `traces/showcase`.
 
 ## Bundled showcase
@@ -31,11 +66,12 @@ authentic profiler captures:
 - GLM-5.2 1.58q — q1t/t158, MTP K3
 - Laguna 2.1 S — oQ4e, target-only AR
 
-The toggle rail is still folder-driven: add another `.jsonl` or `.ndjson` file
-and press Refresh to expose it. The four 2026-07-23 captures have current
-terminal summaries. The Qwen3.6 35B window comes from an authentic older census
-whose raw summary predates the completeness fields, so its manifest preserves
-that source as legacy/unverifiable rather than upgrading it by assertion.
+The multi-run selector remains folder-driven: add another `.jsonl` or
+`.ndjson` file and press Refresh to expose it in the trace rail. The four
+2026-07-23 captures have current terminal summaries. The Qwen3.6 35B window
+comes from an authentic older census whose raw summary predates the completeness
+fields, so its manifest preserves that source as legacy/unverifiable rather
+than upgrading it by assertion.
 
 Configuration precedence is:
 
@@ -55,7 +91,7 @@ case-insensitive. Dotfiles, dot-directories, non-regular files, and symlinks are
 not followed. An empty folder remains an honest empty workbench; sample data is
 never substituted.
 
-## Optional folder manifest
+## Optional local folder manifest
 
 Add `traces.json` at the trace-folder root to provide display metadata:
 
@@ -80,7 +116,34 @@ Add `traces.json` at the trace-folder root to provide display metadata:
 
 Keys in `traces` are exact root-relative POSIX paths. Metadata enriches a
 discovered file; it cannot create a trace, redirect a path, or replace the
-server-generated opaque ID. All metadata fields are optional.
+server-generated opaque ID. All metadata fields are optional. In the Express
+runtime this manifest enriches folder discovery; it is not an allowlist, and
+unlisted supported trace files remain discoverable.
+
+## Published showcase
+
+Public static publication is intentionally stricter. The
+[showcase manifest](traces/showcase/traces.json) is the publication allowlist
+and trust anchor. `npm run build` requires its paths to exactly match the
+supported trace files discovered under `traces/showcase`, copies only those
+registered files into `dist/client/traces/showcase`, and writes the generated
+browser registry to `dist/client/hosted-traces.json`. Missing, malformed,
+symlinked, unlisted, or mismatched inputs fail the build.
+
+To add or replace a public run:
+
+1. Put the curated `.jsonl` or `.ndjson` file under `traces/showcase/`.
+2. Add its exact relative POSIX path and display metadata to
+   `traces/showcase/traces.json`.
+3. Run `npm test`.
+4. Run `npm run build`.
+5. Run `npm run verify:pages`.
+6. Inspect `dist/client/hosted-traces.json` and load the run through
+   `npm start`.
+
+The verifier proves that the source manifest, generated registry, and emitted
+trace set are equal, and that the React entrypoint references relative,
+content-hashed JavaScript, CSS, and worker bundles.
 
 ## Workbench controls
 
@@ -101,6 +164,71 @@ server-generated opaque ID. All metadata fields are optional.
   preference.
 - Share the current view with `?trace=<opaque-id>&window=<index>`; unrelated
   query parameters are preserved.
+
+### Preserved UI behavior
+
+The React conversion preserves the existing interaction and state contracts:
+
+- **View** and **Analyze** remain an explicit toggle. The range band, start and
+  end handles, readouts, keyboard controls, zoom, and **Fit** continue to drive
+  the selected time window. View changes the viewport; Analyze recomputes exact
+  selected-range aggregates in the worker.
+- The folder-driven trace rail remains the multi-run selector, and the launch
+  selector remains available for traces with multiple launch windows.
+- Selecting a timeline mark populates and pins the inspector. Enter pins the
+  active mark; Escape or the inspector's **Clear** button clears it. Pins
+  survive ordinary loading and range transitions and clear only when the
+  selected evidence is genuinely invalidated.
+- Trace status uses the precise terms **Not loaded** before analysis and
+  **Capture complete** only for validated complete evidence. It does not revive
+  the ambiguous old **Complete** or **Evidence: Pending** labels.
+- **Legacy source**, **Source degraded**, **No summary**, **Legacy**,
+  **Unsupported**, **Incomplete**, **Dropped rows**, and **Degraded** describe
+  evidence limitations rather than application failures. A usable legacy or
+  partial trace can still render while its caveats remain visible.
+- URL state restores the trace, launch, View/Analyze mode, and selected range
+  from `trace`, `window`, `range`, `from`, and `to`. Invalid range state falls
+  back to View over the complete launch, and unrelated query parameters remain
+  intact.
+
+### Time-window control
+
+The overview strip always represents the complete selected launch. It is a
+navigation summary, not a measurement-resolution event plot.
+
+- Drag the selection band to pan it, drag either handle to resize it, or click
+  outside the band to recenter the same-duration selection.
+- **View** changes the timeline viewport while the headline metrics and tables
+  remain labeled **Launch totals**.
+- **Analyze** recomputes **Selected range** metrics and tables from the full
+  worker-side trace. It never calculates from the bounded Canvas sample.
+- Wheel zoom and timeline drag update the same selection band. **Fit** or a
+  timeline double-click restores the complete launch.
+- Focus either range handle and use Arrow keys for 1% steps,
+  Shift+Arrow for 10%, Home for the launch start, and End for the launch end.
+
+Analyze is disabled as **Preparing exact analysis** until the trace worker is
+ready. It reads **Analyze unavailable** when the launch lacks the timing needed
+for exact range analysis or worker setup fails. While a range is being analyzed,
+the metrics and tables are marked busy. A range-analysis error is shown in the
+status line, returns the workbench to View, and restores launch totals; no sample
+data is substituted.
+
+The URL stores `trace=<opaque-id>`, the zero-based `window=<index>`,
+`range=view|analyze`, and `from`/`to` as integer nanosecond offsets from the
+launch start. Invalid range parameters restore View over the complete launch.
+Unrelated query parameters are preserved.
+
+The Canvas can use a deterministic compact sample for a large launch or selected
+range. When it does, the note below the timeline gives displayed and total
+record counts; headline metrics, kernel census, and wait taxonomy still use the
+exact full launch in View or the exact selected range in Analyze.
+
+Schema-v1 dispatch membership uses ordered placement within each command buffer,
+not measured per-operation timestamps. Analyze discloses dispatches without an
+ordered placement and waits without an anchor; those records are excluded from
+selected-range aggregates. The schema also lacks tensor producer/consumer
+identity, so a selected range does not establish an output critical path.
 
 ## Contextual help and Field manual
 
@@ -183,6 +311,48 @@ Profiler schema v1 does not contain tensor producer/consumer identities.
 Therefore the workbench does not claim a tensor dependency path, an output
 critical path, or automatic throughput comparisons between traces. See
 [schema.md](schema.md) for the field and arithmetic contract.
+
+## GitHub Pages
+
+The
+[Pages workflow](.github/workflows/deploy-pages.yml) owns the independent
+static release. A push to `main` or a manual `workflow_dispatch` runs the
+locked install, complete test suite, React build, full dependency audit, Pages
+configuration, and final artifact verification. The verified `dist/client`
+snapshot is uploaded immediately after that final verifier; the deploy job then
+uses the `github-pages` environment with Pages and OIDC permissions.
+
+Only `dist/client` is uploaded. The Express server, Sites worker, hosting
+metadata, source traces outside the allowlisted showcase, and repository
+sources are not part of the Pages artifact. The build job has read-only
+repository permission, the deploy job is restricted to `main`, and concurrent
+deployments use the non-cancelling `pages` group.
+
+The intended canonical origin is
+`https://mlx-profiler.opensource.wtf`. Configure that hostname in the
+repository's GitHub Pages settings before adding a DNS-only CNAME to
+`opensourcewtf.github.io`. The workflow does not commit or require a `CNAME`
+file.
+
+## Validation
+
+Run these commands from the repository root:
+
+```sh
+npm ci
+npm test
+npm run build
+npm run verify:pages
+npm audit
+if rg -n -i '\b(TODO|FIXME|stub)\b|not implemented|coming soon' \
+  src public server scripts index.html; then
+  exit 1
+fi
+```
+
+The test command runs both the Node integration suite and Vitest React suite.
+The build and verifier must each report five traces, the audit must report no
+known vulnerabilities, and the final scan must find no implementation stubs.
 
 ## License
 
