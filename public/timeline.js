@@ -341,6 +341,54 @@ function commandBufferBounds(commandBuffer) {
   return { startNs: Math.min(...values), endNs: Math.max(...values) };
 }
 
+function commandBufferIntersectsViewport(
+  commandBuffer,
+  viewport,
+  waitsByCommandBuffer,
+) {
+  const bounds = commandBufferBounds(commandBuffer);
+  if (
+    bounds &&
+    bounds.endNs >= viewport.startNs &&
+    bounds.startNs <= viewport.endNs
+  ) {
+    return true;
+  }
+  const wait = waitsByCommandBuffer?.get?.(commandBuffer?.commandBufferIndex);
+  return (
+    Number.isFinite(wait?.atNs) &&
+    wait.atNs >= viewport.startNs &&
+    wait.atNs <= viewport.endNs
+  );
+}
+
+function cloneAndFreezeSnapshotValue(value, seen = new WeakMap()) {
+  if (value === null || typeof value !== "object") return value;
+  const existing = seen.get(value);
+  if (existing) return existing;
+
+  const clone = Array.isArray(value)
+    ? []
+    : Object.create(Object.getPrototypeOf(value) === null ? null : Object.prototype);
+  seen.set(value, clone);
+  for (const key of Object.keys(value)) {
+    Object.defineProperty(clone, key, {
+      configurable: false,
+      enumerable: true,
+      value: cloneAndFreezeSnapshotValue(value[key], seen),
+      writable: false,
+    });
+  }
+  return Object.freeze(clone);
+}
+
+function cloneAndFreezeSnapshotRecords(records) {
+  const seen = new WeakMap();
+  return Object.freeze(
+    records.map((record) => cloneAndFreezeSnapshotValue(record, seen)),
+  );
+}
+
 function traceBounds(data, placedDispatches) {
   if (validRange(data?.summary)) {
     return { startNs: data.summary.startNs, endNs: data.summary.endNs };
@@ -785,10 +833,85 @@ export class TimelineRenderer {
     this.context.setTransform?.(dpr, 0, 0, dpr * this.laneScaleY, 0, 0);
   }
 
-  visibleDispatchRange() {
-    const first = lowerBound(this.placedDispatches, this.viewport.startNs, (item) => item.atNs);
-    const after = upperBound(this.placedDispatches, this.viewport.endNs, (item) => item.atNs);
+  visibleDispatchRange(viewport = this.viewport) {
+    const first = lowerBound(this.placedDispatches, viewport.startNs, (item) => item.atNs);
+    const after = upperBound(this.placedDispatches, viewport.endNs, (item) => item.atNs);
     return { first, after, count: Math.max(0, after - first) };
+  }
+
+  visibleEvidenceSnapshot(pixelWindow = null) {
+    const rect = this.canvas.getBoundingClientRect?.();
+    const width = Number.isFinite(this.width) && this.width > 0
+      ? this.width
+      : finite(rect?.width, 0);
+    let startPx = pixelWindow?.startPx;
+    let endPx = pixelWindow?.endPx;
+    if (!Number.isFinite(startPx)) startPx = pixelWindow?.scrollLeft;
+    if (!Number.isFinite(endPx) && Number.isFinite(pixelWindow?.clientWidth)) {
+      endPx = startPx + pixelWindow.clientWidth;
+    }
+    const hasPixelWindow =
+      width > 0 &&
+      Number.isFinite(startPx) &&
+      Number.isFinite(endPx) &&
+      endPx > startPx;
+    const clippedStartPx = hasPixelWindow
+      ? Math.min(width, Math.max(0, startPx))
+      : 0;
+    const clippedEndPx = hasPixelWindow
+      ? Math.min(width, Math.max(0, endPx))
+      : width;
+    const hasClippedSpan = clippedEndPx > clippedStartPx;
+    const viewport = Object.freeze(
+      hasClippedSpan
+        ? {
+            startNs: xToTime(clippedStartPx, this.viewport, width),
+            endNs: xToTime(clippedEndPx, this.viewport, width),
+          }
+        : { ...this.viewport },
+    );
+    const dispatchRange = this.visibleDispatchRange(viewport);
+    const waitFirst = lowerBound(
+      this.sortedWaits,
+      viewport.startNs,
+      (item) => item.atNs,
+    );
+    const waitAfter = upperBound(
+      this.sortedWaits,
+      viewport.endNs,
+      (item) => item.atNs,
+    );
+    const commandBuffers = cloneAndFreezeSnapshotRecords(
+      this.commandBuffers.filter((commandBuffer) =>
+        commandBufferIntersectsViewport(
+          commandBuffer,
+          viewport,
+          this.waitsByCommandBuffer,
+        )),
+    );
+    const dispatches = cloneAndFreezeSnapshotRecords(
+      this.placedDispatches.slice(dispatchRange.first, dispatchRange.after),
+    );
+    const waits = cloneAndFreezeSnapshotRecords(
+      this.sortedWaits.slice(waitFirst, waitAfter),
+    );
+    const sourceWaitCount = Array.isArray(this.dataset?.waits)
+      ? this.dataset.waits.length
+      : 0;
+    return Object.freeze({
+      viewport,
+      commandBuffers,
+      dispatches,
+      waits,
+      unplacedDispatchCount: this.unplacedDispatches.length,
+      unanchoredWaitCount: Math.max(0, sourceWaitCount - this.sortedWaits.length),
+      densityMode: shouldUseDensity(
+        this.placedDispatches,
+        this.viewport,
+        width,
+      ),
+      densityModeBasis: "renderer-full-logical-viewport",
+    });
   }
 
   renderAnalysis() {

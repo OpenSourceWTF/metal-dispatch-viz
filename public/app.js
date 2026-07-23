@@ -4,11 +4,52 @@ import {
   TraceCache,
 } from "./trace-loader.js";
 import { TimelineRenderer } from "./timeline.js";
+import {
+  buildVisibleTimelineExport,
+  exportFilename,
+  formatAiPrompt,
+} from "./ai-export.js";
+import {
+  glossaryEntry,
+  searchGlossary,
+} from "./glossary.js";
 
 const NON_ADDITIVE_WAITS = new Set([
   "sched_backpressure",
   "sched_worker_wait",
 ]);
+
+const TERM_IDS_BY_LABEL = Object.freeze({
+  "wall span": "wall-span",
+  "exposed host": "exposed-host",
+  "hidden host": "hidden-host",
+  "gpu busy": "gpu-busy",
+  "gpu work": "gpu-work",
+  "decision drain": "decision-drain",
+  "cap wait": "cap-wait",
+  "dependency wait": "dependency-wait",
+  dependency: "dependency-wait",
+  "command buffers": "command-buffer",
+  "command buffer": "command-buffer",
+  dispatches: "dispatch",
+  dispatch: "dispatch",
+  "kernel families": "kernel-family",
+  "kernel family": "kernel-family",
+  "setbytes calls": "setbytes-call",
+  "setbytes call": "setbytes-call",
+  "setbytes bytes": "setbytes-bytes",
+  "buffer binds": "buffer-bind",
+  "buffer bind": "buffer-bind",
+  "host encode": "host-encode",
+  "gpu execute": "gpu-execute",
+  measured: "measured",
+  derived: "derived",
+  ordered: "ordered",
+  counted: "counted",
+  metadata: "metadata",
+  sched_backpressure: "scheduler-backpressure",
+  sched_worker_wait: "worker-wait",
+});
 
 function finiteOrZero(value) {
   return Number.isFinite(value) ? value : 0;
@@ -20,6 +61,290 @@ function stringValue(value) {
 
 function lexicalCompare(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function filterGlossaryEntries(query) {
+  return searchGlossary(query);
+}
+
+export function captureVisibleTimelineExport({
+  renderer,
+  trace,
+  launch,
+  launchIndex,
+  evidenceHealth,
+  generatedAt,
+  pixelWindow = null,
+}) {
+  if (typeof renderer?.visibleEvidenceSnapshot !== "function") {
+    throw new TypeError("a timeline renderer snapshot is required");
+  }
+  return buildVisibleTimelineExport({
+    trace,
+    launch,
+    launchIndex,
+    evidenceHealth,
+    generatedAt,
+    snapshot: renderer.visibleEvidenceSnapshot(pixelWindow),
+  });
+}
+
+export function timelineScrollerPixelWindow(scroller, canvas) {
+  const scrollLeft = Number.isFinite(scroller?.scrollLeft)
+    ? Math.max(0, scroller.scrollLeft)
+    : 0;
+  const clientWidth = Number.isFinite(scroller?.clientWidth)
+    ? Math.max(0, scroller.clientWidth)
+    : 0;
+  const contentWidth = Number.isFinite(scroller?.scrollWidth)
+    ? scroller.scrollWidth
+    : 0;
+  const canvasWidth = Number.isFinite(canvas?.clientWidth) && canvas.clientWidth > 0
+    ? canvas.clientWidth
+    : canvas?.getBoundingClientRect?.().width ?? 0;
+  const scale =
+    contentWidth > 0 && Number.isFinite(canvasWidth) && canvasWidth > 0
+      ? canvasWidth / contentWidth
+      : 1;
+  return Object.freeze({
+    scrollLeft: scrollLeft * scale,
+    clientWidth: clientWidth * scale,
+  });
+}
+
+export function selectedLaunchExportContext(state) {
+  const launchIndex = state?.currentWindowIndex;
+  const launchWindows = state?.currentDataset?.launchWindows;
+  if (
+    !Number.isInteger(launchIndex) ||
+    launchIndex < 0 ||
+    !Array.isArray(launchWindows)
+  ) {
+    return null;
+  }
+  const launch = launchWindows[launchIndex];
+  if (!launch || typeof launch !== "object") return null;
+  return {
+    trace: state?.currentTrace ?? null,
+    launch,
+    launchIndex,
+    evidenceHealth: state?.currentDataset?.health ?? {},
+  };
+}
+
+export function formatVisibleTimelineExport(payload, format = "markdown") {
+  if (format === "json") {
+    return Object.freeze({
+      text: JSON.stringify(payload, null, 2),
+      extension: "json",
+      mimeType: "application/json",
+    });
+  }
+  return Object.freeze({
+    text: formatAiPrompt(payload),
+    extension: "md",
+    mimeType: "text/markdown",
+  });
+}
+
+export async function copyExportText(text, { clipboard } = {}) {
+  if (typeof clipboard?.writeText !== "function") {
+    return {
+      ok: false,
+      message:
+        "Clipboard unavailable. Select the read-only preview and copy it manually.",
+    };
+  }
+  try {
+    await clipboard.writeText(String(text));
+    return { ok: true, message: "Export copied to the clipboard." };
+  } catch {
+    return {
+      ok: false,
+      message:
+        "Clipboard write failed. Select the read-only preview and copy it manually.",
+    };
+  }
+}
+
+export function downloadExportText(
+  text,
+  {
+    BlobClass = globalThis.Blob,
+    documentObject = globalThis.document,
+    filename,
+    mimeType,
+    urlObject = globalThis.URL,
+  } = {},
+) {
+  const blob = new BlobClass([String(text)], { type: mimeType });
+  const objectUrl = urlObject.createObjectURL(blob);
+  const anchor = documentObject.createElement("a");
+  try {
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.hidden = true;
+    documentObject.body.append(anchor);
+    anchor.click();
+  } finally {
+    anchor.remove?.();
+    urlObject.revokeObjectURL(objectUrl);
+  }
+}
+
+export function dismissHelpOnEscape(
+  event,
+  {
+    drawerOpen = false,
+    tooltipPinned = false,
+    closeDrawer = () => {},
+    closeTooltip = () => {},
+  } = {},
+) {
+  if (event?.key !== "Escape" || (!tooltipPinned && !drawerOpen)) {
+    return false;
+  }
+  event.preventDefault?.();
+  if (tooltipPinned) {
+    closeTooltip();
+  } else {
+    closeDrawer();
+  }
+  return true;
+}
+
+export function dismissPinnedDefinitionFromPointer(
+  event,
+  popover,
+  closePinnedDefinition,
+) {
+  if (popover?.contains?.(event?.target)) return false;
+  closePinnedDefinition?.({ restoreFocus: false });
+  return true;
+}
+
+export function setHelpDrawerState({
+  drawer,
+  backdrop,
+  background = [],
+  open,
+  opener = null,
+  focusTarget = null,
+  focusFallback = null,
+  restoreFocus = true,
+  state,
+}) {
+  if (!drawer || !backdrop || !state) {
+    throw new TypeError("drawer, backdrop, and state are required");
+  }
+  drawer.hidden = !open;
+  backdrop.hidden = !open;
+  drawer.setAttribute?.("aria-hidden", String(!open));
+  for (const element of background) {
+    if (element) element.inert = Boolean(open);
+  }
+  if (open) {
+    state.opener = opener;
+    state.focusFallback = focusFallback;
+    focusTarget?.focus?.({ preventScroll: true });
+    return;
+  }
+  const previousOpener = state.opener;
+  const previousFallback = state.focusFallback;
+  state.opener = null;
+  state.focusFallback = null;
+  if (restoreFocus) {
+    const target =
+      previousOpener?.isConnected === false
+        ? previousFallback
+        : previousOpener ?? previousFallback;
+    target?.focus?.({ preventScroll: true });
+  }
+}
+
+export function cycleHelpDrawerFocus(event, drawer) {
+  if (event?.key !== "Tab" || !drawer) return false;
+  const focusable = [
+    ...(drawer.querySelectorAll?.(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    ) ?? []),
+  ].filter((element) => element.hidden !== true);
+  if (focusable.length === 0) {
+    event.preventDefault?.();
+    drawer.focus?.({ preventScroll: true });
+    return true;
+  }
+  const activeElement = drawer.ownerDocument?.activeElement;
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (
+    drawer.contains?.(activeElement) &&
+    !focusable.includes(activeElement)
+  ) {
+    event.preventDefault?.();
+    (event.shiftKey ? last : first).focus?.({ preventScroll: true });
+    return true;
+  }
+  if (event.shiftKey && activeElement === first) {
+    event.preventDefault?.();
+    last.focus?.({ preventScroll: true });
+    return true;
+  }
+  if (!event.shiftKey && activeElement === last) {
+    event.preventDefault?.();
+    first.focus?.({ preventScroll: true });
+    return true;
+  }
+  return false;
+}
+
+export function guardHelpDrawerFocus(event, drawer, fallback) {
+  if (!drawer || drawer.contains?.(event?.target)) return false;
+  fallback?.focus?.({ preventScroll: true });
+  return true;
+}
+
+export function shouldTeardownOnPageHide(event) {
+  return event?.persisted !== true;
+}
+
+export function setPinnedDefinitionState({
+  popover,
+  open,
+  trigger = null,
+  focusTarget = null,
+  focusFallback = null,
+  restoreFocus = true,
+  state,
+}) {
+  if (!popover || !state) {
+    throw new TypeError("popover and state are required");
+  }
+  if (open) {
+    state.pinnedTrigger = trigger;
+    state.pinnedFocusFallback = focusFallback;
+    popover.hidden = false;
+    popover.setAttribute?.("aria-hidden", "false");
+    trigger?.setAttribute?.("aria-expanded", "true");
+    trigger?.setAttribute?.("aria-controls", "definition-popover");
+    focusTarget?.focus?.({ preventScroll: true });
+    return;
+  }
+  const previousTrigger = state.pinnedTrigger;
+  const previousFallback = state.pinnedFocusFallback;
+  state.pinnedTrigger = null;
+  state.pinnedFocusFallback = null;
+  popover.hidden = true;
+  popover.setAttribute?.("aria-hidden", "true");
+  previousTrigger?.setAttribute?.("aria-expanded", "false");
+  previousTrigger?.setAttribute?.("aria-controls", "definition-tooltip");
+  if (restoreFocus) {
+    const target =
+      previousTrigger?.isConnected === false
+        ? previousFallback
+        : previousTrigger ?? previousFallback;
+    target?.focus?.({ preventScroll: true });
+  }
 }
 
 export function chooseTraceId(traces, requestedId) {
@@ -599,6 +924,641 @@ function appendTextElement(documentObject, parent, tagName, text, className) {
   return element;
 }
 
+function termIdForLabel(label) {
+  return TERM_IDS_BY_LABEL[String(label ?? "").trim().toLowerCase()] ?? null;
+}
+
+function appendTermTrigger(documentObject, parent, termId, label) {
+  const entry = glossaryEntry(termId);
+  if (!entry) return null;
+  const trigger = documentObject.createElement("button");
+  trigger.type = "button";
+  trigger.className = "term-trigger";
+  trigger.dataset.term = termId;
+  trigger.setAttribute("aria-label", `Define ${label ?? entry.label}`);
+  trigger.setAttribute("aria-controls", "definition-tooltip");
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.textContent = "ⓘ";
+  parent.append(trigger);
+  return trigger;
+}
+
+function appendDefinitionDetail(
+  documentObject,
+  parent,
+  label,
+  value,
+  className,
+) {
+  if (!value) return;
+  const detail = documentObject.createElement("p");
+  if (className) detail.className = className;
+  const heading = documentObject.createElement("strong");
+  heading.textContent = `${label}: `;
+  detail.append(heading, documentObject.createTextNode(value));
+  parent.append(detail);
+}
+
+export function renderManualGlossary({
+  documentObject,
+  container,
+  query = "",
+}) {
+  const matches = filterGlossaryEntries(query);
+  container.replaceChildren();
+  for (const entry of matches) {
+    const article = documentObject.createElement("article");
+    article.id = `manual-term-${entry.id}`;
+    article.className = "manual-entry";
+    article.tabIndex = -1;
+    article.dataset.term = entry.id;
+
+    const headingRow = documentObject.createElement("div");
+    headingRow.className = "manual-entry-heading";
+    appendTextElement(documentObject, headingRow, "h4", entry.label);
+    if (entry.provenance) {
+      appendTextElement(
+        documentObject,
+        headingRow,
+        "span",
+        entry.provenance,
+        `evidence-tag evidence-${entry.provenance}`,
+      );
+    }
+    article.append(headingRow);
+    appendTextElement(documentObject, article, "p", entry.definition);
+    appendDefinitionDetail(
+      documentObject,
+      article,
+      "Method",
+      entry.method,
+      "manual-method",
+    );
+    appendDefinitionDetail(
+      documentObject,
+      article,
+      "Limit",
+      entry.limitation,
+      "manual-limit",
+    );
+    container.append(article);
+  }
+  return matches;
+}
+
+function positionDefinitionTooltip(tooltip, trigger, windowObject) {
+  const triggerBox = trigger?.getBoundingClientRect?.();
+  if (!triggerBox) return;
+  const gap = 6;
+  const width = tooltip.offsetWidth || 320;
+  const height = tooltip.offsetHeight || 180;
+  const viewportWidth = windowObject?.innerWidth || 1024;
+  const viewportHeight = windowObject?.innerHeight || 768;
+  const left = Math.max(
+    8,
+    Math.min(triggerBox.left, viewportWidth - width - 8),
+  );
+  const below = triggerBox.bottom + gap;
+  const top =
+    below + height <= viewportHeight - 8
+      ? below
+      : Math.max(8, triggerBox.top - height - gap);
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+}
+
+export function createHelpController({
+  documentObject,
+  windowObject,
+  elements,
+}) {
+  const state = {
+    drawerOpen: false,
+    opener: null,
+    tooltipPinned: false,
+    tooltipTrigger: null,
+    tooltipTermId: null,
+    pinnedTrigger: null,
+    pinnedTermId: null,
+    beforeOpenDrawer: null,
+  };
+  const background = [
+    documentObject.querySelector?.(".site-header"),
+    documentObject.querySelector?.("main"),
+  ].filter(Boolean);
+
+  function closeTooltip() {
+    const trigger = state.tooltipTrigger;
+    trigger?.setAttribute?.("aria-expanded", "false");
+    trigger?.removeAttribute?.("aria-describedby");
+    elements.definitionTooltip.hidden = true;
+    state.tooltipTrigger = null;
+    state.tooltipTermId = null;
+  }
+
+  function showTooltip(trigger) {
+    const termId = trigger?.dataset?.term;
+    const entry = glossaryEntry(termId);
+    if (!entry) return false;
+    if (state.tooltipTrigger && state.tooltipTrigger !== trigger) {
+      state.tooltipTrigger.setAttribute?.("aria-expanded", "false");
+    }
+    state.tooltipTrigger = trigger;
+    state.tooltipTermId = termId;
+    trigger.setAttribute?.("aria-expanded", "false");
+    trigger.setAttribute?.("aria-describedby", "definition-tooltip");
+    elements.definitionTitle.textContent = entry.label;
+    elements.definitionBody.textContent = entry.definition;
+    elements.definitionEvidence.textContent = entry.provenance ?? "";
+    elements.definitionEvidence.hidden = !entry.provenance;
+    elements.definitionMethod.textContent = entry.method
+      ? `Method: ${entry.method}`
+      : "";
+    elements.definitionMethod.hidden = !entry.method;
+    elements.definitionLimitation.textContent = entry.limitation
+      ? `Limit: ${entry.limitation}`
+      : "";
+    elements.definitionLimitation.hidden = !entry.limitation;
+    elements.definitionTooltip.hidden = false;
+    positionDefinitionTooltip(
+      elements.definitionTooltip,
+      trigger,
+      windowObject,
+    );
+    return true;
+  }
+
+  function showPinnedDefinition(trigger) {
+    const termId = trigger?.dataset?.term;
+    const entry = glossaryEntry(termId);
+    if (!entry) return false;
+    closeTooltip();
+    elements.definitionPopoverTitle.textContent = entry.label;
+    elements.definitionPopoverBody.textContent = entry.definition;
+    elements.definitionPopoverEvidence.textContent = entry.provenance ?? "";
+    elements.definitionPopoverEvidence.hidden = !entry.provenance;
+    elements.definitionPopoverMethod.textContent = entry.method
+      ? `Method: ${entry.method}`
+      : "";
+    elements.definitionPopoverMethod.hidden = !entry.method;
+    elements.definitionPopoverLimitation.textContent = entry.limitation
+      ? `Limit: ${entry.limitation}`
+      : "";
+    elements.definitionPopoverLimitation.hidden = !entry.limitation;
+    state.tooltipPinned = true;
+    state.pinnedTermId = termId;
+    setPinnedDefinitionState({
+      popover: elements.definitionPopover,
+      open: true,
+      trigger,
+      focusTarget: elements.definitionPopoverClose,
+      focusFallback: elements.manualButton,
+      state,
+    });
+    positionDefinitionTooltip(
+      elements.definitionPopover,
+      trigger,
+      windowObject,
+    );
+    return true;
+  }
+
+  function closePinnedDefinition({ restoreFocus = true } = {}) {
+    if (!state.tooltipPinned) return;
+    state.tooltipPinned = false;
+    state.pinnedTermId = null;
+    setPinnedDefinitionState({
+      popover: elements.definitionPopover,
+      open: false,
+      restoreFocus,
+      state,
+    });
+  }
+
+  function renderGlossary(query = "") {
+    const matches = renderManualGlossary({
+      documentObject,
+      container: elements.manualGlossaryList,
+      query,
+    });
+    elements.manualSearchStatus.textContent =
+      `${matches.length} ${matches.length === 1 ? "definition" : "definitions"}`;
+    return matches;
+  }
+
+  function openManual(opener, termId = null) {
+    state.beforeOpenDrawer?.();
+    closeTooltip();
+    closePinnedDefinition({ restoreFocus: false });
+    elements.manualSearch.value = "";
+    renderGlossary();
+    const termTarget = termId
+      ? [...elements.manualGlossaryList.querySelectorAll(".manual-entry")].find(
+          (entry) => entry.dataset.term === termId,
+        )
+      : null;
+    const focusTarget = termTarget ?? elements.manualQuickStart;
+    state.drawerOpen = true;
+    setHelpDrawerState({
+      drawer: elements.manualDrawer,
+      backdrop: elements.utilityBackdrop,
+      background,
+      open: true,
+      opener,
+      focusTarget,
+      focusFallback: elements.manualButton,
+      state,
+    });
+    focusTarget.scrollIntoView?.({ block: "start" });
+  }
+
+  function closeManual({ restoreFocus = true } = {}) {
+    if (!state.drawerOpen) return;
+    state.drawerOpen = false;
+    setHelpDrawerState({
+      drawer: elements.manualDrawer,
+      backdrop: elements.utilityBackdrop,
+      background,
+      open: false,
+      restoreFocus,
+      state,
+    });
+  }
+
+  function termTriggerFrom(target) {
+    return target?.closest?.(".term-trigger") ?? null;
+  }
+
+  const onPointerOver = (event) => {
+    const trigger = termTriggerFrom(event.target);
+    if (trigger && !state.tooltipPinned) showTooltip(trigger);
+  };
+  const onPointerOut = (event) => {
+    const trigger = termTriggerFrom(event.target);
+    if (
+      trigger &&
+      !state.tooltipPinned &&
+      !trigger.contains?.(event.relatedTarget) &&
+      !elements.definitionTooltip.contains?.(event.relatedTarget) &&
+      documentObject.activeElement !== trigger
+    ) {
+      closeTooltip();
+    }
+    if (
+      !trigger &&
+      !state.tooltipPinned &&
+      elements.definitionTooltip.contains?.(event.target) &&
+      !elements.definitionTooltip.contains?.(event.relatedTarget) &&
+      !state.tooltipTrigger?.contains?.(event.relatedTarget)
+    ) {
+      closeTooltip();
+    }
+  };
+  const onFocusIn = (event) => {
+    if (state.drawerOpen) {
+      guardHelpDrawerFocus(
+        event,
+        elements.manualDrawer,
+        elements.manualClose,
+      );
+      return;
+    }
+    const trigger = termTriggerFrom(event.target);
+    if (trigger && !state.tooltipPinned) showTooltip(trigger);
+  };
+  const onFocusOut = (event) => {
+    const trigger = termTriggerFrom(event.target);
+    if (
+      trigger &&
+      !state.tooltipPinned &&
+      !elements.definitionTooltip.contains?.(event.relatedTarget)
+    ) {
+      closeTooltip();
+    }
+    if (
+      !trigger &&
+      !state.tooltipPinned &&
+      elements.definitionTooltip.contains?.(event.target) &&
+      !elements.definitionTooltip.contains?.(event.relatedTarget) &&
+      event.relatedTarget !== state.tooltipTrigger
+    ) {
+      closeTooltip();
+    }
+  };
+  const onDocumentClick = (event) => {
+    const trigger = termTriggerFrom(event.target);
+    if (trigger) {
+      event.preventDefault?.();
+      if (state.tooltipPinned && state.pinnedTrigger === trigger) {
+        closePinnedDefinition();
+      } else {
+        closePinnedDefinition({ restoreFocus: false });
+        showPinnedDefinition(trigger);
+      }
+      return;
+    }
+    if (
+      state.tooltipPinned &&
+      !elements.definitionPopover.contains?.(event.target)
+    ) {
+      dismissPinnedDefinitionFromPointer(
+        event,
+        elements.definitionPopover,
+        closePinnedDefinition,
+      );
+    }
+  };
+  const onKeyDown = (event) => {
+    if (
+      state.drawerOpen &&
+      cycleHelpDrawerFocus(event, elements.manualDrawer)
+    ) {
+      return;
+    }
+    dismissHelpOnEscape(event, {
+      drawerOpen: state.drawerOpen,
+      tooltipPinned: state.tooltipPinned,
+      closeDrawer: closeManual,
+      closeTooltip: closePinnedDefinition,
+    });
+  };
+  const onSearch = () => {
+    renderGlossary(elements.manualSearch.value);
+  };
+  const onManualOpen = () => openManual(elements.manualButton);
+  const onManualClose = () => closeManual();
+  const onBackdropClick = () => closeManual();
+  const onPopoverManual = () => {
+    const opener = state.pinnedTrigger;
+    const termId = state.pinnedTermId;
+    openManual(opener, termId);
+  };
+  const onPopoverClose = () => closePinnedDefinition();
+
+  renderGlossary();
+  elements.manualButton.addEventListener("click", onManualOpen);
+  elements.manualClose.addEventListener("click", onManualClose);
+  elements.utilityBackdrop.addEventListener("click", onBackdropClick);
+  elements.manualSearch.addEventListener("input", onSearch);
+  elements.definitionPopoverManual.addEventListener("click", onPopoverManual);
+  elements.definitionPopoverClose.addEventListener("click", onPopoverClose);
+  documentObject.addEventListener("mouseover", onPointerOver);
+  documentObject.addEventListener("mouseout", onPointerOut);
+  documentObject.addEventListener("focusin", onFocusIn);
+  documentObject.addEventListener("focusout", onFocusOut);
+  documentObject.addEventListener("click", onDocumentClick);
+  documentObject.addEventListener("keydown", onKeyDown);
+
+  return {
+    closeManual,
+    closePinnedDefinition,
+    closeTooltip,
+    openManual,
+    renderGlossary,
+    showTooltip,
+    state,
+    setBeforeOpenDrawer(callback) {
+      state.beforeOpenDrawer =
+        typeof callback === "function" ? callback : null;
+    },
+    destroy() {
+      elements.manualButton.removeEventListener("click", onManualOpen);
+      elements.manualClose.removeEventListener("click", onManualClose);
+      elements.utilityBackdrop.removeEventListener("click", onBackdropClick);
+      elements.manualSearch.removeEventListener("input", onSearch);
+      elements.definitionPopoverManual.removeEventListener("click", onPopoverManual);
+      elements.definitionPopoverClose.removeEventListener("click", onPopoverClose);
+      documentObject.removeEventListener("mouseover", onPointerOver);
+      documentObject.removeEventListener("mouseout", onPointerOut);
+      documentObject.removeEventListener("focusin", onFocusIn);
+      documentObject.removeEventListener("focusout", onFocusOut);
+      documentObject.removeEventListener("click", onDocumentClick);
+      documentObject.removeEventListener("keydown", onKeyDown);
+    },
+  };
+}
+
+export function createAiExportController({
+  documentObject,
+  windowObject,
+  elements,
+  renderer,
+  getContext,
+  closeOtherDrawer = () => {},
+  now = () => new Date(),
+}) {
+  const state = {
+    drawerOpen: false,
+    opener: null,
+    payload: null,
+    text: "",
+    extension: "md",
+    mimeType: "text/markdown",
+    contentRevision: 0,
+  };
+  const background = [
+    documentObject.querySelector?.(".site-header"),
+    documentObject.querySelector?.("main"),
+  ].filter(Boolean);
+
+  function context() {
+    const current = getContext?.();
+    return current?.launch &&
+      Number.isInteger(current.launchIndex) &&
+      current.launchIndex >= 0
+      ? current
+      : null;
+  }
+
+  function renderContent() {
+    if (!state.payload) return false;
+    const formatted = formatVisibleTimelineExport(
+      state.payload,
+      elements.exportFormat.value,
+    );
+    state.text = formatted.text;
+    state.extension = formatted.extension;
+    state.mimeType = formatted.mimeType;
+    elements.exportPreview.value = formatted.text;
+    state.contentRevision += 1;
+    return true;
+  }
+
+  function capture() {
+    const current = context();
+    if (!current) {
+      elements.exportButton.disabled = true;
+      closeDrawer({ restoreFocus: false });
+      return false;
+    }
+    const timestamp = now();
+    state.payload = captureVisibleTimelineExport({
+      renderer,
+      trace: current.trace,
+      launch: current.launch,
+      launchIndex: current.launchIndex,
+      evidenceHealth: current.evidenceHealth,
+      pixelWindow: timelineScrollerPixelWindow(
+        elements.timelineScroller,
+        elements.canvas,
+      ),
+      generatedAt:
+        timestamp instanceof Date
+          ? timestamp.toISOString()
+          : new Date(timestamp).toISOString(),
+    });
+    const viewport = state.payload.selection.viewport_ns;
+    const coverage = state.payload.evidence_health?.coverage ?? {};
+    const usesDisplayedSampleRecords = Object.values(coverage).some(
+      (entry) => entry?.records === "displayed-sample-records",
+    );
+    elements.exportScope.textContent =
+      `Launch ${Number.isInteger(current.launchIndex) ? current.launchIndex + 1 : "—"} · ` +
+      `${formatDuration(viewport.start)} – ${formatDuration(viewport.end)} · ` +
+      `${formatDuration(viewport.duration)} visible · ` +
+      (usesDisplayedSampleRecords
+        ? "displayed sample records; exact viewport totals unavailable"
+        : "all visible records");
+    return renderContent();
+  }
+
+  function closeDrawer({ restoreFocus = true } = {}) {
+    if (!state.drawerOpen) return;
+    state.drawerOpen = false;
+    setHelpDrawerState({
+      drawer: elements.exportDrawer,
+      backdrop: elements.utilityBackdrop,
+      background,
+      open: false,
+      restoreFocus,
+      state,
+    });
+  }
+
+  function openDrawer() {
+    if (!context()) {
+      elements.exportButton.disabled = true;
+      return false;
+    }
+    closeOtherDrawer();
+    if (!capture()) return false;
+    elements.exportStatus.textContent = "";
+    state.drawerOpen = true;
+    setHelpDrawerState({
+      drawer: elements.exportDrawer,
+      backdrop: elements.utilityBackdrop,
+      background,
+      open: true,
+      opener: elements.exportButton,
+      focusTarget: elements.exportFormat,
+      focusFallback: elements.exportButton,
+      state,
+    });
+    return true;
+  }
+
+  const onOpen = () => openDrawer();
+  const onClose = () => closeDrawer();
+  const onBackdrop = () => closeDrawer();
+  const onRefresh = () => {
+    if (capture()) {
+      elements.exportStatus.textContent =
+        "Visible range snapshot refreshed.";
+    }
+  };
+  const onFormat = () => {
+    if (renderContent()) {
+      elements.exportStatus.textContent =
+        elements.exportFormat.value === "json"
+          ? "Structured JSON preview ready."
+          : "Prompt and data preview ready.";
+    }
+  };
+  const onCopy = async () => {
+    const copiedText = state.text;
+    const copiedRevision = state.contentRevision;
+    const result = await copyExportText(copiedText, {
+      clipboard: windowObject.navigator?.clipboard,
+    });
+    if (
+      !state.drawerOpen ||
+      state.contentRevision !== copiedRevision ||
+      state.text !== copiedText
+    ) {
+      return;
+    }
+    elements.exportStatus.textContent = result.message;
+  };
+  const onDownload = () => {
+    const current = context();
+    if (!current || !state.payload) return;
+    try {
+      downloadExportText(state.text, {
+        BlobClass: windowObject.Blob ?? globalThis.Blob,
+        documentObject,
+        filename: exportFilename(
+          current.trace,
+          current.launchIndex,
+          state.extension,
+        ),
+        mimeType: state.mimeType,
+        urlObject: windowObject.URL,
+      });
+      elements.exportStatus.textContent =
+        `Downloaded local .${state.extension} export.`;
+    } catch {
+      elements.exportStatus.textContent =
+        "Download failed. Select the read-only preview and save it manually.";
+    }
+  };
+  const onFocusIn = (event) => {
+    if (!state.drawerOpen) return;
+    guardHelpDrawerFocus(event, elements.exportDrawer, elements.exportClose);
+  };
+  const onKeyDown = (event) => {
+    if (!state.drawerOpen) return;
+    if (cycleHelpDrawerFocus(event, elements.exportDrawer)) return;
+    dismissHelpOnEscape(event, {
+      drawerOpen: true,
+      closeDrawer,
+    });
+  };
+
+  elements.exportButton.addEventListener("click", onOpen);
+  elements.exportClose.addEventListener("click", onClose);
+  elements.exportRefresh.addEventListener("click", onRefresh);
+  elements.exportFormat.addEventListener("change", onFormat);
+  elements.copyExport.addEventListener("click", onCopy);
+  elements.downloadExport.addEventListener("click", onDownload);
+  elements.utilityBackdrop.addEventListener("click", onBackdrop);
+  documentObject.addEventListener("focusin", onFocusIn);
+  documentObject.addEventListener("keydown", onKeyDown);
+
+  return {
+    capture,
+    closeDrawer,
+    openDrawer,
+    renderContent,
+    setAvailable(available) {
+      const usable = available === true && context() !== null;
+      elements.exportButton.disabled = !usable;
+      if (!usable) closeDrawer({ restoreFocus: false });
+    },
+    state,
+    destroy() {
+      elements.exportButton.removeEventListener("click", onOpen);
+      elements.exportClose.removeEventListener("click", onClose);
+      elements.exportRefresh.removeEventListener("click", onRefresh);
+      elements.exportFormat.removeEventListener("change", onFormat);
+      elements.copyExport.removeEventListener("click", onCopy);
+      elements.downloadExport.removeEventListener("click", onDownload);
+      elements.utilityBackdrop.removeEventListener("click", onBackdrop);
+      documentObject.removeEventListener("focusin", onFocusIn);
+      documentObject.removeEventListener("keydown", onKeyDown);
+    },
+  };
+}
+
 function setHidden(element, hidden) {
   element.hidden = Boolean(hidden);
 }
@@ -860,6 +1820,7 @@ export async function bootstrap({
     windowSelect: byId("window-select"),
     metrics: byId("metric-grid"),
     canvas: byId("timeline"),
+    timelineScroller: byId("timeline-scroller"),
     plotFrame: byId("plot-frame"),
     timelinePlaceholder: byId("timeline-placeholder"),
     samplingNote: byId("timeline-sampling-note"),
@@ -879,6 +1840,38 @@ export async function bootstrap({
     zoomOut: byId("zoom-out"),
     fit: byId("fit-timeline"),
     zoomIn: byId("zoom-in"),
+    manualButton: byId("field-manual-button"),
+    utilityBackdrop: byId("utility-backdrop"),
+    manualDrawer: byId("field-manual-drawer"),
+    manualClose: byId("field-manual-close"),
+    manualSearch: byId("manual-search"),
+    manualSearchStatus: byId("manual-search-status"),
+    manualQuickStart: byId("manual-quick-start"),
+    manualGlossaryList: byId("manual-glossary-list"),
+    definitionTooltip: byId("definition-tooltip"),
+    definitionTitle: byId("definition-tooltip-title"),
+    definitionBody: byId("definition-tooltip-body"),
+    definitionEvidence: byId("definition-tooltip-evidence"),
+    definitionMethod: byId("definition-tooltip-method"),
+    definitionLimitation: byId("definition-tooltip-limitation"),
+    definitionPopover: byId("definition-popover"),
+    definitionPopoverTitle: byId("definition-popover-title"),
+    definitionPopoverBody: byId("definition-popover-body"),
+    definitionPopoverEvidence: byId("definition-popover-evidence"),
+    definitionPopoverMethod: byId("definition-popover-method"),
+    definitionPopoverLimitation: byId("definition-popover-limitation"),
+    definitionPopoverClose: byId("definition-popover-close"),
+    definitionPopoverManual: byId("definition-popover-manual"),
+    exportButton: byId("ai-export-button"),
+    exportDrawer: byId("ai-export-drawer"),
+    exportClose: byId("ai-export-close"),
+    exportRefresh: byId("ai-export-refresh"),
+    exportFormat: byId("ai-export-format"),
+    exportScope: byId("ai-export-scope"),
+    exportPreview: byId("ai-export-preview"),
+    copyExport: byId("copy-export"),
+    downloadExport: byId("download-export"),
+    exportStatus: byId("ai-export-status"),
   };
 
   const cache = new TraceCache();
@@ -896,6 +1889,11 @@ export async function bootstrap({
     currentToken: null,
     destroyed: false,
   };
+  const helpController = createHelpController({
+    documentObject,
+    windowObject,
+    elements,
+  });
 
   function announce(message) {
     elements.status.textContent = message;
@@ -945,6 +1943,22 @@ export async function bootstrap({
     onViewportChange(viewport) {
       updateScale(viewport);
     },
+  });
+  const exportController = createAiExportController({
+    documentObject,
+    windowObject,
+    elements,
+    renderer,
+    getContext() {
+      return selectedLaunchExportContext(state);
+    },
+    closeOtherDrawer() {
+      helpController.closeManual({ restoreFocus: false });
+      helpController.closePinnedDefinition({ restoreFocus: false });
+    },
+  });
+  helpController.setBeforeOpenDrawer(() => {
+    exportController.closeDrawer({ restoreFocus: false });
   });
 
   function refreshRendererPalette() {
@@ -1049,6 +2063,21 @@ export async function bootstrap({
     elements.provenance.append(item);
   }
 
+  function evidenceTermId(label, valid = false) {
+    if (valid || /complete evidence/i.test(label)) return "complete";
+    if (/legacy|unverifiable/i.test(label)) return "legacy-unverifiable";
+    if (/unsupported/i.test(label)) return "unsupported";
+    if (/incomplete|dropped|malformed|mismatch|duplicate/i.test(label)) {
+      return "incomplete";
+    }
+    return null;
+  }
+
+  function appendEvidenceBadgeTerm(badgeElement, label, valid = false) {
+    const termId = evidenceTermId(label, valid);
+    if (termId) appendTermTrigger(documentObject, badgeElement, termId, label);
+  }
+
   function renderProvenance(trace, dataset, diagnostics) {
     elements.provenance.replaceChildren();
     appendTextElement(
@@ -1081,6 +2110,7 @@ export async function bootstrap({
           : "evidence-badge evidence-badge-invalid",
       );
       if (index === 0) item.id = "evidence-badge";
+      appendEvidenceBadgeTerm(item, badge.label, badge.valid);
     });
     elements.provenance.append(badgeGroup);
   }
@@ -1109,6 +2139,7 @@ export async function bootstrap({
       "evidence-badge evidence-badge-pending",
     );
     badge.id = "evidence-badge";
+    appendEvidenceBadgeTerm(badge, "Loading evidence");
     elements.provenance.append(badgeGroup);
   }
 
@@ -1147,6 +2178,12 @@ export async function bootstrap({
         "dt",
         metricRow.label,
       );
+      appendTermTrigger(
+        documentObject,
+        term,
+        termIdForLabel(metricRow.label),
+        metricRow.label,
+      );
       appendTextElement(
         documentObject,
         term,
@@ -1170,6 +2207,7 @@ export async function bootstrap({
     if (tagName === "th") cell.setAttribute("scope", "row");
     cell.textContent = String(value);
     row.append(cell);
+    return cell;
   }
 
   function renderKernelTable(scope) {
@@ -1213,10 +2251,16 @@ export async function bootstrap({
     }
     for (const item of rows) {
       const row = documentObject.createElement("tr");
-      appendTableCell(row, "th", item.bucket);
+      const bucketCell = appendTableCell(row, "th", item.bucket);
+      appendTermTrigger(
+        documentObject,
+        bucketCell,
+        termIdForLabel(item.bucket),
+        item.bucket,
+      );
       appendTableCell(row, "td", item.count);
       appendTableCell(row, "td", formatDuration(item.waitNs));
-      appendTableCell(
+      const evidenceCell = appendTableCell(
         row,
         "td",
         item.additive
@@ -1224,6 +2268,12 @@ export async function bootstrap({
           : item.bucket === "sched_backpressure"
             ? "scheduler mirror · non-additive"
             : "worker idle · non-additive",
+      );
+      appendTermTrigger(
+        documentObject,
+        evidenceCell,
+        item.additive ? "measured" : "metadata",
+        item.additive ? "Measured evidence" : "Metadata evidence",
       );
       elements.waitBody.append(row);
     }
@@ -1244,14 +2294,26 @@ export async function bootstrap({
     const row = documentObject.createElement("div");
     const term = appendTextElement(documentObject, row, "dt", label);
     term.setAttribute("data-provenance", provenance);
+    appendTermTrigger(
+      documentObject,
+      term,
+      termIdForLabel(label),
+      label,
+    );
     const description = documentObject.createElement("dd");
     description.textContent = String(value);
-    appendTextElement(
+    const tag = appendTextElement(
       documentObject,
       description,
       "span",
       provenance,
       `provenance-tag provenance-${provenance}`,
+    );
+    appendTermTrigger(
+      documentObject,
+      tag,
+      termIdForLabel(provenance),
+      `${provenance} evidence`,
     );
     row.append(description);
     parent.append(row);
@@ -1365,6 +2427,7 @@ export async function bootstrap({
     state.currentDataset = null;
     state.currentWindowIndex = null;
     state.activeScope = null;
+    exportController.setAvailable(false);
     elements.windowControl.hidden = true;
     elements.windowSelect.disabled = true;
     elements.windowSelect.replaceChildren();
@@ -1412,6 +2475,9 @@ export async function bootstrap({
     renderInspector(null);
     renderer.setDataset(scope, { window: scope });
     renderer.fit(scope);
+    exportController.setAvailable(
+      selectedLaunchExportContext(state) !== null,
+    );
     elements.plotFrame.classList.remove("is-loading");
     elements.timelinePlaceholder.hidden = true;
     const disclosure = samplingDisclosure(scope);
@@ -1637,12 +2703,15 @@ export async function bootstrap({
     element.removeAttribute("disabled");
   }
 
-  const pagehide = () => {
+  const pagehide = (event) => {
+    if (!shouldTeardownOnPageHide(event)) return;
     state.destroyed = true;
     coordinator.clear();
+    helpController.destroy();
+    exportController.destroy();
     renderer.destroy();
   };
-  windowObject.addEventListener("pagehide", pagehide, { once: true });
+  windowObject.addEventListener("pagehide", pagehide);
 
   await refreshRegistry({
     requestedId: initialUrl.searchParams.get("trace"),
@@ -1654,6 +2723,8 @@ export async function bootstrap({
   return {
     cache,
     coordinator,
+    helpController,
+    exportController,
     renderer,
     refresh: refreshRegistry,
     selectTrace,
