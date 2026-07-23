@@ -1,5 +1,8 @@
 const MIN_LAUNCH_GAP_NS = 100_000_000;
 const LAUNCH_GAP_MULTIPLIER = 20;
+const DEFAULT_OVERVIEW_BIN_COUNT = 512;
+const MAX_OVERVIEW_BIN_COUNT = 4_096;
+const TRACE_OMISSION_SCOPE = "trace-level-unattributable";
 
 const TYPE_ALIASES = new Map([
   ["op", "op"],
@@ -635,6 +638,25 @@ function intervalDuration(intervals) {
   return intervals.reduce((total, [start, end]) => total + (end - start), 0);
 }
 
+function finiteIntervalDuration(intervals, label) {
+  const duration = intervalDuration(intervals);
+  if (!Number.isFinite(duration)) {
+    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  }
+  return duration;
+}
+
+function finitePropertyTotal(items, property, label) {
+  let total = 0;
+  for (const item of items) {
+    total += item[property];
+    if (!Number.isFinite(total)) {
+      throw new RangeError(`${label} exceeds the finite numeric range.`);
+    }
+  }
+  return total;
+}
+
 function commandBufferGpuInterval(commandBuffer) {
   const interval = [commandBuffer.gpuStartNs, commandBuffer.gpuEndNs];
   return validInterval(interval) ? interval : null;
@@ -906,6 +928,9 @@ function waitSummary(waits) {
       wait.waitNs >= 0
     ) {
       totals[wait.headlineCategory] += wait.waitNs;
+      if (!Number.isFinite(totals[wait.headlineCategory])) {
+        throw new RangeError("Wait duration exceeds the finite numeric range.");
+      }
     }
   }
   return Object.freeze({
@@ -1003,18 +1028,39 @@ function validSelectedRange(scope, requestedRange) {
   ) {
     throw new TypeError("Range and launch bounds must be finite.");
   }
+  const launchSpanNs = scope.endNs - scope.startNs;
+  if (!Number.isFinite(launchSpanNs) || launchSpanNs <= 0) {
+    throw new RangeError("Launch must have finite positive duration.");
+  }
   const startNs = Math.max(scope.startNs, requestedRange.startNs);
   const endNs = Math.min(scope.endNs, requestedRange.endNs);
-  if (endNs <= startNs) {
-    throw new RangeError("Selected range must have positive duration.");
+  const selectedSpanNs = endNs - startNs;
+  if (!Number.isFinite(selectedSpanNs) || selectedSpanNs <= 0) {
+    throw new RangeError("Selected range must have finite positive duration.");
   }
   return Object.freeze({ startNs, endNs });
+}
+
+function propagatedOmissionCount(scope, key) {
+  const omissions = scope?.omissions;
+  if (
+    omissions?.scope !== TRACE_OMISSION_SCOPE ||
+    !Number.isSafeInteger(omissions[key]) ||
+    omissions[key] < 0
+  ) {
+    return 0;
+  }
+  return omissions[key];
 }
 
 /**
  * Build exact aggregates for one positive-duration selection within a launch.
  * Point records are inclusive at both edges; measured intervals contribute
  * only their positive-duration intersection with the selected range.
+ *
+ * The scope is expected to be an immutable launch installed by `buildDataset`.
+ * Selected point records are retained by reference; only command-buffer
+ * wrappers and clipped interval fragments are created for each range.
  */
 export function buildRangeScope(scope, requestedRange) {
   const range = validSelectedRange(scope, requestedRange);
@@ -1050,12 +1096,20 @@ export function buildRangeScope(scope, requestedRange) {
       const exposedIntervals = sourceExposedIntervals
         .map((interval) => clipInterval(interval, range))
         .filter((interval) => interval !== null);
+      const hiddenHostNs = finiteIntervalDuration(
+        hiddenIntervals,
+        "Hidden host duration",
+      );
+      const exposedHostNs = finiteIntervalDuration(
+        exposedIntervals,
+        "Exposed host duration",
+      );
       return Object.freeze({
         ...commandBuffer,
         hiddenIntervals: freezeIntervals(hiddenIntervals),
         exposedIntervals: freezeIntervals(exposedIntervals),
-        hiddenHostNs: intervalDuration(hiddenIntervals),
-        exposedHostNs: intervalDuration(exposedIntervals),
+        hiddenHostNs,
+        exposedHostNs,
         rangeGpuInterval:
           gpuInterval === null ? null : Object.freeze(gpuInterval),
       });
@@ -1069,6 +1123,27 @@ export function buildRangeScope(scope, requestedRange) {
     .filter((interval) => interval !== null);
   const gpuIntervals = mergeIntervals(gpuWorkIntervals);
   const waitTotals = waitSummary(waits);
+  const localUnplacedDispatches = sourceDispatches.filter(
+    (dispatch) => !Number.isFinite(dispatch.atNs),
+  ).length;
+  const localUnanchoredWaits = sourceWaits.filter(
+    (wait) => !Number.isFinite(wait.atNs),
+  ).length;
+  const exposedHostNs = finitePropertyTotal(
+    commandBuffers,
+    "exposedHostNs",
+    "Exposed host duration",
+  );
+  const hiddenHostNs = finitePropertyTotal(
+    commandBuffers,
+    "hiddenHostNs",
+    "Hidden host duration",
+  );
+  const gpuBusyNs = finiteIntervalDuration(gpuIntervals, "GPU busy duration");
+  const gpuWorkNs = finiteIntervalDuration(
+    gpuWorkIntervals,
+    "GPU work duration",
+  );
 
   return Object.freeze({
     index: scope.index,
@@ -1082,27 +1157,21 @@ export function buildRangeScope(scope, requestedRange) {
     kernelCensus: kernelCensus(dispatches),
     waitTaxonomy: buildWaitTaxonomy(waits),
     omissions: Object.freeze({
-      unplacedDispatches: sourceDispatches.filter(
-        (dispatch) => !Number.isFinite(dispatch.atNs),
-      ).length,
-      unanchoredWaits: sourceWaits.filter(
-        (wait) => !Number.isFinite(wait.atNs),
-      ).length,
+      unplacedDispatches:
+        localUnplacedDispatches +
+        propagatedOmissionCount(scope, "unplacedDispatches"),
+      unanchoredWaits:
+        localUnanchoredWaits +
+        propagatedOmissionCount(scope, "unanchoredWaits"),
     }),
     summary: Object.freeze({
       startNs: range.startNs,
       endNs: range.endNs,
       wallSpanNs: range.endNs - range.startNs,
-      exposedHostNs: commandBuffers.reduce(
-        (total, commandBuffer) => total + commandBuffer.exposedHostNs,
-        0,
-      ),
-      hiddenHostNs: commandBuffers.reduce(
-        (total, commandBuffer) => total + commandBuffer.hiddenHostNs,
-        0,
-      ),
-      gpuBusyNs: intervalDuration(gpuIntervals),
-      gpuWorkNs: intervalDuration(gpuWorkIntervals),
+      exposedHostNs,
+      hiddenHostNs,
+      gpuBusyNs,
+      gpuWorkNs,
       gpuSpanNs:
         gpuIntervals.length === 0
           ? 0
@@ -1114,28 +1183,105 @@ export function buildRangeScope(scope, requestedRange) {
   });
 }
 
-function overviewPointIndex(atNs, startNs, endNs, binCount) {
+function validOverviewBinCount(binCount) {
+  if (
+    !Number.isSafeInteger(binCount) ||
+    binCount < 1 ||
+    binCount > MAX_OVERVIEW_BIN_COUNT
+  ) {
+    throw new RangeError(
+      `Overview bin count must be a safe integer between 1 and ${MAX_OVERVIEW_BIN_COUNT}.`,
+    );
+  }
+  return binCount;
+}
+
+function finitePositiveSpan(startNs, endNs, label) {
+  if (!Number.isFinite(startNs) || !Number.isFinite(endNs)) {
+    throw new TypeError(`${label} bounds must be finite.`);
+  }
+  const spanNs = endNs - startNs;
+  if (!Number.isFinite(spanNs) || spanNs <= 0) {
+    throw new RangeError(`${label} must have finite positive duration.`);
+  }
+  return spanNs;
+}
+
+function hasFinitePositiveSpan(startNs, endNs) {
+  return (
+    Number.isFinite(startNs) &&
+    Number.isFinite(endNs) &&
+    endNs > startNs &&
+    Number.isFinite(endNs - startNs)
+  );
+}
+
+function overviewPointIndex(atNs, startNs, endNs, spanNs, binCount) {
   if (!Number.isFinite(atNs) || atNs < startNs || atNs > endNs) {
     return -1;
   }
   if (atNs === endNs) {
     return binCount - 1;
   }
-  return Math.floor(((atNs - startNs) / (endNs - startNs)) * binCount);
+  const scaled = ((atNs - startNs) / spanNs) * binCount;
+  return Math.max(0, Math.min(binCount - 1, Math.floor(scaled)));
 }
 
-function addOverviewInterval(bins, interval, field) {
-  if (!validInterval(interval)) {
+function addOverviewInterval(
+  bins,
+  interval,
+  field,
+  { startNs, endNs, spanNs, binCount },
+) {
+  if (!Array.isArray(interval)) {
     return;
   }
-  for (const bin of bins) {
-    const overlapStart = Math.max(interval[0], bin.startNs);
-    const overlapEnd = Math.min(interval[1], bin.endNs);
+  const intervalStartNs = interval[0];
+  const intervalEndNs = interval[1];
+  if (
+    !Number.isFinite(intervalStartNs) ||
+    !Number.isFinite(intervalEndNs) ||
+    intervalEndNs <= intervalStartNs
+  ) {
+    return;
+  }
+  const clippedStartNs = Math.max(intervalStartNs, startNs);
+  const clippedEndNs = Math.min(intervalEndNs, endNs);
+  if (clippedEndNs <= clippedStartNs) {
+    return;
+  }
+
+  const firstBin = overviewPointIndex(
+    clippedStartNs,
+    startNs,
+    endNs,
+    spanNs,
+    binCount,
+  );
+  const scaledEnd = ((clippedEndNs - startNs) / spanNs) * binCount;
+  let lastBin = Math.min(binCount - 1, Math.ceil(scaledEnd) - 1);
+  while (
+    lastBin + 1 < binCount &&
+    bins[lastBin + 1].startNs < clippedEndNs
+  ) {
+    lastBin += 1;
+  }
+  while (lastBin >= firstBin && bins[lastBin].startNs >= clippedEndNs) {
+    lastBin -= 1;
+  }
+
+  for (let index = firstBin; index <= lastBin; index += 1) {
+    const bin = bins[index];
+    const overlapStart = Math.max(clippedStartNs, bin.startNs);
+    const overlapEnd = Math.min(clippedEndNs, bin.endNs);
     if (overlapEnd > overlapStart) {
-      bin[field] += overlapEnd - overlapStart;
-    }
-    if (bin.startNs >= interval[1]) {
-      break;
+      const coverage = bin[field] + (overlapEnd - overlapStart);
+      if (!Number.isFinite(coverage)) {
+        throw new RangeError(
+          "Overview coverage exceeds the finite numeric range.",
+        );
+      }
+      bin[field] = coverage;
     }
   }
 }
@@ -1144,25 +1290,30 @@ function addOverviewInterval(bins, interval, field) {
  * Reduce a complete launch to fixed-resolution exact coverage and point-event
  * bins for the overview navigator.
  */
-export function buildOverviewBins(scope, binCount = 512) {
-  const count = Number.isFinite(binCount)
-    ? Math.max(1, Math.trunc(binCount))
-    : 512;
+export function buildOverviewBins(
+  scope,
+  binCount = DEFAULT_OVERVIEW_BIN_COUNT,
+) {
+  const count = validOverviewBinCount(binCount);
   const startNs = scope?.startNs;
   const endNs = scope?.endNs;
-  if (!Number.isFinite(startNs) || !Number.isFinite(endNs) || endNs <= startNs) {
-    return Object.freeze({
-      startNs: 0,
-      endNs: 1,
-      binCount: count,
-      bins: EMPTY_INTERVALS,
-    });
-  }
-
-  const span = endNs - startNs;
+  const spanNs = finitePositiveSpan(startNs, endNs, "Launch");
+  const binEdges = Array.from({ length: count + 1 }, (_, index) => {
+    if (index === 0) {
+      return startNs;
+    }
+    if (index === count) {
+      return endNs;
+    }
+    const edge = startNs + spanNs * (index / count);
+    if (!Number.isFinite(edge)) {
+      throw new RangeError("Overview bin edge exceeds the finite numeric range.");
+    }
+    return edge;
+  });
   const bins = Array.from({ length: count }, (_, index) => ({
-    startNs: startNs + (index * span) / count,
-    endNs: startNs + ((index + 1) * span) / count,
+    startNs: binEdges[index],
+    endNs: binEdges[index + 1],
     hostEncodeNs: 0,
     gpuBusyNs: 0,
     dispatchCount: 0,
@@ -1174,6 +1325,7 @@ export function buildOverviewBins(scope, binCount = 512) {
     : [];
   const dispatches = Array.isArray(scope.dispatches) ? scope.dispatches : [];
   const waits = Array.isArray(scope.waits) ? scope.waits : [];
+  const geometry = { startNs, endNs, spanNs, binCount: count };
 
   for (const commandBuffer of commandBuffers) {
     const exposedIntervals = Array.isArray(commandBuffer.exposedIntervals)
@@ -1183,7 +1335,7 @@ export function buildOverviewBins(scope, binCount = 512) {
       ? commandBuffer.hiddenIntervals
       : [];
     for (const interval of [...exposedIntervals, ...hiddenIntervals]) {
-      addOverviewInterval(bins, interval, "hostEncodeNs");
+      addOverviewInterval(bins, interval, "hostEncodeNs", geometry);
     }
   }
   const gpuIntervals = mergeIntervals(
@@ -1192,16 +1344,28 @@ export function buildOverviewBins(scope, binCount = 512) {
       .filter((interval) => interval !== null),
   );
   for (const interval of gpuIntervals) {
-    addOverviewInterval(bins, interval, "gpuBusyNs");
+    addOverviewInterval(bins, interval, "gpuBusyNs", geometry);
   }
   for (const dispatch of dispatches) {
-    const index = overviewPointIndex(dispatch.atNs, startNs, endNs, count);
+    const index = overviewPointIndex(
+      dispatch.atNs,
+      startNs,
+      endNs,
+      spanNs,
+      count,
+    );
     if (index >= 0) {
       bins[index].dispatchCount += 1;
     }
   }
   for (const wait of waits) {
-    const index = overviewPointIndex(wait.atNs, startNs, endNs, count);
+    const index = overviewPointIndex(
+      wait.atNs,
+      startNs,
+      endNs,
+      spanNs,
+      count,
+    );
     if (index < 0) {
       continue;
     }
@@ -1318,6 +1482,14 @@ function buildLaunchWindows(commandBuffers, dispatches, waits) {
       waitGroups[windowIndex].push(wait);
     }
   }
+  // These rows cannot be attributed to any launch. The same frozen trace-level
+  // counts are installed on every launch so any single-launch range analysis
+  // can disclose them without assigning a timestamp or duration.
+  const omissions = Object.freeze({
+    scope: TRACE_OMISSION_SCOPE,
+    unplacedDispatches: unassignedDispatches.length,
+    unanchoredWaits: unassignedWaits.length,
+  });
 
   const launchWindows = partitions.map((partition, index) => {
     const aggregate = aggregateData(
@@ -1336,10 +1508,13 @@ function buildLaunchWindows(commandBuffers, dispatches, waits) {
       waitTaxonomy: aggregate.waitTaxonomy,
       kernelCensus: aggregate.kernelCensus,
       summary: aggregate.summary,
+      omissions,
     };
     return Object.freeze({
       ...launch,
-      overview: buildOverviewBins(launch),
+      overview: hasFinitePositiveSpan(launch.startNs, launch.endNs)
+        ? buildOverviewBins(launch)
+        : null,
     });
   });
   return {

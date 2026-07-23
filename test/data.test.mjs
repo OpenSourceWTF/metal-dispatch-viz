@@ -1262,6 +1262,107 @@ test("empty-event ranges retain the selected wall span and exact omission counts
   });
 });
 
+test("installed launches propagate trace-level unattributable omissions without double counting", () => {
+  const dataset = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      first_op_seq: 0,
+      last_op_seq: 1,
+      encode_start_ns: 0,
+      encode_end_ns: 100,
+      gpu_start_ns: 50,
+      gpu_end_ns: 150,
+    },
+    {
+      record: "cb",
+      command_buffer_index: 1,
+      encode_start_ns: 200,
+      encode_end_ns: 300,
+    },
+    {
+      record: "cb",
+      command_buffer_index: 2,
+      encode_start_ns: 400,
+      encode_end_ns: 500,
+    },
+    {
+      record: "cb",
+      command_buffer_index: 3,
+      encode_start_ns: 200_000_000,
+      encode_end_ns: 200_000_100,
+    },
+    {
+      record: "op",
+      command_buffer_index: 0,
+      seq: 0,
+      kernel_name: "placed",
+    },
+    {
+      record: "op",
+      command_buffer_index: 0,
+      kernel_name: "launch-local-unplaced",
+    },
+    {
+      record: "op",
+      command_buffer_index: 404,
+      seq: 404,
+      kernel_name: "trace-unowned",
+    },
+    {
+      record: "wait",
+      bucket: "cap_wait",
+      wait_ns: 3,
+      at_ns: 75,
+    },
+    {
+      record: "wait",
+      bucket: "dependency_cv_wait",
+      wait_ns: 5,
+      command_buffer_index: 0,
+    },
+  ]);
+
+  assert.equal(dataset.launchWindows.length, 2);
+  assert.equal(dataset.unassignedDispatches.length, 1);
+  assert.equal(dataset.unassignedWaits.length, 1);
+  for (const launch of dataset.launchWindows) {
+    assert.deepEqual(launch.omissions, {
+      scope: "trace-level-unattributable",
+      unplacedDispatches: 1,
+      unanchoredWaits: 1,
+    });
+    assert.equal(Object.isFrozen(launch.omissions), true);
+  }
+
+  const firstLaunch = dataset.launchWindows[0];
+  const firstRange = buildRangeScope(firstLaunch, {
+    startNs: firstLaunch.startNs,
+    endNs: firstLaunch.endNs,
+  });
+  const secondLaunch = dataset.launchWindows[1];
+  const secondRange = buildRangeScope(secondLaunch, {
+    startNs: secondLaunch.startNs,
+    endNs: secondLaunch.endNs,
+  });
+
+  assert.deepEqual(firstRange.omissions, {
+    unplacedDispatches: 2,
+    unanchoredWaits: 1,
+  });
+  assert.deepEqual(secondRange.omissions, {
+    unplacedDispatches: 1,
+    unanchoredWaits: 1,
+  });
+  assert.equal(Object.isFrozen(firstLaunch), true);
+  assert.equal(Object.isFrozen(firstLaunch.dispatches), true);
+  assert.equal(Object.isFrozen(firstLaunch.dispatches[0]), true);
+  assert.equal(Object.isFrozen(firstLaunch.commandBuffers[0]), true);
+  assert.equal(Object.isFrozen(firstLaunch.waits[0]), true);
+  assert.equal(firstRange.dispatches[0], firstLaunch.dispatches[0]);
+  assert.equal(firstRange.waits[0], firstLaunch.waits[0]);
+});
+
 test("overview bins retain exact coverage, sorted wait classes, and final endpoints", () => {
   const scope = {
     startNs: 0,
@@ -1314,6 +1415,130 @@ test("overview bins retain exact coverage, sorted wait classes, and final endpoi
   assert.equal(Object.isFrozen(overview.bins[3].waitClasses), true);
 });
 
+test("overview rejects unsafe bin counts before allocating bins", () => {
+  const scope = {
+    startNs: 0,
+    endNs: 1,
+    commandBuffers: [],
+    dispatches: [],
+    waits: [],
+  };
+  const invalidCounts = [
+    0,
+    1.5,
+    Infinity,
+    4_097,
+    2 ** 32,
+    Number.MAX_SAFE_INTEGER,
+  ];
+
+  for (const binCount of invalidCounts) {
+    assert.throws(
+      () => buildOverviewBins(scope, binCount),
+      {
+        name: "RangeError",
+        message: /safe integer between 1 and 4096/,
+      },
+      String(binCount),
+    );
+  }
+  assert.equal(buildOverviewBins(scope).binCount, 512);
+  assert.equal(buildOverviewBins(scope, 4_096).bins.length, 4_096);
+});
+
+test("range and overview reject finite endpoints whose derived span overflows", () => {
+  const scope = {
+    startNs: -Number.MAX_VALUE,
+    endNs: Number.MAX_VALUE,
+    commandBuffers: [],
+    dispatches: [],
+    waits: [],
+  };
+
+  assert.throws(
+    () => buildRangeScope(scope, {
+      startNs: scope.startNs,
+      endNs: scope.endNs,
+    }),
+    {
+      name: "RangeError",
+      message: /finite positive duration/,
+    },
+  );
+  assert.throws(
+    () => buildOverviewBins(scope, 4),
+    {
+      name: "RangeError",
+      message: /finite positive duration/,
+    },
+  );
+});
+
+test("overview bin geometry remains finite near the numeric range limit", () => {
+  const maximum = Number.MAX_VALUE;
+  const scope = {
+    startNs: 0,
+    endNs: maximum,
+    commandBuffers: [{
+      encodeStartNs: 0,
+      encodeEndNs: maximum,
+      gpuStartNs: 0,
+      gpuEndNs: maximum,
+      exposedIntervals: [[0, maximum]],
+      hiddenIntervals: [],
+    }],
+    dispatches: [{ atNs: maximum }],
+    waits: [{ atNs: maximum, waitClass: "decision" }],
+  };
+
+  const overview = buildOverviewBins(scope, 4);
+  const range = buildRangeScope(scope, { startNs: 0, endNs: maximum });
+
+  for (const bin of overview.bins) {
+    for (const key of ["startNs", "endNs", "hostEncodeNs", "gpuBusyNs"]) {
+      assert.equal(Number.isFinite(bin[key]), true, `${key}: ${bin[key]}`);
+    }
+  }
+  for (const value of Object.values(range.summary)) {
+    assert.equal(Number.isFinite(value), true, String(value));
+  }
+  assert.equal(overview.bins.at(-1).endNs, maximum);
+  assert.equal(overview.bins.at(-1).dispatchCount, 1);
+  assert.equal(overview.bins.at(-1).waitCount, 1);
+});
+
+test("overview interval work scales with touched bins instead of total resolution", () => {
+  let endpointReads = 0;
+  const trackedInterval = () =>
+    new Proxy([999, 999.5], {
+      get(target, property, receiver) {
+        if (property === "0" || property === "1") {
+          endpointReads += 1;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  const intervalCount = 128;
+  const commandBuffers = Array.from({ length: intervalCount }, () => ({
+    exposedIntervals: [trackedInterval()],
+    hiddenIntervals: [],
+  }));
+
+  const overview = buildOverviewBins({
+    startNs: 0,
+    endNs: 1_000,
+    commandBuffers,
+    dispatches: [],
+    waits: [],
+  }, 512);
+
+  assert.equal(overview.bins.at(-1).hostEncodeNs, intervalCount / 2);
+  assert.ok(
+    endpointReads < intervalCount * 20,
+    `read ${endpointReads} interval endpoints for ${intervalCount} one-bin intervals`,
+  );
+});
+
 test("each launch scope carries a frozen overview without circular references", () => {
   const dataset = buildDataset([
     {
@@ -1334,4 +1559,19 @@ test("each launch scope carries a frozen overview without circular references", 
   assert.equal(Object.isFrozen(launch.overview), true);
   assert.equal(Object.isFrozen(launch.overview.bins), true);
   assert.equal(Object.isFrozen(launch.overview.bins[0]), true);
+});
+
+test("dataset construction retains untimed command buffers without fabricating an overview", () => {
+  const dataset = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+    },
+  ]);
+
+  assert.equal(dataset.launchWindows.length, 1);
+  assert.equal(dataset.launchWindows[0].startNs, null);
+  assert.equal(dataset.launchWindows[0].endNs, null);
+  assert.equal(dataset.launchWindows[0].overview, null);
+  assert.equal(Object.isFrozen(dataset.launchWindows[0]), true);
 });
