@@ -785,6 +785,260 @@ test("fit accepts a selected launch window without escaping dataset bounds", () 
   renderer.destroy();
 });
 
+test("visible evidence snapshot copies viewport evidence and discloses unplaceable records", () => {
+  const environment = createEnvironment({ width: 40 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  const crossing = {
+    type: "cb",
+    commandBufferIndex: 1,
+    encodeStartNs: 10,
+    encodeEndNs: 70,
+    gpuStartNs: 70,
+    gpuEndNs: 110,
+    exposedIntervals: [[10, 40]],
+    raw: { source: { row: 1 } },
+  };
+  const outside = {
+    type: "cb",
+    commandBufferIndex: 2,
+    encodeStartNs: 0,
+    encodeEndNs: 10,
+    gpuStartNs: 10,
+    gpuEndNs: 19,
+  };
+  const visibleDispatch = dispatch(50, "visible", 1, 1);
+  const endDispatch = dispatch(80, "endpoint", 1, 2);
+  const unplacedDispatch = dispatch(null, "unplaced", 1, 3);
+  const visibleWait = {
+    type: "wait",
+    bucket: "cap_wait",
+    waitClass: "cap",
+    waitNs: 5,
+    atNs: 60,
+    atNsSource: "event-timestamp",
+  };
+  const unanchoredWait = {
+    type: "wait",
+    bucket: "sched_worker_wait",
+    waitClass: "other",
+    waitNs: 7,
+    atNs: null,
+  };
+  renderer.setDataset(
+    dataset({
+      dispatches: [
+        dispatch(20, "outside", 2, 0),
+        visibleDispatch,
+        endDispatch,
+        unplacedDispatch,
+      ],
+      commandBuffers: [outside, crossing],
+      waits: [
+        { type: "wait", waitNs: 1, atNs: 19 },
+        visibleWait,
+        unanchoredWait,
+      ],
+      startNs: 0,
+      endNs: 120,
+    }),
+  );
+  renderer.viewport = { startNs: 40, endNs: 80 };
+
+  const snapshot = renderer.visibleEvidenceSnapshot();
+
+  assert.deepEqual(snapshot.viewport, { startNs: 40, endNs: 80 });
+  assert.deepEqual(snapshot.commandBuffers, [crossing]);
+  assert.deepEqual(snapshot.dispatches, [visibleDispatch, endDispatch]);
+  assert.deepEqual(snapshot.waits, [visibleWait]);
+  assert.equal(snapshot.unplacedDispatchCount, 1);
+  assert.equal(snapshot.unanchoredWaitCount, 1);
+  assert.equal(snapshot.densityMode, false);
+  assert.ok(Object.isFrozen(snapshot));
+  assert.ok(Object.isFrozen(snapshot.viewport));
+  assert.ok(Object.isFrozen(snapshot.commandBuffers));
+  assert.ok(Object.isFrozen(snapshot.dispatches));
+  assert.ok(Object.isFrozen(snapshot.waits));
+  assert.notEqual(snapshot.viewport, renderer.viewport);
+  assert.notEqual(snapshot.commandBuffers, renderer.commandBuffers);
+  assert.notEqual(snapshot.dispatches, renderer.placedDispatches);
+  assert.notEqual(snapshot.waits, renderer.sortedWaits);
+  assert.notEqual(snapshot.commandBuffers[0], crossing);
+  assert.notEqual(snapshot.dispatches[0], visibleDispatch);
+  assert.notEqual(snapshot.waits[0], visibleWait);
+  assert.ok(Object.isFrozen(snapshot.commandBuffers[0]));
+  assert.ok(Object.isFrozen(snapshot.commandBuffers[0].exposedIntervals));
+  assert.ok(Object.isFrozen(snapshot.commandBuffers[0].exposedIntervals[0]));
+  assert.ok(Object.isFrozen(snapshot.commandBuffers[0].raw.source));
+  assert.ok(Object.isFrozen(snapshot.dispatches[0]));
+  assert.ok(Object.isFrozen(snapshot.waits[0]));
+
+  assert.throws(() => {
+    snapshot.commandBuffers[0].encodeStartNs = 999;
+  }, TypeError);
+  assert.throws(() => {
+    snapshot.commandBuffers[0].exposedIntervals[0][0] = 999;
+  }, TypeError);
+  assert.throws(() => {
+    snapshot.commandBuffers[0].raw.source.row = 999;
+  }, TypeError);
+  assert.throws(() => {
+    snapshot.dispatches[0].kernel = "mutated";
+  }, TypeError);
+  assert.throws(() => {
+    snapshot.waits[0].waitNs = 999;
+  }, TypeError);
+  assert.equal(crossing.encodeStartNs, 10);
+  assert.deepEqual(crossing.exposedIntervals, [[10, 40]]);
+  assert.equal(crossing.raw.source.row, 1);
+  assert.equal(visibleDispatch.kernel, "visible");
+  assert.equal(visibleWait.waitNs, 5);
+
+  renderer.viewport.startNs = 45;
+  renderer.commandBuffers.push(outside);
+  assert.deepEqual(snapshot.viewport, { startNs: 40, endNs: 80 });
+  assert.deepEqual(snapshot.commandBuffers, [crossing]);
+  renderer.destroy();
+});
+
+test("visible evidence snapshot maps a horizontally scrolled pixel window to timeline bounds", () => {
+  const environment = createEnvironment({ width: 720 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  const left = {
+    type: "cb",
+    commandBufferIndex: 1,
+    encodeStartNs: 0,
+    encodeEndNs: 20,
+  };
+  const middle = {
+    type: "cb",
+    commandBufferIndex: 2,
+    encodeStartNs: 20,
+    encodeEndNs: 80,
+  };
+  const right = {
+    type: "cb",
+    commandBufferIndex: 3,
+    encodeStartNs: 80,
+    encodeEndNs: 100,
+  };
+  renderer.setDataset(
+    dataset({
+      commandBuffers: [left, middle, right],
+      dispatches: [
+        dispatch(10, "left", 1),
+        dispatch(40, "middle", 2),
+        dispatch(90, "right", 3),
+      ],
+      waits: [
+        { type: "wait", atNs: 15, waitNs: 1 },
+        { type: "wait", atNs: 60, waitNs: 2 },
+        { type: "wait", atNs: 95, waitNs: 3 },
+      ],
+      startNs: 0,
+      endNs: 100,
+    }),
+  );
+
+  const snapshot = renderer.visibleEvidenceSnapshot({
+    scrollLeft: 180,
+    clientWidth: 360,
+  });
+
+  assert.deepEqual(snapshot.viewport, { startNs: 25, endNs: 75 });
+  assert.deepEqual(
+    snapshot.commandBuffers.map(({ commandBufferIndex }) => commandBufferIndex),
+    [2],
+  );
+  assert.deepEqual(snapshot.dispatches.map(({ kernel }) => kernel), ["middle"]);
+  assert.deepEqual(snapshot.waits.map(({ waitNs }) => waitNs), [2]);
+
+  const clamped = renderer.visibleEvidenceSnapshot({
+    startPx: -100,
+    endPx: 900,
+  });
+  assert.deepEqual(clamped.viewport, { startNs: 0, endNs: 100 });
+  renderer.destroy();
+});
+
+test("visible evidence snapshot includes command-buffer hairlines from partial endpoints", () => {
+  const environment = createEnvironment({ width: 100 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  renderer.setDataset(
+    dataset({
+      commandBuffers: [
+        {
+          type: "cb",
+          commandBufferIndex: 7,
+          opCount: 0,
+          gpuStartNs: 50,
+        },
+      ],
+      waits: [
+        {
+          type: "wait",
+          commandBufferIndex: 7,
+          atNs: 50,
+          waitNs: 3,
+        },
+      ],
+      startNs: 0,
+      endNs: 100,
+    }),
+  );
+  renderer.render();
+
+  assert.ok(
+    renderer.hitTargets.some(
+      ({ kind, item }) =>
+        kind === "cb" && item.commandBufferIndex === 7,
+    ),
+  );
+  assert.ok(
+    renderer
+      .visibleEvidenceSnapshot()
+      .commandBuffers.some(({ commandBufferIndex }) => commandBufferIndex === 7),
+  );
+  renderer.destroy();
+});
+
+test("clipped snapshot preserves the renderer full-viewport density mode", () => {
+  const environment = createEnvironment({ width: 720 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  const dispatches = [
+    ...Array.from({ length: 149 }, (_, index) =>
+      dispatch((index * 24) / 148, "left-dense", 1, index)),
+    dispatch(30, "clipped-left", 2, 149),
+    dispatch(70, "clipped-right", 2, 150),
+    ...Array.from({ length: 149 }, (_, index) =>
+      dispatch(76 + (index * 24) / 148, "right-dense", 3, index + 151)),
+  ];
+  renderer.setDataset(dataset({ dispatches, startNs: 0, endNs: 100 }));
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.densityMode, true);
+
+  const snapshot = renderer.visibleEvidenceSnapshot({
+    startPx: 180,
+    endPx: 540,
+  });
+
+  assert.deepEqual(snapshot.viewport, { startNs: 25, endNs: 75 });
+  assert.deepEqual(
+    snapshot.dispatches.map(({ kernel }) => kernel),
+    ["clipped-left", "clipped-right"],
+  );
+  assert.equal(
+    shouldUseDensity(snapshot.dispatches, snapshot.viewport, 720),
+    false,
+    "the clipped records alone would be rendered sparsely",
+  );
+  assert.equal(snapshot.densityMode, true);
+  assert.equal(
+    snapshot.densityModeBasis,
+    "renderer-full-logical-viewport",
+  );
+  renderer.destroy();
+});
+
 test("crosshair spans every fixed lane and footer names ordered placement", () => {
   const environment = createEnvironment({ width: 200 });
   const renderer = new TimelineRenderer(environment.canvas);

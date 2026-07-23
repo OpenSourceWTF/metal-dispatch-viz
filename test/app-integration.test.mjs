@@ -142,6 +142,7 @@ test("browser registry and trace requests resolve against root and project base 
 
 const BOOTSTRAP_IDS = [
   "directory-identity",
+  "field-manual-button",
   "refresh-button",
   "theme-toggle",
   "trace-rail",
@@ -154,6 +155,7 @@ const BOOTSTRAP_IDS = [
   "metric-scope-label",
   "metric-grid",
   "timeline",
+  "timeline-scroller",
   "plot-frame",
   "timeline-placeholder",
   "timeline-sampling-note",
@@ -187,6 +189,37 @@ const BOOTSTRAP_IDS = [
   "range-status",
   "range-omissions",
   "analysis-tables",
+  "utility-backdrop",
+  "field-manual-drawer",
+  "field-manual-close",
+  "manual-search",
+  "manual-search-status",
+  "manual-quick-start",
+  "manual-glossary-list",
+  "definition-tooltip",
+  "definition-tooltip-title",
+  "definition-tooltip-body",
+  "definition-tooltip-evidence",
+  "definition-tooltip-method",
+  "definition-tooltip-limitation",
+  "definition-popover",
+  "definition-popover-title",
+  "definition-popover-body",
+  "definition-popover-evidence",
+  "definition-popover-method",
+  "definition-popover-limitation",
+  "definition-popover-close",
+  "definition-popover-manual",
+  "ai-export-button",
+  "ai-export-drawer",
+  "ai-export-close",
+  "ai-export-refresh",
+  "ai-export-format",
+  "ai-export-scope",
+  "ai-export-preview",
+  "copy-export",
+  "download-export",
+  "ai-export-status",
 ];
 
 function bootstrapCanvasContext() {
@@ -223,6 +256,7 @@ class BootstrapElement {
     this.children = [];
     this.listeners = new Map();
     this.className = "";
+    this.dataset = {};
     this.disabled = false;
     this.hidden = false;
     this.style = {};
@@ -281,6 +315,14 @@ class BootstrapElement {
     this.listeners.set(type, listeners);
   }
 
+  removeEventListener(type, listener) {
+    const listeners = this.listeners.get(type) ?? [];
+    this.listeners.set(
+      type,
+      listeners.filter((candidate) => candidate !== listener),
+    );
+  }
+
   dispatch(type, event = {}) {
     for (const listener of this.listeners.get(type) ?? []) {
       listener({
@@ -310,6 +352,19 @@ class BootstrapElement {
 
   remove() {}
 
+  contains(target) {
+    return target === this || this.children.includes(target);
+  }
+
+  closest(selector) {
+    return selector === ".term-trigger" &&
+        this.className.split(/\s+/).includes("term-trigger")
+      ? this
+      : null;
+  }
+
+  scrollIntoView() {}
+
   querySelector(selector) {
     const tagName = selector.toLowerCase();
     let child = this.children.find(
@@ -323,10 +378,13 @@ class BootstrapElement {
   }
 
   querySelectorAll(selector) {
-    if (selector !== ".trace-toggle") return [];
-    return this.children.filter((child) =>
-      String(child?.className ?? "").split(/\s+/).includes("trace-toggle"),
-    );
+    if (selector === ".trace-toggle" || selector === ".manual-entry") {
+      const className = selector.slice(1);
+      return this.children.filter((child) =>
+        String(child?.className ?? "").split(/\s+/).includes(className),
+      );
+    }
+    return [];
   }
 
   getBoundingClientRect() {
@@ -335,6 +393,7 @@ class BootstrapElement {
 }
 
 function bootstrapDocument() {
+  const listeners = new Map();
   const documentObject = {
     activeElement: null,
     elements: new Map(),
@@ -349,14 +408,47 @@ function bootstrapDocument() {
     createTextNode(text) {
       return { textContent: String(text) };
     },
+    querySelector(selector) {
+      if (selector === ".site-header" || selector === "main") {
+        return this.elements.get(selector) ?? null;
+      }
+      return null;
+    },
+    addEventListener(type, listener) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(listener);
+    },
+    removeEventListener(type, listener) {
+      listeners.get(type)?.delete(listener);
+    },
   };
   documentObject.documentElement =
     new BootstrapElement(documentObject, "document", "html");
   documentObject.body = new BootstrapElement(documentObject, "body", "body");
+  documentObject.elements.set(
+    ".site-header",
+    new BootstrapElement(documentObject, "site-header", "header"),
+  );
+  documentObject.elements.set(
+    "main",
+    new BootstrapElement(documentObject, "main", "main"),
+  );
   for (const id of BOOTSTRAP_IDS) {
     const tagName =
-      id.includes("button") || id.startsWith("range-mode") ? "button" :
-      id === "window-select" ? "select" :
+      id.includes("button") ||
+          id.startsWith("range-mode") ||
+          [
+            "field-manual-close",
+            "definition-popover-close",
+            "definition-popover-manual",
+            "ai-export-close",
+            "ai-export-refresh",
+            "copy-export",
+            "download-export",
+          ].includes(id) ? "button" :
+      id === "window-select" || id === "ai-export-format" ? "select" :
+      id === "manual-search" ? "input" :
+      id === "ai-export-preview" ? "textarea" :
       id.includes("table-body") ? "tbody" :
       id === "loading-progress" ? "progress" :
       id === "timeline" || id === "range-overview" ? "canvas" :

@@ -11,6 +11,7 @@ import {
 
 const BOOTSTRAP_IDS = [
   "directory-identity",
+  "field-manual-button",
   "refresh-button",
   "theme-toggle",
   "trace-rail",
@@ -23,6 +24,7 @@ const BOOTSTRAP_IDS = [
   "metric-scope-label",
   "metric-grid",
   "timeline",
+  "timeline-scroller",
   "plot-frame",
   "timeline-placeholder",
   "timeline-sampling-note",
@@ -56,6 +58,37 @@ const BOOTSTRAP_IDS = [
   "range-status",
   "range-omissions",
   "analysis-tables",
+  "utility-backdrop",
+  "field-manual-drawer",
+  "field-manual-close",
+  "manual-search",
+  "manual-search-status",
+  "manual-quick-start",
+  "manual-glossary-list",
+  "definition-tooltip",
+  "definition-tooltip-title",
+  "definition-tooltip-body",
+  "definition-tooltip-evidence",
+  "definition-tooltip-method",
+  "definition-tooltip-limitation",
+  "definition-popover",
+  "definition-popover-title",
+  "definition-popover-body",
+  "definition-popover-evidence",
+  "definition-popover-method",
+  "definition-popover-limitation",
+  "definition-popover-close",
+  "definition-popover-manual",
+  "ai-export-button",
+  "ai-export-drawer",
+  "ai-export-close",
+  "ai-export-refresh",
+  "ai-export-format",
+  "ai-export-scope",
+  "ai-export-preview",
+  "copy-export",
+  "download-export",
+  "ai-export-status",
 ];
 
 describe("ProfilerApp shell", () => {
@@ -94,6 +127,96 @@ describe("ProfilerApp shell", () => {
     }
     expect(container.textContent).toMatch(/Not loaded/i);
     expect(container.textContent).not.toMatch(/Evidence:\s*Pending/i);
+  });
+
+  it("renders contextual help and local export as hidden accessible utilities", async () => {
+    const bootstrapController = vi.fn(async () => ({ destroy() {} }));
+
+    await act(async () => {
+      root.render(
+        <ProfilerApp bootstrapController={bootstrapController} />,
+      );
+    });
+
+    const manualButton = container.querySelector("#field-manual-button");
+    expect(manualButton.closest(".header-actions")).not.toBeNull();
+    expect(manualButton.getAttribute("aria-controls")).toBe(
+      "field-manual-drawer",
+    );
+
+    const backdrop = container.querySelector("#utility-backdrop");
+    expect(container.querySelectorAll("#utility-backdrop")).toHaveLength(1);
+    expect(backdrop.hidden).toBe(true);
+
+    const manualDrawer = container.querySelector("#field-manual-drawer");
+    expect(manualDrawer.hidden).toBe(true);
+    expect(manualDrawer.getAttribute("role")).toBe("dialog");
+    expect(manualDrawer.getAttribute("aria-modal")).toBe("true");
+    expect(manualDrawer.getAttribute("aria-labelledby")).toBe(
+      "field-manual-heading",
+    );
+    expect(
+      container.querySelector('label[for="manual-search"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toMatch(/Quick start/i);
+    expect(container.textContent).toMatch(/Read the timeline/i);
+    expect(container.textContent).toMatch(/Evidence limits/i);
+    expect(container.textContent).toMatch(/Keyboard controls/i);
+
+    const termTriggers = [
+      ...container.querySelectorAll(".term-trigger"),
+    ];
+    expect(termTriggers.length).toBeGreaterThanOrEqual(23);
+    for (const trigger of termTriggers) {
+      expect(trigger.tagName).toBe("BUTTON");
+      expect(trigger.type).toBe("button");
+      expect(trigger.dataset.term).toBeTruthy();
+      expect(trigger.getAttribute("aria-label")).toMatch(/define/i);
+      expect(trigger.getAttribute("aria-controls")).toBe(
+        "definition-tooltip",
+      );
+    }
+    for (const term of [
+      "host-encode",
+      "gpu-execute",
+      "wait-taxonomy",
+      "dispatch",
+      "dispatch-density",
+      "ordered-placement",
+    ]) {
+      expect(
+        container.querySelector(`.term-trigger[data-term="${term}"]`),
+      ).not.toBeNull();
+    }
+
+    const tooltip = container.querySelector("#definition-tooltip");
+    expect(tooltip.hidden).toBe(true);
+    expect(tooltip.getAttribute("role")).toBe("tooltip");
+    expect(tooltip.querySelector("button, a, input, select, textarea")).toBeNull();
+
+    const popover = container.querySelector("#definition-popover");
+    expect(popover.hidden).toBe(true);
+    expect(popover.getAttribute("role")).toBe("dialog");
+    expect(popover.getAttribute("aria-modal")).toBe("false");
+
+    const exportButton = container.querySelector("#ai-export-button");
+    expect(exportButton.disabled).toBe(true);
+    expect(exportButton.closest(".timeline-actions")).not.toBeNull();
+    expect(exportButton.getAttribute("aria-controls")).toBe(
+      "ai-export-drawer",
+    );
+    const exportDrawer = container.querySelector("#ai-export-drawer");
+    expect(exportDrawer.hidden).toBe(true);
+    expect(exportDrawer.getAttribute("role")).toBe("dialog");
+    expect(exportDrawer.getAttribute("aria-modal")).toBe("true");
+    expect(container.querySelector("#ai-export-preview").readOnly).toBe(true);
+    expect(container.querySelector("#ai-export-status").getAttribute("role")).toBe(
+      "status",
+    );
+    expect(container.textContent).toMatch(/Generated locally/i);
+    expect(container.textContent).toMatch(/Nothing is uploaded/i);
+    expect(container.textContent).toMatch(/Prompt \+ data/i);
+    expect(container.textContent).toMatch(/Structured data/i);
   });
 
   it("starts the injected controller after mount and destroys it once on unmount", async () => {

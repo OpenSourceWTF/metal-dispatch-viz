@@ -227,6 +227,48 @@ ordered placement and waits without an anchor; those records are excluded from
 selected-range aggregates. The schema also lacks tensor producer/consumer
 identity, so a selected range does not establish an output critical path.
 
+## Contextual help and Field manual
+
+Specialized measurements and profiler terms have contextual definitions
+available from their adjacent info controls. Hover or focus for a quick
+definition, or activate the control to pin it and continue to the full entry.
+The **Field manual** in the header includes a quick start, timeline guidance,
+measurement methods and limitations, a searchable glossary, evidence cautions,
+and keyboard shortcuts. Opening it from a definition focuses that term; opening
+it from the header starts at Quick start.
+
+## Export the visible timeline
+
+Choose **Export for AI** above the timeline to capture its current visible
+timeline scope. Refresh snapshot after panning or zooming when you want to
+regenerate it. On narrow screens, this means the horizontally visible scroller
+subsection, not the full timeline hidden beyond the scroller. Two local-only
+formats are available:
+
+- **Prompt + data (`.md`)** packages analysis instructions with one fenced JSON
+  payload. Copy it and paste it into the chat or analysis tool you choose.
+- **Structured data (`.json`)** downloads the same versioned payload without
+  prompt prose for scripts or other tooling.
+
+Copy and download happen only after an explicit action in the browser. The
+workbench does not call a model or upload the export. The payload includes
+selected-launch measurements, the viewport bounds, intersecting command
+buffers, aggregate visible placed-dispatch counts, kernel-family totals with
+ordered-placement provenance, anchored waits, evidence health, and limitations.
+Individual dispatch records and positions are not exported.
+
+When timeline collections are sampled for display, the export labels them as
+displayed sample records. Exact viewport totals may be unavailable and appear
+as `null`; they are never inferred from the sample. Selected-launch headline
+aggregates remain exact.
+
+Intervals that cross a viewport boundary retain their original endpoints and
+add clipped visible endpoints. The dispatch aggregates retain ordered placement
+rather than measured-timestamp provenance. Unplaced dispatches and unanchored
+waits are disclosed but cannot be assigned to the visible range. Treat the
+export as evidence for investigation, not an automatic optimization or
+critical-path result; schema v1 cannot identify tensor dependencies.
+
 Trace fetch, byte-stream parsing, normalization, and interval analysis all run
 inside one module Web Worker. Large files still report byte and row progress,
 but their JSON parsing and exact aggregate construction never cross the browser

@@ -22,10 +22,32 @@ export function createAnalysisSession(options) {
   });
 }
 
-function initialMetric(label, className = "metric", unit = true) {
+function DefinitionTrigger({ term, label }) {
+  return (
+    <button
+      className="term-trigger"
+      type="button"
+      data-term={term}
+      aria-label={`Define ${label}`}
+      aria-controls="definition-tooltip"
+      aria-expanded="false"
+    >
+      ⓘ
+    </button>
+  );
+}
+
+function initialMetric(
+  label,
+  term,
+  className = "metric",
+  unit = true,
+) {
   return (
     <div className={className}>
-      <dt>{label}</dt>
+      <dt>
+        {label} <DefinitionTrigger term={term} label={label} />
+      </dt>
       <dd>
         —
         {unit ? <span className="unit"> ms</span> : null}
@@ -80,6 +102,14 @@ export function ProfilerApp({
           </div>
         </div>
         <div className="header-actions" aria-label="Workbench controls">
+          <button
+            id="field-manual-button"
+            type="button"
+            aria-haspopup="dialog"
+            aria-controls="field-manual-drawer"
+          >
+            Field manual
+          </button>
           <button
             id="refresh-button"
             type="button"
@@ -181,16 +211,16 @@ export function ProfilerApp({
               <span id="metric-scope-label">Launch totals</span>
             </div>
             <dl id="metric-grid" className="metric-grid" aria-busy="true">
-              {initialMetric("Wall span", "metric metric-primary")}
-              {initialMetric("Exposed host", "metric metric-exposed")}
-              {initialMetric("Hidden host", "metric metric-hidden")}
-              {initialMetric("GPU busy", "metric metric-gpu")}
-              {initialMetric("GPU work", "metric metric-gpu")}
-              {initialMetric("Decision drain", "metric metric-decision")}
-              {initialMetric("Cap wait", "metric metric-cap")}
-              {initialMetric("Dependency", "metric metric-dependency")}
-              {initialMetric("Command buffers", "metric", false)}
-              {initialMetric("Dispatches", "metric", false)}
+              {initialMetric("Wall span", "wall-span", "metric metric-primary")}
+              {initialMetric("Exposed host", "exposed-host", "metric metric-exposed")}
+              {initialMetric("Hidden host", "hidden-host", "metric metric-hidden")}
+              {initialMetric("GPU busy", "gpu-busy", "metric metric-gpu")}
+              {initialMetric("GPU work", "gpu-work", "metric metric-gpu")}
+              {initialMetric("Decision drain", "decision-drain", "metric metric-decision")}
+              {initialMetric("Cap wait", "cap-wait", "metric metric-cap")}
+              {initialMetric("Dependency", "dependency-wait", "metric metric-dependency")}
+              {initialMetric("Command buffers", "command-buffer", "metric", false)}
+              {initialMetric("Dispatches", "dispatch", "metric", false)}
             </dl>
           </section>
 
@@ -209,6 +239,16 @@ export function ProfilerApp({
                     className="timeline-actions"
                     aria-label="Timeline view controls"
                   >
+                    <button
+                      id="ai-export-button"
+                      className="ai-export-button"
+                      type="button"
+                      aria-haspopup="dialog"
+                      aria-controls="ai-export-drawer"
+                      disabled
+                    >
+                      Export for AI
+                    </button>
                     <output id="timeline-scale" className="timeline-scale">
                       Fit · — ns/px
                     </output>
@@ -238,6 +278,34 @@ export function ProfilerApp({
                   Timeline viewport; horizontal scrolling reveals more timeline
                   detail on narrow screens.
                 </p>
+                <div
+                  className="timeline-term-legend"
+                  aria-label="Timeline terminology"
+                >
+                  <span>
+                    Host encode{" "}
+                    <DefinitionTrigger term="host-encode" label="Host encode" />
+                  </span>
+                  <span>
+                    GPU execute{" "}
+                    <DefinitionTrigger term="gpu-execute" label="GPU execute" />
+                  </span>
+                  <span>
+                    Waits{" "}
+                    <DefinitionTrigger term="wait-taxonomy" label="Wait taxonomy" />
+                  </span>
+                  <span>
+                    Dispatch order{" "}
+                    <DefinitionTrigger term="dispatch" label="Dispatch" />
+                  </span>
+                  <span>
+                    Dispatch density{" "}
+                    <DefinitionTrigger
+                      term="dispatch-density"
+                      label="Dispatch density"
+                    />
+                  </span>
+                </div>
                 <div id="timeline-viewport" className="timeline-viewport">
                   <div
                     id="timeline-scroller"
@@ -397,10 +465,17 @@ export function ProfilerApp({
                 </section>
                 <p id="timeline-description" className="timeline-description">
                   Six coupled lanes show the ruler, host encoding, GPU execution,
-                  waits, dispatch order, and scale. Dispatch marks use ordered
-                  placement within each command buffer; they are not measured
-                  per-operation timestamps. With the canvas focused, [ and ] move
-                  to the previous and next mark; Enter pins the active mark.
+                  waits, dispatch order, and scale. Dispatch marks use{" "}
+                  <span className="term-label">
+                    ordered placement{" "}
+                    <DefinitionTrigger
+                      term="ordered-placement"
+                      label="Ordered placement"
+                    />
+                  </span>{" "}
+                  within each command buffer; they are not measured per-operation
+                  timestamps. With the canvas focused, [ and ] move to the previous
+                  and next mark; Enter pins the active mark.
                 </p>
                 <p
                   id="timeline-sampling-note"
@@ -438,7 +513,13 @@ export function ProfilerApp({
                   <div className="section-heading">
                     <div>
                       <p className="eyebrow">Dispatch census</p>
-                      <h2 id="kernel-heading">Kernel families</h2>
+                      <h2 id="kernel-heading">
+                        Kernel families{" "}
+                        <DefinitionTrigger
+                          term="kernel-family"
+                          label="Kernel family"
+                        />
+                      </h2>
                     </div>
                     <span id="kernel-table-state" className="table-state">
                       Awaiting rows
@@ -458,9 +539,27 @@ export function ProfilerApp({
                         <tr>
                           <th scope="col">Kernel family</th>
                           <th scope="col">Dispatches</th>
-                          <th scope="col">setBytes calls</th>
-                          <th scope="col">setBytes bytes</th>
-                          <th scope="col">Buffer binds</th>
+                          <th scope="col">
+                            setBytes calls{" "}
+                            <DefinitionTrigger
+                              term="setbytes-call"
+                              label="setBytes call"
+                            />
+                          </th>
+                          <th scope="col">
+                            setBytes bytes{" "}
+                            <DefinitionTrigger
+                              term="setbytes-bytes"
+                              label="setBytes bytes"
+                            />
+                          </th>
+                          <th scope="col">
+                            Buffer binds{" "}
+                            <DefinitionTrigger
+                              term="buffer-bind"
+                              label="Buffer bind"
+                            />
+                          </th>
                         </tr>
                       </thead>
                       <tbody id="kernel-table-body">
@@ -483,7 +582,13 @@ export function ProfilerApp({
                   <div className="section-heading">
                     <div>
                       <p className="eyebrow">Synchronization cost</p>
-                      <h2 id="wait-heading">Wait taxonomy</h2>
+                      <h2 id="wait-heading">
+                        Wait taxonomy{" "}
+                        <DefinitionTrigger
+                          term="wait-taxonomy"
+                          label="Wait taxonomy"
+                        />
+                      </h2>
                     </div>
                     <span id="wait-table-state" className="table-state">
                       Awaiting rows
@@ -553,8 +658,15 @@ export function ProfilerApp({
                   </div>
                 </dl>
                 <p className="inspector-note">
-                  Values are labeled as measured, derived, ordered, or metadata
-                  when available.
+                  Values are labeled as{" "}
+                  <span className="term-label">
+                    measured{" "}
+                    <DefinitionTrigger
+                      term="measured"
+                      label="Measured evidence"
+                    />
+                  </span>
+                  , derived, ordered, or metadata when available.
                 </p>
               </div>
             </aside>
@@ -563,13 +675,305 @@ export function ProfilerApp({
           <footer className="disclosure">
             <p>
               Evidence note: dispatch marks are{" "}
-              <strong>ordered placement</strong> within their parent command
-              buffer, not measured timestamps.
+              <strong>ordered placement</strong>{" "}
+              <DefinitionTrigger
+                term="ordered-placement"
+                label="Ordered placement"
+              />{" "}
+              within their parent command buffer, not measured timestamps.
             </p>
             <p>Local read-only workbench · source files are never modified</p>
           </footer>
         </div>
       </main>
+
+      <div id="utility-backdrop" className="utility-backdrop" hidden />
+
+      <div
+        id="field-manual-drawer"
+        className="utility-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="field-manual-heading"
+        aria-hidden="true"
+        hidden
+      >
+        <div className="utility-drawer-header">
+          <div>
+            <p className="eyebrow">Reference / local</p>
+            <h2 id="field-manual-heading">Field manual</h2>
+          </div>
+          <button
+            id="field-manual-close"
+            type="button"
+            aria-label="Close Field manual"
+          >
+            Close
+          </button>
+        </div>
+        <div className="manual-search-control">
+          <label htmlFor="manual-search">Search glossary</label>
+          <input
+            id="manual-search"
+            type="search"
+            autoComplete="off"
+            placeholder="Term, method, or limitation"
+          />
+          <output
+            id="manual-search-status"
+            className="manual-search-status"
+            aria-live="polite"
+          />
+        </div>
+        <div id="manual-content" className="manual-content" tabIndex="-1">
+          <section
+            id="manual-quick-start"
+            className="manual-section"
+            tabIndex="-1"
+            aria-labelledby="manual-quick-start-heading"
+          >
+            <p className="manual-index">01 / OPERATE</p>
+            <h3 id="manual-quick-start-heading">Quick start</h3>
+            <ol>
+              <li>
+                Select a trace from the top rail, then choose a launch when more
+                than one is present.
+              </li>
+              <li>
+                In View, drag the range band or either handle, then use Fit,
+                zoom, timeline drag, or horizontal scroll to choose the visible
+                time window.
+              </li>
+              <li>
+                Switch to Analyze when you need exact metrics and tables for the
+                selected range instead of launch totals.
+              </li>
+              <li>
+                Select a command buffer, dispatch, density bin, or wait to
+                inspect linked evidence.
+              </li>
+              <li>
+                Use Export for AI when available to package only the visible
+                range; help never sends trace data anywhere.
+              </li>
+            </ol>
+          </section>
+          <section
+            className="manual-section"
+            aria-labelledby="manual-timeline-heading"
+          >
+            <p className="manual-index">02 / READ</p>
+            <h3 id="manual-timeline-heading">Read the timeline</h3>
+            <p>
+              The ruler anchors the visible time range. Host encode and GPU
+              execute lanes show measured command-buffer intervals. Wait marks
+              show producer-reported synchronization. Dispatch marks preserve
+              sequence through ordered placement; density mode groups those
+              placements when individual marks would be too dense.
+            </p>
+          </section>
+          <section
+            className="manual-section"
+            aria-labelledby="manual-measurements-heading"
+          >
+            <p className="manual-index">03 / MEASURE</p>
+            <h3 id="manual-measurements-heading">Measurements</h3>
+            <p>
+              Headline metrics pair a value with its evidence basis. Measured
+              endpoints, interval-derived unions and intersections, recorded
+              waits, and counts answer different questions and must not be
+              added together by default.
+            </p>
+          </section>
+          <section
+            className="manual-section manual-glossary"
+            aria-labelledby="manual-glossary-heading"
+          >
+            <p className="manual-index">04 / DEFINE</p>
+            <h3 id="manual-glossary-heading">Glossary</h3>
+            <div
+              id="manual-glossary-list"
+              className="manual-glossary-list"
+            />
+          </section>
+          <section
+            className="manual-section"
+            aria-labelledby="manual-evidence-heading"
+          >
+            <p className="manual-index">05 / LIMITS</p>
+            <h3 id="manual-evidence-heading">Evidence limits</h3>
+            <ul>
+              <li>
+                Canvas sampling changes visible marks, never the exact headline
+                metrics or tables.
+              </li>
+              <li>
+                Malformed, unsupported, dropped, or legacy rows remain disclosed
+                and can limit completeness.
+              </li>
+              <li>
+                Ordered dispatch placement is not a measured per-operation
+                timestamp or duration.
+              </li>
+              <li>
+                Scheduler detail is non-additive, and wait totals do not
+                establish a critical path.
+              </li>
+              <li>
+                Schema v1 does not record tensor producer or consumer
+                identities, so it cannot prove tensor dependency paths.
+              </li>
+            </ul>
+          </section>
+          <section
+            className="manual-section"
+            aria-labelledby="manual-keyboard-heading"
+          >
+            <p className="manual-index">06 / KEYS</p>
+            <h3 id="manual-keyboard-heading">Keyboard controls</h3>
+            <dl className="shortcut-grid">
+              <div><dt>Trace rail</dt><dd>Arrow keys</dd></div>
+              <div><dt>Range handles</dt><dd>Arrow keys</dd></div>
+              <div><dt>Zoom</dt><dd>+ / −</dd></div>
+              <div><dt>Reset range</dt><dd>Fit</dd></div>
+              <div><dt>Marks</dt><dd>[ / ]</dd></div>
+              <div><dt>Pin mark</dt><dd>Enter</dd></div>
+              <div><dt>Dismiss help</dt><dd>Escape</dd></div>
+            </dl>
+          </section>
+        </div>
+      </div>
+
+      <div
+        id="ai-export-drawer"
+        className="utility-drawer ai-export-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ai-export-heading"
+        aria-hidden="true"
+        hidden
+      >
+        <div className="utility-drawer-header">
+          <div>
+            <p className="eyebrow">Visible evidence / local</p>
+            <h2 id="ai-export-heading">Export for AI</h2>
+          </div>
+          <button
+            id="ai-export-close"
+            type="button"
+            aria-label="Close AI export"
+          >
+            Close
+          </button>
+        </div>
+        <div className="ai-export-controls">
+          <label htmlFor="ai-export-format">Format</label>
+          <select id="ai-export-format" defaultValue="markdown">
+            <option value="markdown">Prompt + data (.md)</option>
+            <option value="json">Structured data (.json)</option>
+          </select>
+          <button id="ai-export-refresh" type="button">
+            Refresh snapshot
+          </button>
+        </div>
+        <section
+          className="ai-export-scope"
+          aria-labelledby="ai-export-scope-heading"
+        >
+          <p id="ai-export-scope-heading" className="manual-index">
+            EXPORT SCOPE
+          </p>
+          <output id="ai-export-scope">No visible range captured.</output>
+          <p className="local-only-notice">
+            Generated locally from the selected launch and visible timeline
+            range. Nothing is uploaded and no model is called.
+          </p>
+        </section>
+        <div className="ai-export-preview-wrap">
+          <label htmlFor="ai-export-preview">Read-only export preview</label>
+          <textarea
+            id="ai-export-preview"
+            readOnly
+            spellCheck="false"
+          />
+        </div>
+        <div className="ai-export-actions">
+          <button id="copy-export" type="button">Copy export</button>
+          <button id="download-export" type="button">Download</button>
+        </div>
+        <output
+          id="ai-export-status"
+          className="ai-export-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        />
+      </div>
+
+      <div
+        id="definition-tooltip"
+        className="definition-tooltip"
+        role="tooltip"
+        aria-live="polite"
+        data-pinned="false"
+        hidden
+      >
+        <div className="definition-tooltip-heading">
+          <strong id="definition-tooltip-title" />
+          <span
+            id="definition-tooltip-evidence"
+            className="evidence-tag"
+            hidden
+          />
+        </div>
+        <p id="definition-tooltip-body" />
+        <p
+          id="definition-tooltip-method"
+          className="definition-detail"
+          hidden
+        />
+        <p
+          id="definition-tooltip-limitation"
+          className="definition-limit"
+          hidden
+        />
+      </div>
+
+      <div
+        id="definition-popover"
+        className="definition-popover"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="definition-popover-title"
+        aria-hidden="true"
+        hidden
+      >
+        <div className="definition-popover-heading">
+          <strong id="definition-popover-title" />
+          <span
+            id="definition-popover-evidence"
+            className="evidence-tag"
+            hidden
+          />
+        </div>
+        <p id="definition-popover-body" />
+        <p
+          id="definition-popover-method"
+          className="definition-detail"
+          hidden
+        />
+        <p
+          id="definition-popover-limitation"
+          className="definition-limit"
+          hidden
+        />
+        <div className="definition-popover-actions">
+          <button id="definition-popover-close" type="button">Close</button>
+          <button id="definition-popover-manual" type="button">
+            Open in Field manual
+          </button>
+        </div>
+      </div>
     </>
   );
 }
