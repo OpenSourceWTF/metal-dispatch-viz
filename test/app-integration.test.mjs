@@ -369,6 +369,7 @@ function createBootstrapHarness({
   const renderers = [];
   const navigators = [];
   const pendingLoads = [];
+  let loadsDeferred = deferredLoads;
 
   class HarnessRenderer {
     constructor(_canvas, callbacks) {
@@ -489,7 +490,7 @@ function createBootstrapHarness({
         dataset: datasets.get(trace?.id),
         diagnostics: { sourceBytes: trace?.size ?? 0, parsedRows: 1 },
       };
-      if (!deferredLoads) {
+      if (!loadsDeferred) {
         this.ready = true;
         return Promise.resolve(loaded);
       }
@@ -546,6 +547,9 @@ function createBootstrapHarness({
     navigators,
     pendingLoads,
     renderers,
+    setLoadsDeferred(value) {
+      loadsDeferred = Boolean(value);
+    },
     sessions,
     ...windowHarness,
   };
@@ -685,6 +689,193 @@ test("same-trace refresh renews only the exact session and selected rail click i
   selectedButton.click();
   await flushMicrotasks();
   assert.equal(harness.sessions.length, 2, "selected trace click is a no-op");
+});
+
+test("same-trace renewal reissues an in-flight Analyze request when its replacement becomes ready", async () => {
+  const launch = bootstrapLaunch();
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+      modifiedTime: "2026-07-23T00:00:00.000Z",
+    }],
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+  });
+  const app = await harness.bootPromise;
+  const navigator = harness.navigators[0];
+  navigator.emitCommit({ startNs: 15, endNs: 75 });
+  harness.documentObject.getElementById("range-mode-analyze").click();
+  assert.equal(harness.sessions[0].analysis.length, 1);
+
+  harness.setLoadsDeferred(true);
+  const refreshPromise = app.refresh();
+  await flushMicrotasks();
+  assert.equal(harness.sessions.length, 2);
+  assert.equal(harness.sessions[0].terminated, true);
+  assert.equal(
+    harness.documentObject.getElementById("analysis-tables")
+      .getAttribute("aria-busy"),
+    "false",
+    "renewal invalidation synchronizes the busy DOM",
+  );
+  assert.doesNotMatch(
+    harness.documentObject.getElementById("kernel-table-state").textContent,
+    /Analyzing selection/i,
+    "renewal invalidation restores the visible table state",
+  );
+
+  harness.pendingLoads[0].resolve();
+  await refreshPromise;
+  assert.equal(
+    harness.sessions[1].analysis.length,
+    1,
+    "Analyze intent is reissued independently of pending URL input",
+  );
+  assert.deepEqual(harness.sessions[1].analysis[0].request, {
+    launchIndex: 0,
+    startNs: 15,
+    endNs: 75,
+  });
+});
+
+test("range interaction before renewal readiness analyzes the newest range and clears busy state", async () => {
+  const launch = bootstrapLaunch();
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+      modifiedTime: "2026-07-23T00:00:00.000Z",
+    }],
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+  });
+  const app = await harness.bootPromise;
+  const navigator = harness.navigators[0];
+  harness.documentObject.getElementById("range-mode-analyze").click();
+  harness.sessions[0].analysis[0].resolve({
+    range: { startNs: 0, endNs: 100 },
+    dataset: analyzedScope({ startNs: 0, endNs: 100 }),
+  });
+  await flushMicrotasks();
+
+  harness.setLoadsDeferred(true);
+  const refreshPromise = app.refresh();
+  await flushMicrotasks();
+  navigator.emitCommit({ startNs: 25, endNs: 65 });
+  assert.equal(harness.sessions[1].analysis.length, 0);
+  assert.equal(app.state.rangePending, true);
+  assert.equal(
+    harness.documentObject.getElementById("metric-grid")
+      .getAttribute("aria-busy"),
+    "true",
+  );
+
+  harness.pendingLoads[0].resolve();
+  await refreshPromise;
+  assert.equal(harness.sessions[1].analysis.length, 1);
+  assert.deepEqual(harness.sessions[1].analysis[0].request, {
+    launchIndex: 0,
+    startNs: 25,
+    endNs: 65,
+  });
+  harness.sessions[1].analysis[0].resolve({
+    range: { startNs: 25, endNs: 65 },
+    dataset: analyzedScope({ startNs: 25, endNs: 65 }),
+  });
+  await flushMicrotasks();
+  assert.equal(app.state.rangePending, false);
+  assert.equal(
+    harness.documentObject.getElementById("metric-grid")
+      .getAttribute("aria-busy"),
+    "false",
+  );
+  assert.deepEqual(app.state.confirmedRange, { startNs: 25, endNs: 65 });
+});
+
+test("failed same-trace renewal exits Analyze and restores launch evidence", async () => {
+  const launch = bootstrapLaunch({ name: "launch" });
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+      modifiedTime: "2026-07-23T00:00:00.000Z",
+    }],
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+  });
+  const app = await harness.bootPromise;
+  harness.documentObject.getElementById("range-mode-analyze").click();
+  harness.sessions[0].analysis[0].resolve({
+    range: { startNs: 10, endNs: 70 },
+    dataset: analyzedScope({
+      startNs: 10,
+      endNs: 70,
+      kernel: "stale-exact",
+    }),
+  });
+  await flushMicrotasks();
+  assert.equal(app.state.rangeMode, "analyze");
+  assert.equal(app.state.activeScope.kernelCensus[0].kernel, "stale-exact");
+
+  harness.setLoadsDeferred(true);
+  const refreshPromise = app.refresh();
+  await flushMicrotasks();
+  harness.pendingLoads[0].reject(new Error("renewal unavailable"));
+  await refreshPromise;
+
+  assert.equal(app.state.rangeMode, "view");
+  assert.equal(app.state.activeScope, launch);
+  assert.equal(app.state.canvasScope, launch);
+  assert.equal(
+    harness.documentObject.getElementById("metric-scope-label").textContent,
+    "Launch totals",
+  );
+  assert.match(
+    harness.documentObject.getElementById("range-status").textContent,
+    /Exact analysis unavailable.+renewal unavailable/i,
+  );
+});
+
+test("reselecting an uncached active load is a no-op but failure remains retryable", async () => {
+  const launch = bootstrapLaunch();
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+      modifiedTime: "2026-07-23T00:00:00.000Z",
+    }],
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+    deferredLoads: true,
+  });
+  await flushMicrotasks();
+  const selectedButton =
+    harness.documentObject.getElementById("trace-track").children[0];
+  selectedButton.click();
+  await flushMicrotasks();
+  assert.equal(harness.sessions.length, 1);
+  assert.equal(harness.sessions[0].terminated, false);
+  assert.equal(harness.pendingLoads.length, 1);
+
+  harness.pendingLoads[0].reject(new Error("initial load failed"));
+  const app = await harness.bootPromise;
+  assert.equal(app.state.currentDataset, null);
+  selectedButton.click();
+  await flushMicrotasks();
+  assert.equal(harness.sessions.length, 2, "failed selection can be retried");
+  assert.equal(harness.pendingLoads.length, 2);
+  harness.pendingLoads[1].resolve();
+  await flushMicrotasks();
+  assert.equal(app.state.currentDataset.launchWindows[0], launch);
 });
 
 test("bootstrap debounces Analyze input, rejects stale results, and synchronizes canvas disclosure", async () => {

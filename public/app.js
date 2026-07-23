@@ -1139,9 +1139,14 @@ export async function bootstrap({
   }
 
   function invalidateRangeRequests() {
+    const wasPending = state.rangePending;
     clearAnalysisTimer();
     rangeAuthority.invalidate();
-    state.rangePending = false;
+    setAnalysisBusy(false, { updateStatus: false });
+    if (wasPending && state.activeScope) {
+      renderKernelTable(state.activeScope);
+      renderWaitTable(state.activeScope);
+    }
   }
 
   function updateRangeModeControls() {
@@ -1956,7 +1961,10 @@ export async function bootstrap({
     if (
       recordSelection &&
       id === state.currentTraceId &&
-      state.currentDataset
+      (
+        state.currentDataset ||
+        (state.analysisSession && state.analysisError === null)
+      )
     ) {
       return;
     }
@@ -2096,7 +2104,11 @@ export async function bootstrap({
           updateRangeModeControls();
           updateRangeReadouts();
           commitRangeUrl();
-          if (state.rangeMode === "analyze" && state.pendingRangeInput) {
+          if (
+            state.rangeMode === "analyze" &&
+            state.selectedRange &&
+            analysisAvailable()
+          ) {
             scheduleRangeAnalysis(state.selectedRange, true);
           }
         } else {
@@ -2129,9 +2141,14 @@ export async function bootstrap({
         await refreshRegistry({ missingId: id });
         return;
       }
-      if (cached && state.currentDataset) {
-        elements.rangeStatus.textContent =
+      if ((cached || preserveCurrentView) && state.currentDataset) {
+        const unavailableMessage =
           `Exact analysis unavailable: ${errorDescription(error)}`;
+        if (state.rangeMode === "analyze") {
+          switchToView({ errorMessage: unavailableMessage });
+        } else {
+          elements.rangeStatus.textContent = unavailableMessage;
+        }
         announce(
           `${traceLabel(trace)} loaded from cache; exact analysis is unavailable.`,
         );

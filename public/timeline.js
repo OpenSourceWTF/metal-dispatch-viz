@@ -1581,9 +1581,12 @@ export class TimelineRenderer {
   handlePointerUp(event) {
     if (!this.drag || this.drag.pointerId !== event.pointerId) return;
     const wasMoved = this.drag.moved;
+    const viewportChanged =
+      this.viewport.startNs !== this.drag.viewport.startNs ||
+      this.viewport.endNs !== this.drag.viewport.endNs;
     this.canvas.releasePointerCapture?.(event.pointerId);
     this.drag = null;
-    if (wasMoved) {
+    if (wasMoved || viewportChanged) {
       this.notifyViewportChange({
         committed: true,
         source: "pointer-pan",

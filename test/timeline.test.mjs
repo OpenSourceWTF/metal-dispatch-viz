@@ -1056,3 +1056,33 @@ test("pointer pans emit transient viewport changes and exactly one committed rel
   });
   renderer.destroy();
 });
+
+test("sub-threshold pointer jitter still commits a viewport change on release", () => {
+  const environment = createEnvironment({ width: 200 });
+  const changes = [];
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onViewportChange(range, metadata) {
+      changes.push({ range, metadata });
+    },
+  });
+  renderer.setDataset(dataset({ startNs: 0, endNs: 200 }), {
+    bounds: { startNs: 0, endNs: 200 },
+    viewport: { startNs: 50, endNs: 150 },
+  });
+
+  environment.emit("pointerdown", { clientX: 100, pointerId: 8 });
+  environment.emit("pointermove", { clientX: 99, pointerId: 8 });
+  assert.deepEqual(changes.at(-1).metadata, {
+    committed: false,
+    source: "pointer-pan",
+  });
+  const changedViewport = { ...renderer.viewport };
+
+  environment.emit("pointerup", { clientX: 99, pointerId: 8 });
+  assert.deepEqual(changes.at(-1), {
+    range: changedViewport,
+    metadata: { committed: true, source: "pointer-pan" },
+  });
+  assert.equal(changes.length, 2);
+  renderer.destroy();
+});
