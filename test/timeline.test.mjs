@@ -273,6 +273,14 @@ test("density bins handle endpoint visibility and malformed geometry", () => {
     buildDensityBins([dispatch(0)], { startNs: 0, endNs: 1, width: 0 }),
     [],
   );
+  assert.deepEqual(
+    buildDensityBins([dispatch(0)], {
+      startNs: -Number.MAX_VALUE,
+      endNs: Number.MAX_VALUE,
+      width: 2,
+    }),
+    [],
+  );
 });
 
 test("time transforms round-trip and never produce non-finite output", () => {
@@ -284,6 +292,20 @@ test("time transforms round-trip and never produce non-finite output", () => {
   assert.equal(xToTime(Number.NaN, { startNs: 3, endNs: 3 }, 0), 3);
   assert.ok(Number.isFinite(timeToX(Number.POSITIVE_INFINITY, viewport, 500)));
   assert.ok(Number.isFinite(xToTime(Number.POSITIVE_INFINITY, viewport, 500)));
+});
+
+test("time transforms and clamping reject ranges with an overflowing span", () => {
+  const overflowRange = {
+    startNs: -Number.MAX_VALUE,
+    endNs: Number.MAX_VALUE,
+  };
+
+  assert.equal(timeToX(Number.MAX_VALUE, overflowRange, 500), 0);
+  assert.equal(xToTime(250, overflowRange, 500), -Number.MAX_VALUE);
+  assert.deepEqual(clampViewport(overflowRange, overflowRange), {
+    startNs: 0,
+    endNs: 1,
+  });
 });
 
 test("clamping preserves a valid span at bounds and applies zoom limits", () => {
@@ -485,6 +507,64 @@ test("repeated fit-scale density renders reuse cached 320k analytical geometry",
     `320k fit: first=${firstElapsedMs.toFixed(2)}ms/visited=320000/binned=320000 ` +
       `repeat=${secondElapsedMs.toFixed(2)}ms/visited=0/binned=0`,
   );
+  renderer.destroy();
+});
+
+test("identical and edge-clamped viewport sync preserves renderer caches", () => {
+  const environment = createEnvironment({ width: 100 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  const dispatches = Array.from({ length: 1_000 }, (_, atNs) =>
+    dispatch(atNs, `k${atNs % 5}`, 0, atNs),
+  );
+  renderer.setDataset(
+    dataset({
+      dispatches,
+      commandBuffers: [
+        {
+          type: "cb",
+          commandBufferIndex: 0,
+          opCount: dispatches.length,
+          encodeStartNs: 0,
+          encodeEndNs: 100,
+          gpuStartNs: 10,
+          gpuEndNs: 90,
+          exposedIntervals: [[0, 10]],
+          hiddenIntervals: [[10, 100]],
+        },
+      ],
+      startNs: 0,
+      endNs: 999,
+    }),
+  );
+  renderer.setViewport({ startNs: 0, endNs: 100 }, { notify: false });
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.densityMode, true);
+  assert.equal(renderer.lastRenderStats.densityCacheHit, false);
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, false);
+
+  const analysisCache = renderer.analysisCache;
+  const staticLayerCache = renderer.staticLayerCache;
+  renderer.setViewport({ startNs: 0, endNs: 100 }, { notify: false });
+  assert.equal(renderer.analysisCache, analysisCache);
+  assert.equal(renderer.staticLayerCache, staticLayerCache);
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.densityCacheHit, true);
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, true);
+
+  renderer.setViewport({ startNs: -50, endNs: 50 }, { notify: false });
+  assert.deepEqual(renderer.viewport, { startNs: 0, endNs: 100 });
+  assert.equal(renderer.analysisCache, analysisCache);
+  assert.equal(renderer.staticLayerCache, staticLayerCache);
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.densityCacheHit, true);
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, true);
+
+  renderer.setViewport({ startNs: -50, endNs: 50 }, { notify: false });
+  assert.equal(renderer.analysisCache, analysisCache);
+  assert.equal(renderer.staticLayerCache, staticLayerCache);
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.densityCacheHit, true);
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, true);
   renderer.destroy();
 });
 
@@ -1113,5 +1193,190 @@ test("bracket keys move an active timeline mark and Enter pins it", () => {
   assert.equal(renderer.selection.dispatch, first);
   assert.equal(inspected.at(-1).item, first);
   assert.deepEqual(keys, ["]", "]", "[", "Enter"]);
+  renderer.destroy();
+});
+
+test("range dataset keeps complete launch navigation bounds", () => {
+  const environment = createEnvironment();
+  const changes = [];
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onViewportChange(range) {
+      changes.push(range);
+    },
+  });
+  renderer.setDataset(
+    {
+      startNs: 40,
+      endNs: 60,
+      commandBuffers: [],
+      dispatches: [],
+      waits: [],
+    },
+    {
+      bounds: { startNs: 0, endNs: 100 },
+      viewport: { startNs: 40, endNs: 60 },
+    },
+  );
+
+  assert.deepEqual(renderer.bounds, { startNs: 0, endNs: 100 });
+  assert.deepEqual(renderer.viewport, { startNs: 40, endNs: 60 });
+  assert.deepEqual(renderer.setViewport({ startNs: 90, endNs: 120 }), {
+    startNs: 70,
+    endNs: 100,
+  });
+  assert.deepEqual(changes.at(-1), { startNs: 70, endNs: 100 });
+  renderer.destroy();
+});
+
+test("setDataset rejects overflow-width launch bounds and viewports", () => {
+  const environment = createEnvironment();
+  const renderer = new TimelineRenderer(environment.canvas);
+  const overflowRange = {
+    startNs: -Number.MAX_VALUE,
+    endNs: Number.MAX_VALUE,
+  };
+
+  renderer.setDataset(dataset({ startNs: 10, endNs: 20 }), {
+    bounds: overflowRange,
+    viewport: overflowRange,
+  });
+  assert.deepEqual(renderer.bounds, { startNs: 10, endNs: 20 });
+  assert.deepEqual(renderer.viewport, { startNs: 10, endNs: 20 });
+
+  renderer.setDataset(dataset({
+    commandBuffers: [{
+      type: "cb",
+      commandBufferIndex: 0,
+      encodeStartNs: overflowRange.startNs,
+      encodeEndNs: overflowRange.endNs,
+    }],
+    startNs: overflowRange.startNs,
+    endNs: overflowRange.endNs,
+  }));
+  assert.deepEqual(renderer.bounds, { startNs: 0, endNs: 1 });
+  assert.deepEqual(renderer.viewport, { startNs: 0, endNs: 1 });
+  renderer.destroy();
+});
+
+test("external viewport update can avoid a synchronization callback", () => {
+  const environment = createEnvironment();
+  let notifications = 0;
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onViewportChange() {
+      notifications += 1;
+    },
+  });
+  renderer.setDataset(
+    { startNs: 0, endNs: 100 },
+    { bounds: { startNs: 0, endNs: 100 } },
+  );
+  renderer.setViewport({ startNs: 10, endNs: 30 }, { notify: false });
+  assert.equal(notifications, 0);
+  assert.deepEqual(renderer.viewport, { startNs: 10, endNs: 30 });
+  renderer.destroy();
+});
+
+test("pointer pans emit transient viewport changes and exactly one committed release", () => {
+  const environment = createEnvironment({ width: 200 });
+  const changes = [];
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onViewportChange(range, metadata) {
+      changes.push({ range, metadata });
+    },
+  });
+  renderer.setDataset(dataset({ startNs: 0, endNs: 200 }), {
+    bounds: { startNs: 0, endNs: 200 },
+    viewport: { startNs: 50, endNs: 150 },
+  });
+
+  environment.emit("pointerdown", { clientX: 100, pointerId: 7 });
+  environment.emit("pointermove", { clientX: 80, pointerId: 7 });
+  environment.emit("pointermove", { clientX: 60, pointerId: 7 });
+  assert.equal(changes.length, 2);
+  assert.ok(changes.every(({ metadata }) => metadata.committed === false));
+  assert.ok(changes.every(({ metadata }) => metadata.source === "pointer-pan"));
+
+  environment.emit("pointerup", { clientX: 60, pointerId: 7 });
+  assert.equal(changes.length, 3);
+  assert.deepEqual(changes.at(-1), {
+    range: renderer.viewport,
+    metadata: { committed: true, source: "pointer-pan" },
+  });
+
+  renderer.handleKeyDown({ key: "ArrowLeft", preventDefault() {} });
+  assert.deepEqual(changes.at(-1).metadata, {
+    committed: true,
+    source: "keyboard",
+  });
+  renderer.destroy();
+});
+
+test("sub-threshold pointer jitter still commits a viewport change on release", () => {
+  const environment = createEnvironment({ width: 200 });
+  const changes = [];
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onViewportChange(range, metadata) {
+      changes.push({ range, metadata });
+    },
+  });
+  renderer.setDataset(dataset({ startNs: 0, endNs: 200 }), {
+    bounds: { startNs: 0, endNs: 200 },
+    viewport: { startNs: 50, endNs: 150 },
+  });
+
+  environment.emit("pointerdown", { clientX: 100, pointerId: 8 });
+  environment.emit("pointermove", { clientX: 99, pointerId: 8 });
+  assert.deepEqual(changes.at(-1).metadata, {
+    committed: false,
+    source: "pointer-pan",
+  });
+  const changedViewport = { ...renderer.viewport };
+
+  environment.emit("pointerup", { clientX: 99, pointerId: 8 });
+  assert.deepEqual(changes.at(-1), {
+    range: changedViewport,
+    metadata: { committed: true, source: "pointer-pan" },
+  });
+  assert.equal(changes.length, 2);
+  renderer.destroy();
+});
+
+test("dataset replacement preserves a drag only within identical launch bounds", () => {
+  const environment = createEnvironment({ width: 200 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  renderer.setDataset(dataset({ startNs: 0, endNs: 100 }), {
+    bounds: { startNs: 0, endNs: 100 },
+    viewport: { startNs: 20, endNs: 80 },
+    interactionIdentity: "trace-a:launch-0",
+  });
+
+  environment.emit("pointerdown", { clientX: 100, pointerId: 9 });
+  environment.emit("pointermove", { clientX: 90, pointerId: 9 });
+  const activeDrag = renderer.drag;
+  renderer.setDataset(dataset({ startNs: 0, endNs: 100 }), {
+    bounds: { startNs: 0, endNs: 100 },
+    viewport: renderer.viewport,
+    interactionIdentity: "trace-a:launch-0",
+    preservePointerDrag: true,
+  });
+  assert.equal(renderer.drag, activeDrag);
+
+  renderer.setDataset(dataset({ startNs: 0, endNs: 100 }), {
+    bounds: { startNs: 0, endNs: 100 },
+    viewport: renderer.viewport,
+    interactionIdentity: "trace-b:launch-0",
+    preservePointerDrag: true,
+  });
+  assert.equal(renderer.drag, null);
+
+  environment.emit("pointerdown", { clientX: 100, pointerId: 10 });
+  environment.emit("pointermove", { clientX: 90, pointerId: 10 });
+  renderer.setDataset(dataset({ startNs: 200, endNs: 300 }), {
+    bounds: { startNs: 200, endNs: 300 },
+    viewport: { startNs: 220, endNs: 280 },
+    interactionIdentity: "trace-b:launch-0",
+    preservePointerDrag: true,
+  });
+  assert.equal(renderer.drag, null);
   renderer.destroy();
 });

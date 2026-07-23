@@ -465,13 +465,32 @@ main {
 }
 
 .metric-band {
-  height: var(--metric-band-height);
-  min-height: var(--metric-band-height);
   border-bottom: 1px solid var(--rule);
 }
 
+.metric-band-heading {
+  min-height: 32px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.metric-band-heading h2 {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#metric-scope-label {
+  color: var(--secondary);
+  font: 700 10px/1 var(--font-mono);
+}
+
 .metric-grid {
-  height: 100%;
+  height: var(--metric-band-height);
   display: grid;
   grid-template-columns: repeat(10, minmax(72px, 1fr));
   overflow-x: auto;
@@ -717,6 +736,149 @@ main {
   margin-top: 7px;
   color: var(--secondary);
   font-size: 10px;
+}
+
+.range-navigator {
+  margin-top: 10px;
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--rule);
+  background: var(--canvas);
+}
+
+.range-navigator[hidden] {
+  display: none;
+}
+
+.range-toolbar,
+.range-readouts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.range-toolbar {
+  padding-inline: 2px;
+}
+
+.range-toolbar h3 {
+  margin-top: 2px;
+}
+
+.range-overview-frame {
+  position: relative;
+  height: 58px;
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+}
+
+#range-overview {
+  display: block;
+  width: 100%;
+  height: 58px;
+}
+
+.range-band {
+  position: absolute;
+  inset-block: 0;
+  border-inline: 2px solid var(--selection);
+  background: color-mix(in srgb, var(--selection) 10%, transparent);
+  box-shadow: 0 0 0 9999px color-mix(in srgb, var(--canvas) 46%, transparent);
+  cursor: grab;
+  touch-action: none;
+}
+
+.range-band.is-dragging {
+  cursor: grabbing;
+}
+
+.range-handle {
+  position: absolute;
+  top: 50%;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.range-handle::after {
+  position: absolute;
+  inset-block: 8px;
+  width: 2px;
+  background: var(--selection);
+  content: "";
+}
+
+.range-handle-start {
+  left: 0;
+}
+
+.range-handle-start::after {
+  left: 0;
+}
+
+.range-handle-end {
+  left: 100%;
+  transform: translate(-100%, -50%);
+}
+
+.range-handle-end::after {
+  right: 0;
+}
+
+.range-mode {
+  display: inline-flex;
+  border: 1px solid var(--control-border);
+}
+
+.range-mode-button {
+  min-width: 76px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 0;
+}
+
+.range-mode-button + .range-mode-button {
+  border-left: 1px solid var(--control-border);
+}
+
+.range-mode-button[aria-pressed="true"] {
+  color: var(--canvas);
+  background: var(--selection);
+  font-weight: 700;
+}
+
+.range-readouts {
+  justify-content: flex-start;
+  margin-top: 8px;
+  color: var(--secondary);
+  font: 11px/1.4 var(--font-mono);
+}
+
+.range-readouts #range-status {
+  margin-left: auto;
+}
+
+.range-omissions {
+  margin-top: 7px;
+  padding: 7px 9px;
+  border-left: 3px solid var(--decision-cap);
+  color: var(--secondary);
+  font: 10px/1.45 var(--font-mono);
+}
+
+.range-omissions[hidden] {
+  display: none;
+}
+
+.metric-grid.is-busy,
+.tables-grid.is-busy {
+  opacity: 0.58;
 }
 
 .timeline-sampling-note {
@@ -1399,6 +1561,31 @@ tbody th {
     padding-inline: 8px;
   }
 
+  .range-toolbar,
+  .range-readouts {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .range-overview-frame,
+  #range-overview {
+    height: 52px;
+  }
+
+  .range-readouts #range-status {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .range-mode {
+    max-width: 100%;
+  }
+
+  .range-mode-button {
+    min-width: 76px;
+    padding-inline: 10px;
+  }
+
   .timeline-toolbar {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -1496,6 +1683,8 @@ tbody th {
   textarea,
   .instrument,
   .timeline-scroller,
+  .range-overview-frame,
+  .range-mode,
   .evidence-badge,
   .state-region,
   .utility-drawer,
@@ -1531,5 +1720,20 @@ tbody th {
   .evidence-badge-invalid,
   .trace-evidence-invalid {
     border-style: dashed;
+  }
+
+  .range-band {
+    border-color: Highlight;
+    background: transparent;
+    box-shadow: 0 0 0 9999px Canvas;
+  }
+
+  .range-handle::after {
+    background: Highlight;
+  }
+
+  .range-mode-button[aria-pressed="true"] {
+    color: HighlightText;
+    background: Highlight;
   }
 }

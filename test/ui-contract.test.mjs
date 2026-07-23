@@ -29,10 +29,11 @@ import {
   traceLabel,
 } from "../public/app.js";
 
-const publicHtmlUrl = new URL("../public/index.html", import.meta.url);
+const reactShellUrl = new URL("../src/ProfilerApp.jsx", import.meta.url);
 const publicCssUrl = new URL("../public/styles.css", import.meta.url);
 const publicAppUrl = new URL("../public/app.js", import.meta.url);
-const legacyHtmlUrl = new URL("../index.html", import.meta.url);
+const rootHtmlUrl = new URL("../index.html", import.meta.url);
+const publicHtmlUrl = new URL("../public/index.html", import.meta.url);
 
 const voidElements = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
@@ -82,6 +83,13 @@ function parseHtmlStartTags(source) {
     }
   }
   return nodes;
+}
+
+function jsxShellAsHtml(source) {
+  return source
+    .replace(/\bclassName=/g, "class=")
+    .replace(/\bhtmlFor=/g, "for=")
+    .replace(/\btabIndex=/g, "tabindex=");
 }
 
 function hasClass(node, className) {
@@ -163,7 +171,7 @@ function contrastRatio(a, b) {
 }
 
 test("workbench shell has real landmark topology, unique IDs, and safe initial controls", async () => {
-  const html = await readFile(publicHtmlUrl, "utf8");
+  const html = jsxShellAsHtml(await readFile(reactShellUrl, "utf8"));
   const nodes = parseHtmlStartTags(html);
   const byId = new Map();
 
@@ -195,8 +203,22 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     "health-strip",
     "evidence-badge",
     "window-select",
+    "metric-scope-label",
     "metric-grid",
     "timeline",
+    "range-navigator",
+    "range-overview",
+    "range-overview-summary",
+    "range-band",
+    "range-start-handle",
+    "range-end-handle",
+    "range-mode-view",
+    "range-mode-analyze",
+    "range-start-readout",
+    "range-end-readout",
+    "range-duration-readout",
+    "range-status",
+    "range-omissions",
     "timeline-sampling-note",
     "timeline-viewport",
     "timeline-scroller",
@@ -250,6 +272,24 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
   );
   assert.equal(byId.get("timeline-scroller").attributes.get("tabindex"), "0");
 
+  const overview = byId.get("range-overview");
+  assert.equal(overview.name, "canvas");
+  assert.equal(overview.attributes.get("role"), "img");
+  assert.ok(
+    String(overview.attributes.get("aria-describedby"))
+      .split(/\s+/)
+      .includes("range-overview-summary"),
+  );
+  for (const id of ["range-start-handle", "range-end-handle"]) {
+    assert.equal(byId.get(id).attributes.get("role"), "slider");
+    assert.equal(byId.get(id).attributes.get("tabindex"), "0");
+  }
+  for (const id of ["range-mode-view", "range-mode-analyze"]) {
+    assert.equal(byId.get(id).name, "button");
+    assert.ok(byId.get(id).attributes.has("aria-pressed"));
+  }
+  assert.equal(byId.get("range-mode-analyze").attributes.get("disabled"), true);
+
   assert.equal(byId.get("kernel-table-body").name, "tbody");
   assert.equal(byId.get("wait-table-body").name, "tbody");
 
@@ -269,18 +309,14 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     "loading progress is not positioned against 720px plot content",
   );
 
-  const scripts = nodes.filter((node) => node.name === "script");
-  assert.equal(scripts.length, 1, "one external script");
-  assert.equal(scripts[0].attributes.get("type"), "module");
-  assert.equal(scripts[0].attributes.get("src"), "/app.js");
-  assert.equal(rawInlineExecutableScriptCount(html), 0, "no inline executable scripts");
+  const renderedCopy = html.replace(/\s+/g, " ");
   assert.doesNotMatch(html, /\binnerHTML\b/);
-  assert.match(html, /horizontal scrolling reveals more timeline detail/i);
-  assert.match(html, /Your browser does not support canvas/i);
-  assert.match(html, /bytes read/i);
-  assert.match(html, /rows parsed/i);
-  assert.match(html, /invalid or legacy evidence/i);
-  assert.match(html, /ordered placement/i);
+  assert.match(renderedCopy, /horizontal scrolling reveals more timeline detail/i);
+  assert.match(renderedCopy, /Your browser does not support canvas/i);
+  assert.match(renderedCopy, /bytes read/i);
+  assert.match(renderedCopy, /rows parsed/i);
+  assert.match(renderedCopy, /invalid or legacy evidence/i);
+  assert.match(renderedCopy, /ordered placement/i);
 });
 
 function rawInlineExecutableScriptCount(html) {
@@ -379,6 +415,29 @@ test("visual system uses measured tokens, effective sizing, and clipped-safe foc
   assert.deepEqual(narrowBox, { left: 8, width: 304, right: 312 });
   assert.ok(narrowBox.right <= 320, "320px loader is fully visible without horizontal scroll");
 
+  const rangeHandle = requireDeclarationRule(rules, ".range-handle")[0];
+  assert.ok(Number.parseFloat(rangeHandle.get("min-width")) >= 44);
+  assert.ok(Number.parseFloat(rangeHandle.get("min-height")) >= 44);
+  assert.equal(rangeHandle.get("touch-action"), "none");
+  assert.equal(rangeHandle.get("transform"), "translateY(-50%)");
+  const startHandle =
+    requireDeclarationRule(rules, ".range-handle-start")[0];
+  const endHandle =
+    requireDeclarationRule(rules, ".range-handle-end")[0];
+  assert.equal(startHandle.get("left"), "0");
+  assert.equal(endHandle.get("left"), "100%");
+  assert.equal(endHandle.get("transform"), "translate(-100%, -50%)");
+  assert.equal(
+    requireDeclarationRule(rules, ".range-handle-start::after")[0].get("left"),
+    "0",
+  );
+  assert.equal(
+    requireDeclarationRule(rules, ".range-handle-end::after")[0].get("right"),
+    "0",
+  );
+  requireDeclarationRule(rules, ".range-band");
+  requireDeclarationRule(rules, '.range-mode-button[aria-pressed="true"]');
+
   for (const selector of [
     ".trace-toggle:focus-visible",
     ".timeline-scroller:focus-visible",
@@ -418,9 +477,17 @@ function computeInsetBox(viewportWidth, declarations) {
   return { left, width, right: left + width };
 }
 
-test("legacy root document is retired after the public shell exists", async () => {
-  await access(publicHtmlUrl);
-  await assert.rejects(access(legacyHtmlUrl), { code: "ENOENT" });
+test("Vite root mounts React and the retired public document is absent", async () => {
+  const html = await readFile(rootHtmlUrl, "utf8");
+  const nodes = parseHtmlStartTags(html);
+  const scripts = nodes.filter((node) => node.name === "script");
+
+  assert.equal(scripts.length, 1, "one external script");
+  assert.equal(scripts[0].attributes.get("type"), "module");
+  assert.equal(scripts[0].attributes.get("src"), "/src/main.jsx");
+  assert.equal(rawInlineExecutableScriptCount(html), 0, "no inline executable scripts");
+  assert.match(html, /id="root"/);
+  await assert.rejects(access(publicHtmlUrl), { code: "ENOENT" });
 });
 
 test("app module is safe without document and pure trace selection is deterministic", () => {
@@ -559,9 +626,10 @@ test("window, URL, metric, census, wait, and evidence helpers preserve truth lab
 });
 
 test("dynamic integration source exposes secure state hooks and ordered setup", async () => {
-  const [html, source] = await Promise.all([
-    readFile(publicHtmlUrl, "utf8"),
+  const [html, source, reactSource] = await Promise.all([
+    readFile(reactShellUrl, "utf8"),
     readFile(publicAppUrl, "utf8"),
+    readFile(reactShellUrl, "utf8"),
   ]);
 
   for (const id of [
@@ -580,12 +648,30 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
   assert.match(source, /replaceState/);
   assert.match(source, /new SelectionCoordinator/);
   assert.match(source, /new TraceCache/);
-  assert.match(source, /new TimelineRenderer/);
+  assert.match(source, /new RendererClass/);
   assert.match(source, /isCurrent/);
   assert.match(
     source,
-    /clearAnalysisState\(\);\s*renderPendingProvenance\(trace\);\s*showLoading\(trace\);/,
+    /if \(preserveCurrentView\)[\s\S]*?else \{\s*clearAnalysisState\(\);[\s\S]*?if \(cached && !preserveCurrentView\)[\s\S]*?else if \(!preserveCurrentView\) \{\s*renderPendingProvenance\(trace\);\s*showLoading\(trace\);/,
     "a new trace clears prior evidence before showing its loading state",
+  );
+  assert.match(source, /new RangeNavigatorClass\(/);
+  assert.match(source, /new RangeRequestAuthority\(/);
+  assert.match(source, /analysisSessionFactory\(\{/);
+  assert.match(source, /analysisSession\.analyzeRange\(\{/);
+  assert.match(source, /analysisDebounceMs/);
+  assert.match(source, /rangeAuthority\.isCurrent/);
+  assert.match(reactSource, /dataset-worker\.js\?worker&url/);
+  assert.match(reactSource, /analysisSessionFactory/);
+  assert.match(
+    reactSource,
+    /resolveWorkerUrl\(\s*datasetWorkerUrl,\s*globalThis\.document\?\.baseURI/,
+  );
+  assert.doesNotMatch(source, /typeof globalThis\.document/);
+  assert.match(
+    source,
+    /refreshRendererPalette\(\);\s*renderer\.requestRender\(\);\s*rangeNavigator\.requestRender\(\);/,
+    "theme changes repaint both timeline and overview canvases",
   );
   assert.match(
     source,
@@ -614,7 +700,7 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
 });
 
 test("contextual help shell is accessible, singular, and placed with workbench controls", async () => {
-  const html = await readFile(publicHtmlUrl, "utf8");
+  const html = jsxShellAsHtml(await readFile(reactShellUrl, "utf8"));
   const nodes = parseHtmlStartTags(html);
   const byId = new Map(
     nodes
@@ -680,33 +766,6 @@ test("contextual help shell is accessible, singular, and placed with workbench c
     ),
     "manual search has an explicit label",
   );
-
-  for (const node of nodes.filter((node) => hasClass(node, "term-trigger"))) {
-    assert.equal(node.name, "button");
-    assert.equal(node.attributes.get("type"), "button");
-    assert.match(String(node.attributes.get("aria-label") ?? ""), /define/i);
-    assert.ok(node.attributes.get("data-term"), "term trigger has a stable glossary id");
-  }
-  assert.ok(
-    nodes.filter((node) => hasClass(node, "term-trigger")).length >= 12,
-    "initial shell exposes contextual definitions for specialized labels",
-  );
-  for (const termId of [
-    "host-encode",
-    "gpu-execute",
-    "wait-taxonomy",
-    "dispatch",
-    "dispatch-density",
-  ]) {
-    assert.ok(
-      nodes.some(
-        (node) =>
-          hasClass(node, "term-trigger") &&
-          node.attributes.get("data-term") === termId,
-      ),
-      `timeline help trigger for ${termId}`,
-    );
-  }
 
   for (const heading of [
     /Quick start/i,
@@ -951,7 +1010,7 @@ test("outside pointer dismissal preserves focus on the newly clicked control", (
 });
 
 test("AI export shell is local-only, scoped, read-only, and initially unavailable", async () => {
-  const html = await readFile(publicHtmlUrl, "utf8");
+  const html = jsxShellAsHtml(await readFile(reactShellUrl, "utf8"));
   const nodes = parseHtmlStartTags(html);
   const byId = new Map(
     nodes

@@ -12,6 +12,9 @@ const DEFAULT_TRACE_DIR = "./traces/showcase";
 const DEFAULT_PORT = 4173;
 const DEFAULT_HOST = "127.0.0.1";
 const TRACE_ID_PATTERN = /^[a-f0-9]{24}$/;
+export const DEFAULT_CLIENT_DIR = path.resolve(
+  fileURLToPath(new URL("../dist/client/", import.meta.url)),
+);
 
 class RuntimeConfigError extends Error {
   constructor(message, code) {
@@ -202,7 +205,7 @@ export function parseRuntimeConfig(
 
 export function createApp({
   traceRoot,
-  publicDir = new URL("../public/", import.meta.url),
+  publicDir = DEFAULT_CLIENT_DIR,
 }) {
   const registry = new TraceRegistry(traceRoot);
   const app = express();

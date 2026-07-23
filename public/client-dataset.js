@@ -54,10 +54,13 @@ function compactScope(
     dispatches: Object.freeze(dispatches),
     commandBuffers: Object.freeze(commandBuffers),
     waits: Object.freeze(waits),
-    gpuIntervals: source.gpuIntervals,
     waitTaxonomy: source.waitTaxonomy,
     kernelCensus: source.kernelCensus,
     summary: source.summary,
+    overview: source.overview,
+    range: source.range,
+    omissions: source.omissions,
+    rangeAnalysis: source.rangeAnalysis,
     renderSampling: Object.freeze({
       active:
         dispatches.length !== sourceDispatches.length ||
@@ -79,14 +82,8 @@ function compactScope(
   });
 }
 
-/**
- * Remove analysis-only collections before crossing the worker boundary.
- * Exact metrics and taxonomies are retained while very large event arrays are
- * sampled deterministically for the interactive canvas.
- */
-export function compactDatasetForClient(dataset, options = {}) {
-  const source = dataset && typeof dataset === "object" ? dataset : {};
-  const limits = Object.freeze({
+function clientLimits(options = {}) {
+  return Object.freeze({
     maxDispatches: positiveLimit(
       options.maxDispatches,
       DEFAULT_LIMITS.maxDispatches,
@@ -97,6 +94,20 @@ export function compactDatasetForClient(dataset, options = {}) {
     ),
     maxWaits: positiveLimit(options.maxWaits, DEFAULT_LIMITS.maxWaits),
   });
+}
+
+export function compactScopeForClient(scope, options = {}) {
+  return compactScope(scope, clientLimits(options));
+}
+
+/**
+ * Remove analysis-only collections before crossing the worker boundary.
+ * Exact metrics and taxonomies are retained while very large event arrays are
+ * sampled deterministically for the interactive canvas.
+ */
+export function compactDatasetForClient(dataset, options = {}) {
+  const source = dataset && typeof dataset === "object" ? dataset : {};
+  const limits = clientLimits(options);
   const compactTopLevel = compactScope(source, limits);
   const launchWindows = (Array.isArray(source.launchWindows)
     ? source.launchWindows

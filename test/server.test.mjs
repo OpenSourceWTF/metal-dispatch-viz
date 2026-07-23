@@ -16,6 +16,7 @@ import test from "node:test";
 
 import {
   createApp,
+  DEFAULT_CLIENT_DIR,
   parseRuntimeConfig,
 } from "../server/app.mjs";
 import {
@@ -216,23 +217,43 @@ test("trace streaming remains correctly framed when the opened file shrinks afte
   assert.equal(await response.text(), retained);
 });
 
-test("static root and public assets are served from the configured directory", async (t) => {
+test("compiled client assets are served after APIs without exposing hosted internals", async (t) => {
+  assert.equal(
+    DEFAULT_CLIENT_DIR,
+    path.resolve(new URL("../dist/client/", import.meta.url).pathname),
+  );
   const root = await temporaryDirectory(t, "mdv-static-traces-");
-  const publicDir = await temporaryDirectory(t, "mdv-static-public-");
-  await writeFile(path.join(publicDir, "index.html"), "<h1>Workbench</h1>");
-  await mkdir(path.join(publicDir, "assets"));
+  const outputRoot = await temporaryDirectory(t, "mdv-static-output-");
+  const publicDir = path.join(outputRoot, "client");
+  await mkdir(path.join(publicDir, "assets"), { recursive: true });
+  await mkdir(path.join(outputRoot, "server"));
+  await mkdir(path.join(outputRoot, ".openai"));
+  await mkdir(path.join(publicDir, "api", "traces"), { recursive: true });
   await writeFile(
-    path.join(publicDir, "assets", "workbench.js"),
+    path.join(publicDir, "index.html"),
+    '<h1>React Workbench</h1><script src="./assets/workbench-a1b2.js"></script>',
+  );
+  await writeFile(
+    path.join(publicDir, "assets", "workbench-a1b2.js"),
     "globalThis.workbench = true;",
+  );
+  await writeFile(
+    path.join(publicDir, "api", "traces", "index.html"),
+    "static route must not win",
+  );
+  await writeFile(path.join(outputRoot, "server", "index.js"), "private");
+  await writeFile(
+    path.join(outputRoot, ".openai", "hosting.json"),
+    '{"project_id":"private"}',
   );
   const { baseUrl } = await listen(t, { traceRoot: root, publicDir });
 
   const rootResponse = await fetch(`${baseUrl}/`);
   assert.equal(rootResponse.status, 200);
   assert.match(rootResponse.headers.get("content-type"), /text\/html/);
-  assert.equal(await rootResponse.text(), "<h1>Workbench</h1>");
+  assert.match(await rootResponse.text(), /React Workbench/);
 
-  const assetResponse = await fetch(`${baseUrl}/assets/workbench.js`);
+  const assetResponse = await fetch(`${baseUrl}/assets/workbench-a1b2.js`);
   assert.equal(assetResponse.status, 200);
   assert.match(
     assetResponse.headers.get("content-type"),
@@ -242,6 +263,23 @@ test("static root and public assets are served from the configured directory", a
     await assetResponse.text(),
     "globalThis.workbench = true;",
   );
+
+  const apiResponse = await jsonResponse(`${baseUrl}/api/traces`);
+  assert.equal(apiResponse.response.status, 200);
+  assert.equal(apiResponse.body.schemaVersion, 1);
+
+  for (const privatePath of [
+    "/server/index.js",
+    "/.openai/hosting.json",
+    "/package.json",
+  ]) {
+    const response = await fetch(`${baseUrl}${privatePath}`);
+    assert.equal(response.status, 404, privatePath);
+    assert.equal(
+      response.headers.get("content-type"),
+      "application/json; charset=utf-8",
+    );
+  }
 });
 
 test("missing trace roots produce stable structured errors without path leaks", async (t) => {
