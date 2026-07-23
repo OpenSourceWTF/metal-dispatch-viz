@@ -50,7 +50,7 @@
 
 **Does NOT cover:** Cross-launch aggregation, unanchored wait attribution, or measured per-dispatch timestamps.
 
-- [ ] **Step 1: Write failing range-membership and interval-clipping tests**
+- [x] **Step 1: Write failing range-membership and interval-clipping tests**
 
 Append to `test/data.test.mjs`:
 
@@ -213,7 +213,7 @@ test("overview bins retain exact event totals at fixed resolution", () => {
 });
 ```
 
-- [ ] **Step 2: Run the range tests and verify the missing exports fail**
+- [x] **Step 2: Run the range tests and verify the missing exports fail**
 
 Run:
 
@@ -223,7 +223,7 @@ node --test test/data.test.mjs
 
 Expected: FAIL because `buildRangeScope` and `buildOverviewBins` are not exported.
 
-- [ ] **Step 3: Implement exact clipping and overview aggregation**
+- [x] **Step 3: Implement exact clipping and overview aggregation**
 
 Add pure helpers and exports to `public/data.js`:
 
@@ -457,7 +457,7 @@ range: source.range,
 omissions: source.omissions,
 ```
 
-- [ ] **Step 4: Add a client compaction test and make it pass**
+- [x] **Step 4: Add a client compaction test and make it pass**
 
 Create `test/client-dataset.test.mjs`:
 
@@ -504,7 +504,7 @@ node --test test/data.test.mjs test/client-dataset.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit exact range analysis**
+- [x] **Step 5: Commit exact range analysis**
 
 ```bash
 git add public/data.js public/client-dataset.js test/data.test.mjs test/client-dataset.test.mjs
