@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": "^20.19.0 || ^22.13.0 || >=24.0.0"
   },
   "scripts": {
     "build": "node scripts/build_hosted.mjs",
@@ -12,6 +12,15 @@
     "test": "node --test"
   },
   "dependencies": {
-    "express": "5.2.1"
+    "express": "5.2.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.0.4",
+    "jsdom": "29.1.1",
+    "vite": "8.1.5",
+    "vitest": "4.1.10",
+    "yaml": "2.9.0"
   }
 }
