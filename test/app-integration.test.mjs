@@ -2196,7 +2196,7 @@ test("legacy raw provenance remains degraded when the curated artifact is comple
   ]);
 });
 
-test("worker and documentation contracts are external, module-safe, and Node 18 compatible", async () => {
+test("worker and documentation contracts are external, module-safe, and use the supported Node lines", async () => {
   const [appSource, workerSource, readme] = await Promise.all([
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
     readFile(new URL("../public/dataset-worker.js", import.meta.url), "utf8"),
@@ -2233,7 +2233,7 @@ test("worker and documentation contracts are external, module-safe, and Node 18 
   assert.match(workerSource, /compactScopeForClient\(range\)/);
   assert.match(workerSource, /addEventListener\(["']message["']/);
   assert.doesNotMatch(workerSource, /\binnerHTML\b/);
-  assert.match(readme, /Node\.js 18 or newer/i);
+  assert.match(readme, /\^20\.19\.0 \|\| \^22\.13\.0 \|\| >=24\.0\.0/);
   assert.match(
     readme,
     /`\[` and `\]` move to the previous and next timeline/i,

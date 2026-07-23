@@ -124,11 +124,11 @@
 **Security flag:** none
 
 - [x] Document React development, Express folder loading, manifest publication, Pages deployment, and exact local gates.
-- [ ] Run the complete test, build, verifier, audit, and stub-scan gates.
-- [ ] Start the production Express app on an available loopback port and record its PID.
-- [ ] Exercise all five traces, launch selection, View/Analyze, band and handle drags, zoom, fit, inspector pin/clear, refresh, theme, URL restoration, loading, error, empty, and degraded states.
-- [ ] Inspect desktop and narrow screenshots in both themes.
-- [ ] Stop only the recorded server PID and verify the port is free.
+- [x] Run the complete test, build, verifier, audit, and stub-scan gates.
+- [x] Start the production Express app on an available loopback port and record its PID.
+- [x] Exercise all five traces, launch selection, View/Analyze, band and handle drags, zoom, fit, inspector pin/clear, refresh, theme, URL restoration, loading, error, empty, and degraded states.
+- [x] Inspect desktop and narrow screenshots in both themes.
+- [x] Stop only the recorded server PID and verify the port is free.
 - [ ] Push `feature/time-window-navigator` without force and update draft PR #3 with exact verification evidence.
 
 ### Task 6: Cut over only after merge
