@@ -467,18 +467,20 @@ export class RangeNavigator {
   }
 
   rangeForPointer(drag, clientX) {
+    const width = visibleElementWidth(this.canvas);
+    if (width === null) return drag.range;
+    const deltaNs =
+      ((clientX - drag.clientX) / width) *
+      (this.bounds.endNs - this.bounds.startNs);
     if (drag.type === "band") {
-      const width = visibleElementWidth(this.canvas);
-      if (width === null) return drag.range;
-      const deltaNs =
-        ((clientX - drag.clientX) / width) *
-        (this.bounds.endNs - this.bounds.startNs);
       return moveSelectedRange(drag.range, deltaNs, this.bounds);
     }
+    const originalEdgeNs =
+      drag.type === "start" ? drag.range.startNs : drag.range.endNs;
     return resizeSelectedRange(
       drag.range,
       drag.type,
-      timeAtClientX(clientX, this.canvas, this.bounds),
+      originalEdgeNs + deltaNs,
       this.bounds,
       this.minimumSpanNs(),
     );

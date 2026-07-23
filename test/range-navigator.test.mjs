@@ -628,6 +628,111 @@ test("handle drags use pointer capture and enforce one overview pixel", () => {
   navigator.destroy();
 });
 
+test("stationary off-center handle grabs preserve both range edges without committing", () => {
+  for (const { handleName, pointerId, clientX } of [
+    { handleName: "startHandle", pointerId: 8, clientX: 210 },
+    { handleName: "endHandle", pointerId: 9, clientX: 390 },
+  ]) {
+    const fixture = navigatorFixture({ width: 1_000 });
+    const inputs = [];
+    const commits = [];
+    const navigator = new RangeNavigator(fixture, {
+      onRangeInput: (range) => inputs.push(range),
+      onRangeCommit: (range) => commits.push(range),
+    });
+    navigator.setOverview(oneBinOverview());
+    navigator.setRange({ startNs: 200, endNs: 400 });
+
+    fixture[handleName].dispatch(
+      "pointerdown",
+      pointerEvent(pointerId, clientX),
+    );
+    fixture.window.dispatch("pointerup", pointerEvent(pointerId, clientX));
+
+    assert.deepEqual(inputs, [], `${handleName} input`);
+    assert.deepEqual(commits, [], `${handleName} commit`);
+    assert.equal(
+      fixture.startHandle.attributes.get("aria-valuenow"),
+      "200",
+      `${handleName} start`,
+    );
+    assert.equal(
+      fixture.endHandle.attributes.get("aria-valuenow"),
+      "400",
+      `${handleName} end`,
+    );
+    assert.deepEqual(
+      fixture.releases.map(([, releasedId]) => releasedId),
+      [pointerId],
+      `${handleName} release`,
+    );
+    navigator.destroy();
+  }
+});
+
+test("both handles moved away then returned commit their original edge once", () => {
+  for (const {
+    handleName,
+    pointerId,
+    clientX,
+    movedClientX,
+    movedRange,
+  } of [
+    {
+      handleName: "startHandle",
+      pointerId: 10,
+      clientX: 210,
+      movedClientX: 260,
+      movedRange: { startNs: 250, endNs: 400 },
+    },
+    {
+      handleName: "endHandle",
+      pointerId: 11,
+      clientX: 390,
+      movedClientX: 340,
+      movedRange: { startNs: 200, endNs: 350 },
+    },
+  ]) {
+    const fixture = navigatorFixture({ width: 1_000 });
+    const inputs = [];
+    const commits = [];
+    const navigator = new RangeNavigator(fixture, {
+      onRangeInput: (range) => inputs.push(range),
+      onRangeCommit: (range) => commits.push(range),
+    });
+    navigator.setOverview(oneBinOverview());
+    navigator.setRange({ startNs: 200, endNs: 400 });
+
+    fixture[handleName].dispatch(
+      "pointerdown",
+      pointerEvent(pointerId, clientX),
+    );
+    fixture.window.dispatch(
+      "pointermove",
+      pointerEvent(pointerId, movedClientX),
+    );
+    fixture.window.dispatch("pointermove", pointerEvent(pointerId, clientX));
+    fixture.window.dispatch("pointerup", pointerEvent(pointerId, clientX));
+
+    assert.deepEqual(
+      inputs,
+      [movedRange, { startNs: 200, endNs: 400 }],
+      `${handleName} inputs`,
+    );
+    assert.deepEqual(
+      commits,
+      [{ startNs: 200, endNs: 400 }],
+      `${handleName} commit`,
+    );
+    assert.deepEqual(
+      fixture.releases.map(([, releasedId]) => releasedId),
+      [pointerId],
+      `${handleName} release`,
+    );
+    navigator.destroy();
+  }
+});
+
 test("pointer cancellation restores the pre-drag range without committing", () => {
   const fixture = navigatorFixture({ width: 1_000 });
   const inputs = [];
