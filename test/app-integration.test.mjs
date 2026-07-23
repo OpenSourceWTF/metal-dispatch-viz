@@ -150,12 +150,14 @@ test("trace fetch, parse, and analysis stay behind one worker boundary", async (
     postMessage(message) {
       assert.deepEqual(message, {
         type: "load",
+        generation: 1,
         url: "/api/traces/trace-id",
       });
       setTimeout(() => {
         this.listeners.get("message")?.({
           data: {
             type: "progress",
+            generation: 1,
             progress: {
               sourceBytes: 80,
               totalBytes: 100,
@@ -166,12 +168,13 @@ test("trace fetch, parse, and analysis stay behind one worker boundary", async (
         });
         this.listeners.get("message")?.({
           data: {
-            type: "complete",
-            ok: true,
+            type: "ready",
+            generation: 1,
             dataset: {
               summary: { opsTotal: 12 },
               diagnostics: { sourceBytes: 100, parsedRows: 12 },
             },
+            diagnostics: { sourceBytes: 100, parsedRows: 12 },
           },
         });
       }, 0);
@@ -587,9 +590,19 @@ test("worker and documentation contracts are external, module-safe, and Node 18 
   assert.match(appSource, /const rows = waitRowsForScope\(scope\)/);
   assert.doesNotMatch(appSource, /aggregateKernelRows\(scope\?\.dispatches\)/);
   assert.doesNotMatch(appSource, /aggregateWaitRows\(scope\?\.waits\)/);
-  assert.match(workerSource, /import\s+\{\s*buildDataset\s*\}/);
+  assert.match(
+    workerSource,
+    /import\s+\{\s*buildDataset,\s*buildRangeScope\s*\}/,
+  );
   assert.match(workerSource, /parseNdjsonResponse/);
   assert.match(workerSource, /compactDatasetForClient/);
+  assert.match(workerSource, /compactScopeForClient/);
+  assert.match(workerSource, /let exactDataset = null/);
+  assert.match(workerSource, /let activeGeneration = null/);
+  assert.match(workerSource, /type:\s*["']ready["']/);
+  assert.match(workerSource, /message\.type === ["']analyze-range["']/);
+  assert.match(workerSource, /buildRangeScope\(launch,/);
+  assert.match(workerSource, /compactScopeForClient\(range\)/);
   assert.match(workerSource, /addEventListener\(["']message["']/);
   assert.doesNotMatch(workerSource, /\binnerHTML\b/);
   assert.match(readme, /Node\.js 18 or newer/i);

@@ -1,4 +1,5 @@
 import { formatBytes, formatDuration } from "./data.js";
+import { TraceAnalysisSession } from "./analysis-session.js";
 import {
   SelectionCoordinator,
   TraceCache,
@@ -453,77 +454,30 @@ export function analyzeTraceOffMainThread(
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    let worker;
+    let session;
     const finish = (callback, value, stateName) => {
       if (settled) return;
       settled = true;
       signal?.removeEventListener?.("abort", onAbort);
-      worker?.removeEventListener?.("message", onMessage);
-      worker?.removeEventListener?.("error", onError);
-      worker?.terminate?.();
+      session?.terminate();
       if (stateName) onStateChange?.(stateName);
       callback(value);
     };
     const onAbort = () => finish(reject, abortError(), "aborted");
-    const onMessage = (event) => {
-      if (event?.data?.type === "progress") {
-        onProgress?.(event.data.progress);
-        return;
-      }
-      if (event?.data?.type === "state") {
-        onStateChange?.(event.data.state);
-        return;
-      }
-      if (
-        event?.data?.type === "complete" &&
-        event.data.ok === true
-      ) {
-        finish(
-          resolve,
-          {
-            dataset: event.data.dataset,
-            diagnostics:
-              event.data.diagnostics ??
-              event.data.dataset?.diagnostics ??
-              {},
-          },
-          "completed",
-        );
-        return;
-      }
-      if (event?.data?.ok === false) {
-        const error = new Error(
-          event?.data?.error?.message ?? "Trace analysis failed.",
-        );
-        error.name =
-          event?.data?.error?.name ?? "DatasetWorkerError";
-        if (Number.isInteger(event?.data?.error?.status)) {
-          error.status = event.data.error.status;
-        }
-        if (typeof event?.data?.error?.code === "string") {
-          error.code = event.data.error.code;
-        }
-        finish(reject, error, "failed");
-      }
-    };
-    const onError = (event) => {
-      const error =
-        event?.error instanceof Error
-          ? event.error
-          : new Error(event?.message ?? "Trace worker failed.");
-      finish(reject, error, "failed");
-    };
 
     try {
-      worker = new WorkerClass(workerUrl, {
-        type: "module",
-        name: "metal-dispatch-trace",
+      session = new TraceAnalysisSession({
+        WorkerClass,
+        workerUrl,
+        generation: 1,
+        onProgress,
+        onStateChange,
       });
-      worker.addEventListener("message", onMessage);
-      worker.addEventListener("error", onError);
       signal?.addEventListener?.("abort", onAbort, { once: true });
-      worker.postMessage({ type: "load", url: traceUrl });
-      onStateChange?.("posted");
+      session.load(traceUrl).then(
+        (loaded) => finish(resolve, loaded, "completed"),
+        (error) => finish(reject, error, "failed"),
+      );
     } catch (error) {
       finish(reject, error, "failed");
     }
