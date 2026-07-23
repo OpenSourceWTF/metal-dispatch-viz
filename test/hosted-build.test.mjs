@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
@@ -14,6 +15,18 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { buildHostedSite } from "../scripts/build_hosted.mjs";
+
+async function writeTraceManifest(traceRoot, relativePaths) {
+  await writeFile(
+    path.join(traceRoot, "traces.json"),
+    `${JSON.stringify({
+      schema_version: 1,
+      traces: Object.fromEntries(
+        relativePaths.map((relativePath) => [relativePath, {}]),
+      ),
+    })}\n`,
+  );
+}
 
 test("hosted build emits the Sites worker artifact contract", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-sites-"));
@@ -33,6 +46,7 @@ test("hosted build emits the Sites worker artifact contract", async (t) => {
     path.join(traceRoot, "capture.jsonl"),
     '{"record":"summary"}\n',
   );
+  await writeTraceManifest(traceRoot, ["capture.jsonl"]);
   await writeFile(
     hostingConfigPath,
     '{"project_id":"appgprj_test"}\n',
@@ -202,6 +216,7 @@ test("hosted build rejects nested and symlink-aliased output without deleting so
   const traceMarker = path.join(traceRoot, "capture.jsonl");
   await writeFile(publicMarker, "public marker");
   await writeFile(traceMarker, '{"record":"summary"}\n');
+  await writeTraceManifest(traceRoot, ["capture.jsonl"]);
 
   await assert.rejects(
     buildHostedSite({
@@ -241,6 +256,7 @@ test("hosted build keeps the prior artifact when a registered trace path is swap
   const originalPath = path.join(root, "original.jsonl");
   const replacementPath = path.join(root, "replacement.jsonl");
   await writeFile(tracePath, '{"record":"original"}\n');
+  await writeTraceManifest(traceRoot, ["capture.jsonl"]);
   await writeFile(replacementPath, '{"record":"replacement"}\n');
   await writeFile(path.join(outputRoot, "sentinel.txt"), "prior artifact");
 
@@ -286,6 +302,7 @@ test("hosted build rejects public symlinks before generated trace writes", async
     path.join(traceRoot, "capture.jsonl"),
     '{"record":"summary"}\n',
   );
+  await writeTraceManifest(traceRoot, ["capture.jsonl"]);
   await writeFile(path.join(outputRoot, "sentinel.txt"), "prior artifact");
 
   await assert.rejects(
@@ -317,6 +334,7 @@ test("hosted build rolls back when the final artifact rename fails", async (t) =
     path.join(traceRoot, "capture.jsonl"),
     '{"record":"summary"}\n',
   );
+  await writeTraceManifest(traceRoot, ["capture.jsonl"]);
   await writeFile(path.join(outputRoot, "sentinel.txt"), "prior artifact");
 
   await assert.rejects(
@@ -343,4 +361,128 @@ test("hosted build rolls back when the final artifact rename fails", async (t) =
       code: "ENOENT",
     },
   );
+});
+
+test("hosted build rejects an output symlink without touching its external target", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-output-link-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const publicRoot = path.join(root, "public");
+  const traceRoot = path.join(root, "showcase");
+  const outputRoot = path.join(root, "dist");
+  const externalRoot = path.join(root, "external-output");
+  await mkdir(publicRoot, { recursive: true });
+  await mkdir(traceRoot, { recursive: true });
+  await mkdir(externalRoot, { recursive: true });
+  await writeFile(path.join(publicRoot, "index.html"), "new public");
+  await writeFile(
+    path.join(traceRoot, "capture.jsonl"),
+    '{"record":"summary"}\n',
+  );
+  await writeTraceManifest(traceRoot, ["capture.jsonl"]);
+  await writeFile(path.join(externalRoot, "sentinel.txt"), "keep me");
+  await symlink(externalRoot, outputRoot);
+
+  await assert.rejects(
+    buildHostedSite({ publicRoot, traceRoot, outputRoot }),
+    /outputRoot.*symbolic link/i,
+  );
+
+  assert.equal(
+    await readFile(path.join(externalRoot, "sentinel.txt"), "utf8"),
+    "keep me",
+  );
+  assert.equal((await lstat(outputRoot)).isSymbolicLink(), true);
+});
+
+test("hosted build rejects a non-directory output leaf", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-output-file-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const publicRoot = path.join(root, "public");
+  const traceRoot = path.join(root, "showcase");
+  const outputRoot = path.join(root, "dist");
+  await mkdir(publicRoot, { recursive: true });
+  await mkdir(traceRoot, { recursive: true });
+  await writeFile(path.join(publicRoot, "index.html"), "new public");
+  await writeFile(
+    path.join(traceRoot, "capture.jsonl"),
+    '{"record":"summary"}\n',
+  );
+  await writeTraceManifest(traceRoot, ["capture.jsonl"]);
+  await writeFile(outputRoot, "do not replace");
+
+  await assert.rejects(
+    buildHostedSite({ publicRoot, traceRoot, outputRoot }),
+    /outputRoot.*directory/i,
+  );
+  assert.equal(await readFile(outputRoot, "utf8"), "do not replace");
+});
+
+test("hosted publication fails closed on missing, malformed, and symlinked manifests", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-manifest-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  for (const scenario of ["missing", "malformed", "symlink"]) {
+    const scenarioRoot = path.join(root, scenario);
+    const publicRoot = path.join(scenarioRoot, "public");
+    const traceRoot = path.join(scenarioRoot, "showcase");
+    const outputRoot = path.join(scenarioRoot, "dist");
+    await mkdir(publicRoot, { recursive: true });
+    await mkdir(traceRoot, { recursive: true });
+    await writeFile(path.join(publicRoot, "index.html"), "new public");
+    await writeFile(
+      path.join(traceRoot, "capture.jsonl"),
+      '{"record":"summary"}\n',
+    );
+
+    if (scenario === "malformed") {
+      await writeFile(path.join(traceRoot, "traces.json"), "{broken");
+    } else if (scenario === "symlink") {
+      const externalManifest = path.join(scenarioRoot, "manifest.json");
+      await writeFile(
+        externalManifest,
+        '{"schema_version":1,"traces":{"capture.jsonl":{}}}\n',
+      );
+      await symlink(externalManifest, path.join(traceRoot, "traces.json"));
+    }
+
+    await assert.rejects(
+      buildHostedSite({ publicRoot, traceRoot, outputRoot }),
+      /traces\.json/i,
+      scenario,
+    );
+    await assert.rejects(readFile(outputRoot), { code: "ENOENT" });
+  }
+});
+
+test("hosted publication requires exact safe manifest and registry paths", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-manifest-set-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  for (const [scenario, manifestPaths] of [
+    ["unlisted", ["listed.jsonl"]],
+    ["unsafe", ["listed.jsonl", "../outside.jsonl"]],
+  ]) {
+    const scenarioRoot = path.join(root, scenario);
+    const publicRoot = path.join(scenarioRoot, "public");
+    const traceRoot = path.join(scenarioRoot, "showcase");
+    const outputRoot = path.join(scenarioRoot, "dist");
+    await mkdir(publicRoot, { recursive: true });
+    await mkdir(traceRoot, { recursive: true });
+    await writeFile(path.join(publicRoot, "index.html"), "new public");
+    await writeFile(
+      path.join(traceRoot, "listed.jsonl"),
+      '{"record":"summary"}\n',
+    );
+    await writeFile(
+      path.join(traceRoot, "unlisted.ndjson"),
+      '{"record":"op"}\n',
+    );
+    await writeTraceManifest(traceRoot, manifestPaths);
+
+    await assert.rejects(
+      buildHostedSite({ publicRoot, traceRoot, outputRoot }),
+      scenario === "unsafe" ? /safe relative paths/i : /exactly match/i,
+    );
+    await assert.rejects(readFile(outputRoot), { code: "ENOENT" });
+  }
 });

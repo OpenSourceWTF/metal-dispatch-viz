@@ -13,9 +13,9 @@ test("package contract locks the React profiler toolchain", async () => {
     node: "^20.19.0 || ^22.13.0 || >=24.0.0",
   });
   assert.deepEqual(packageJson.scripts, {
-    build: "node scripts/build_hosted.mjs",
-    start: "node server.mjs",
-    test: "node --test",
+    build: "vite build && node scripts/build_hosted.mjs",
+    start: "npm run build && node server.mjs",
+    test: "node --test && vitest run",
   });
   assert.deepEqual(packageJson.dependencies, {
     express: "5.2.1",

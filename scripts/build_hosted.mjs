@@ -3,19 +3,25 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   opendir,
   readFile,
   realpath,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
-import { createWriteStream } from "node:fs";
+import { constants, createWriteStream } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { TraceRegistry } from "../server/trace-registry.mjs";
+
+const MANIFEST_NAME = "traces.json";
+const MANIFEST_MAX_BYTES = 1024 * 1024;
+const TRACE_EXTENSIONS = new Set([".jsonl", ".ndjson"]);
 
 const SITES_WORKER_SOURCE = `export default {
   async fetch(request, env) {
@@ -76,8 +82,199 @@ async function canonicalProspectivePath(targetPath) {
   }
 }
 
+async function canonicalOutputPath(targetPath) {
+  const requestedOutput = path.resolve(targetPath);
+  const outputLeaf = path.basename(requestedOutput);
+  if (outputLeaf === "") {
+    throw new RangeError("outputRoot must name a directory leaf.");
+  }
+  const outputParent = await canonicalProspectivePath(
+    path.dirname(requestedOutput),
+  );
+  return path.join(outputParent, outputLeaf);
+}
+
 function pathsOverlap(left, right) {
   return containsPath(left, right) || containsPath(right, left);
+}
+
+function plainObject(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function sameIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function safeManifestTracePath(relativePath) {
+  if (
+    typeof relativePath !== "string" ||
+    relativePath === "" ||
+    relativePath.includes("\\") ||
+    relativePath.includes("\0") ||
+    path.posix.isAbsolute(relativePath) ||
+    path.posix.normalize(relativePath) !== relativePath
+  ) {
+    return false;
+  }
+  const segments = relativePath.split("/");
+  return (
+    segments.every(
+      (segment) => segment !== "" && segment !== "." && segment !== "..",
+    ) &&
+    TRACE_EXTENSIONS.has(path.posix.extname(relativePath).toLowerCase())
+  );
+}
+
+async function readRequiredStaticManifest(traceRoot) {
+  const manifestPath = path.join(traceRoot, MANIFEST_NAME);
+  let pathStats;
+  try {
+    pathStats = await lstat(manifestPath, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error(
+        `Hosted publication requires ${MANIFEST_NAME}.`,
+      );
+    }
+    throw error;
+  }
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    throw new Error(
+      `Hosted publication requires ${MANIFEST_NAME} to be a regular non-symlink file.`,
+    );
+  }
+  if (pathStats.size > BigInt(MANIFEST_MAX_BYTES)) {
+    throw new Error(
+      `Hosted publication requires ${MANIFEST_NAME} to be at most 1 MiB.`,
+    );
+  }
+
+  const noFollow =
+    typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+  let fileHandle;
+  try {
+    fileHandle = await open(manifestPath, constants.O_RDONLY | noFollow);
+    const handleStats = await fileHandle.stat({ bigint: true });
+    if (
+      !handleStats.isFile() ||
+      !sameIdentity(pathStats, handleStats) ||
+      (await realpath(manifestPath)) !== path.resolve(manifestPath)
+    ) {
+      throw new Error(
+        `Hosted publication could not open ${MANIFEST_NAME} safely.`,
+      );
+    }
+    const source = await fileHandle.readFile("utf8");
+    const finalStats = await stat(manifestPath, { bigint: true });
+    if (!finalStats.isFile() || !sameIdentity(handleStats, finalStats)) {
+      throw new Error(
+        `Hosted publication detected a changed ${MANIFEST_NAME}.`,
+      );
+    }
+
+    let manifest;
+    try {
+      manifest = JSON.parse(source);
+    } catch {
+      throw new Error(
+        `Hosted publication requires ${MANIFEST_NAME} to contain valid JSON.`,
+      );
+    }
+    if (
+      !plainObject(manifest) ||
+      manifest.schema_version !== 1 ||
+      !plainObject(manifest.traces)
+    ) {
+      throw new Error(
+        `Hosted publication requires a schema-versioned ${MANIFEST_NAME}.`,
+      );
+    }
+    const entries = Object.entries(manifest.traces);
+    if (
+      entries.some(
+        ([relativePath, metadata]) =>
+          !safeManifestTracePath(relativePath) || !plainObject(metadata),
+      )
+    ) {
+      throw new Error(
+        `Hosted publication requires ${MANIFEST_NAME} to contain safe relative paths and object metadata.`,
+      );
+    }
+    return Object.freeze({
+      source,
+      device: handleStats.dev,
+      inode: handleStats.ino,
+      relativePaths: entries.map(([relativePath]) => relativePath).sort(),
+    });
+  } catch (error) {
+    if (
+      error?.message?.includes(MANIFEST_NAME) &&
+      error?.message?.startsWith("Hosted publication")
+    ) {
+      throw error;
+    }
+    throw new Error(
+      `Hosted publication could not open ${MANIFEST_NAME} safely.`,
+      { cause: error },
+    );
+  } finally {
+    await fileHandle?.close().catch(() => {});
+  }
+}
+
+function assertManifestMatchesRegistry(manifest, registryPayload) {
+  const registryPaths = registryPayload.traces
+    .map(({ relativePath }) => relativePath)
+    .sort();
+  if (
+    manifest.relativePaths.length !== registryPaths.length ||
+    manifest.relativePaths.some(
+      (relativePath, index) => relativePath !== registryPaths[index],
+    )
+  ) {
+    throw new Error(
+      `${MANIFEST_NAME} paths must exactly match the published trace registry.`,
+    );
+  }
+}
+
+function assertStableManifest(before, after) {
+  if (
+    before.device !== after.device ||
+    before.inode !== after.inode ||
+    before.source !== after.source
+  ) {
+    throw new Error(
+      `Hosted publication detected a changed ${MANIFEST_NAME}.`,
+    );
+  }
+}
+
+async function assertReplaceableOutputLeaf(output) {
+  let outputStats;
+  try {
+    outputStats = await lstat(output);
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+  if (outputStats.isSymbolicLink()) {
+    throw new Error(
+      "outputRoot must not be an existing symbolic link.",
+    );
+  }
+  if (!outputStats.isDirectory()) {
+    throw new Error(
+      "outputRoot must be a directory when it already exists.",
+    );
+  }
+  return true;
 }
 
 async function assertNoSymlinks(root) {
@@ -111,16 +308,6 @@ async function assertMissing(targetPath, label) {
     throw error;
   }
   throw new Error(`${label} is reserved for generated hosted output.`);
-}
-
-async function pathExists(targetPath) {
-  try {
-    await lstat(targetPath);
-    return true;
-  } catch (error) {
-    if (error?.code === "ENOENT") return false;
-    throw error;
-  }
 }
 
 async function readHostingConfig(hostingConfigPath) {
@@ -187,6 +374,7 @@ export async function buildHostedSite({
   traceRoot,
   outputRoot,
   hostingConfigPath = new URL("../.openai/hosting.json", import.meta.url),
+  expectedTraceCount,
   registryHooks = {},
   replacementHooks = {},
 }) {
@@ -196,9 +384,10 @@ export async function buildHostedSite({
   const sourceTraces = await realpath(
     resolvedDirectory(traceRoot, "traceRoot"),
   );
-  const output = await canonicalProspectivePath(
+  const output = await canonicalOutputPath(
     resolvedDirectory(outputRoot, "outputRoot"),
   );
+  await assertReplaceableOutputLeaf(output);
   if (
     pathsOverlap(output, sourcePublic) ||
     pathsOverlap(output, sourceTraces)
@@ -208,11 +397,31 @@ export async function buildHostedSite({
     );
   }
   const hostingConfig = await readHostingConfig(hostingConfigPath);
+  if (
+    expectedTraceCount !== undefined &&
+    (!Number.isSafeInteger(expectedTraceCount) || expectedTraceCount < 0)
+  ) {
+    throw new TypeError(
+      "expectedTraceCount must be a non-negative integer when provided.",
+    );
+  }
 
+  const initialManifest = await readRequiredStaticManifest(sourceTraces);
   const registry = new TraceRegistry(sourceTraces, {
     hooks: registryHooks,
   });
   const registryPayload = await registry.refresh();
+  const verifiedManifest = await readRequiredStaticManifest(sourceTraces);
+  assertStableManifest(initialManifest, verifiedManifest);
+  assertManifestMatchesRegistry(verifiedManifest, registryPayload);
+  if (
+    expectedTraceCount !== undefined &&
+    registryPayload.traces.length !== expectedTraceCount
+  ) {
+    throw new Error(
+      `Hosted publication requires exactly ${expectedTraceCount} traces.`,
+    );
+  }
   await assertNoSymlinks(sourcePublic);
   const outputParent = path.dirname(output);
   await mkdir(outputParent, { recursive: true });
@@ -256,7 +465,7 @@ export async function buildHostedSite({
       path.join(staging, "package.json"),
       '{"type":"module"}\n',
     );
-    if (await pathExists(output)) {
+    if (await assertReplaceableOutputLeaf(output)) {
       backup = await mkdtemp(
         path.join(outputParent, ".metal-dispatch-viz-backup-"),
       );
@@ -299,9 +508,10 @@ function isMainModule() {
 
 if (isMainModule()) {
   const result = await buildHostedSite({
-    publicRoot: new URL("../public/", import.meta.url),
+    publicRoot: new URL("../.vite-client/", import.meta.url),
     traceRoot: new URL("../traces/showcase/", import.meta.url),
     outputRoot: new URL("../dist/", import.meta.url),
+    expectedTraceCount: 5,
   });
   console.log(
     `Built hosted profiler with ${result.traceCount} traces in ${result.outputRoot}`,

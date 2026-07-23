@@ -7,9 +7,9 @@
     "node": "^20.19.0 || ^22.13.0 || >=24.0.0"
   },
   "scripts": {
-    "build": "node scripts/build_hosted.mjs",
-    "start": "node server.mjs",
-    "test": "node --test"
+    "build": "vite build && node scripts/build_hosted.mjs",
+    "start": "npm run build && node server.mjs",
+    "test": "node --test && vitest run"
   },
   "dependencies": {
     "express": "5.2.1",
