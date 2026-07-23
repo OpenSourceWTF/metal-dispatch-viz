@@ -1681,7 +1681,7 @@ git commit -m "Integrate View and Analyze time windows"
 
 **Security flag:** none
 
-- [ ] **Step 1: Add renderer-side operating instructions**
+- [x] **Step 1: Add renderer-side operating instructions**
 
 Document under the existing usage section:
 
@@ -1705,7 +1705,7 @@ Schema-v1 dispatch membership uses ordered placement, not measured per-op
 timestamps. Analyze reports any dispatches or waits that cannot be placed.
 ```
 
-- [ ] **Step 2: Run the complete test suite**
+- [x] **Step 2: Run the complete test suite**
 
 Run:
 
@@ -1715,7 +1715,7 @@ npm test
 
 Expected: all Node tests pass with zero failures.
 
-- [ ] **Step 3: Run production dependency audit**
+- [x] **Step 3: Run production dependency audit**
 
 Run:
 
@@ -1725,7 +1725,7 @@ npm audit --omit=dev
 
 Expected: zero known production vulnerabilities.
 
-- [ ] **Step 4: Start the application and smoke-test HTTP endpoints**
+- [x] **Step 4: Start the application and smoke-test HTTP endpoints**
 
 Run in one terminal:
 
@@ -1758,14 +1758,18 @@ At `http://127.0.0.1:4173` verify:
 8. desktop and 760px layouts work in dark and light themes;
 9. Canvas-sampling and unplaced-row disclosures remain explicit.
 
-- [ ] **Step 6: Commit documentation**
+Not completed in this lane: Safari remote automation is disabled and no
+capturable display is available. The deterministic DOM, pointer, resize, DPR,
+and ARIA harness remains green, but it does not replace this real-browser gate.
+
+- [x] **Step 6: Commit documentation**
 
 ```bash
 git add README.md
 git commit -m "Document time-window analysis controls"
 ```
 
-- [ ] **Step 7: Run final clean-tree verification**
+- [x] **Step 7: Run final clean-tree verification**
 
 Run:
 
