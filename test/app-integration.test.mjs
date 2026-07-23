@@ -7,6 +7,7 @@ import {
   bootstrap,
   buildDatasetOffMainThread,
   evidenceBadges,
+  filterTraces,
   handleTraceRailKey,
   kernelRowsForScope,
   loadTraceRegistry,
@@ -176,7 +177,9 @@ const BOOTSTRAP_IDS = [
   "refresh-button",
   "theme-toggle",
   "trace-rail",
+  "trace-search",
   "trace-track",
+  "selected-trace-summary",
   "provenance-strip",
   "health-strip",
   "trace-status",
@@ -1515,11 +1518,13 @@ test("real timeline Analyze pan survives exact-to-launch swap and commits once o
     clientX: 560,
     clientY: 150,
     pointerId: 42,
+    shiftKey: true,
   });
   canvas.dispatch("pointermove", {
     clientX: 540,
     clientY: 150,
     pointerId: 42,
+    shiftKey: true,
   });
   const firstViewport = { ...renderer.viewport };
   assert.ok(renderer.drag, "first transient move retains the active pointer drag");
@@ -1529,6 +1534,7 @@ test("real timeline Analyze pan survives exact-to-launch swap and commits once o
     clientX: 520,
     clientY: 150,
     pointerId: 42,
+    shiftKey: true,
   });
   assert.notDeepEqual(
     renderer.viewport,
@@ -1539,6 +1545,7 @@ test("real timeline Analyze pan survives exact-to-launch swap and commits once o
     clientX: 520,
     clientY: 150,
     pointerId: 42,
+    shiftKey: true,
   });
   assert.equal(renderer.drag, null);
   assert.equal(session.analysis.length, 2, "release issues one exact request");
@@ -1593,6 +1600,7 @@ test("real timeline drag survives an authoritative exact result arriving after p
     clientX: 560,
     clientY: 150,
     pointerId: 43,
+    shiftKey: true,
   });
   assert.ok(renderer.drag);
 
@@ -1613,18 +1621,21 @@ test("real timeline drag survives an authoritative exact result arriving after p
     clientX: 540,
     clientY: 150,
     pointerId: 43,
+    shiftKey: true,
   });
   const firstViewport = { ...renderer.viewport };
   canvas.dispatch("pointermove", {
     clientX: 520,
     clientY: 150,
     pointerId: 43,
+    shiftKey: true,
   });
   assert.notDeepEqual(renderer.viewport, firstViewport);
   canvas.dispatch("pointerup", {
     clientX: 520,
     clientY: 150,
     pointerId: 43,
+    shiftKey: true,
   });
   assert.equal(renderer.drag, null);
   assert.equal(
@@ -1768,6 +1779,19 @@ test("trace cache identity changes with registry size or modification time", () 
       modifiedTime: "2026-07-23T01:00:01.000Z",
     }),
   );
+});
+
+test("run search matches registry metadata case-insensitively and keeps registry order", () => {
+  const traces = [
+    { id: "a", label: "Alpha", model: "Qwen", mode: "decode", relativePath: "nightly/a.jsonl" },
+    { id: "b", label: "Beta", checkpoint: "GLM-5.2", capture: "Prefill", relativePath: "runs/b.jsonl" },
+    { id: "c", label: "Gamma", quantization: "oQ4e", relativePath: "archive/c.jsonl" },
+  ];
+  assert.deepEqual(filterTraces(traces, "glm prefill").map(({ id }) => id), ["b"]);
+  assert.deepEqual(filterTraces(traces, "RUNS").map(({ id }) => id), ["b"]);
+  assert.deepEqual(filterTraces(traces, "q").map(({ id }) => id), ["a", "c"]);
+  assert.deepEqual(filterTraces(traces, "missing"), []);
+  assert.deepEqual(filterTraces(traces, "   ").map(({ id }) => id), ["a", "b", "c"]);
 });
 
 test("dataset construction uses an asynchronous worker boundary for large inputs", async () => {

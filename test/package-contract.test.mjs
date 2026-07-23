@@ -48,6 +48,9 @@ test("README documents help and the visible-timeline AI export contract", async 
     /clipp(?:ed|ing)/i,
     /ordered placement/i,
     /schema v1/i,
+    /search runs/i,
+    /drag to zoom/i,
+    /shift-drag to pan/i,
   ]) {
     assert.match(readme, requiredGuidance);
   }

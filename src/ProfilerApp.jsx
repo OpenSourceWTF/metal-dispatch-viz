@@ -134,28 +134,41 @@ export function ProfilerApp({
 
       <main>
         <div className="instrument">
-          <h2 className="visually-hidden">Available traces</h2>
+          <h2 className="visually-hidden">Available runs</h2>
           <nav
             id="trace-rail"
             className="trace-rail"
-            aria-label="Trace files"
+            aria-label="Run selector"
             aria-busy="true"
           >
-            <div id="trace-track" className="trace-track">
-              <button
-                className="trace-toggle trace-toggle-placeholder"
-                type="button"
-                aria-pressed="false"
+            <div className="trace-combobox">
+              <label htmlFor="trace-search">Run</label>
+              <input
+                id="trace-search"
+                type="search"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-controls="trace-track"
+                aria-expanded="false"
+                placeholder="Search runs…"
+                autoComplete="off"
                 disabled
+              />
+              <div
+                id="trace-track"
+                className="trace-track"
+                role="listbox"
+                hidden
               >
-                <span className="trace-name">Scanning directory</span>
-                <span className="trace-model">Model: Unknown</span>
-                <span className="trace-mode">Mode: Unknown</span>
-                <span className="trace-badge trace-evidence-pending">
-                  Not loaded
-                </span>
-              </button>
+                <p className="trace-rail-empty">Scanning directory…</p>
+              </div>
             </div>
+            <output
+              id="selected-trace-summary"
+              className="selected-trace-summary"
+            >
+              Waiting for registry
+            </output>
           </nav>
 
           <section
@@ -275,8 +288,8 @@ export function ProfilerApp({
                 </div>
 
                 <p id="timeline-scroll-label" className="scroll-label">
-                  Timeline viewport; horizontal scrolling reveals more timeline
-                  detail on narrow screens.
+                  Drag to zoom · Shift-drag to pan · horizontal scrolling
+                  reveals more timeline detail on narrow screens.
                 </p>
                 <div
                   className="timeline-term-legend"
@@ -736,13 +749,12 @@ export function ProfilerApp({
             <h3 id="manual-quick-start-heading">Quick start</h3>
             <ol>
               <li>
-                Select a trace from the top rail, then choose a launch when more
-                than one is present.
+                Search runs from the top dropdown, select a match, then choose
+                a launch when more than one is present.
               </li>
               <li>
-                In View, drag the range band or either handle, then use Fit,
-                zoom, timeline drag, or horizontal scroll to choose the visible
-                time window.
+                In View, drag the range band or either handle. On the main
+                timeline, drag to zoom and Shift-drag to pan.
               </li>
               <li>
                 Switch to Analyze when you need exact metrics and tables for the
@@ -832,8 +844,10 @@ export function ProfilerApp({
             <p className="manual-index">06 / KEYS</p>
             <h3 id="manual-keyboard-heading">Keyboard controls</h3>
             <dl className="shortcut-grid">
-              <div><dt>Trace rail</dt><dd>Arrow keys</dd></div>
+              <div><dt>Run results</dt><dd>↑ / ↓ / Enter</dd></div>
               <div><dt>Range handles</dt><dd>Arrow keys</dd></div>
+              <div><dt>Range zoom</dt><dd>Drag</dd></div>
+              <div><dt>Pan</dt><dd>Shift-drag</dd></div>
               <div><dt>Zoom</dt><dd>+ / −</dd></div>
               <div><dt>Reset range</dt><dd>Fit</dd></div>
               <div><dt>Marks</dt><dd>[ / ]</dd></div>

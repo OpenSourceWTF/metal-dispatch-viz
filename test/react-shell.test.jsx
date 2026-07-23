@@ -15,7 +15,9 @@ const BOOTSTRAP_IDS = [
   "refresh-button",
   "theme-toggle",
   "trace-rail",
+  "trace-search",
   "trace-track",
+  "selected-trace-summary",
   "provenance-strip",
   "health-strip",
   "trace-status",
@@ -125,8 +127,14 @@ describe("ProfilerApp shell", () => {
         `#${id}`,
       ).toHaveLength(1);
     }
-    expect(container.textContent).toMatch(/Not loaded/i);
+    expect(container.textContent).toMatch(/Waiting for registry/i);
     expect(container.textContent).not.toMatch(/Evidence:\s*Pending/i);
+    expect(container.querySelector("#trace-search").getAttribute("role"))
+      .toBe("combobox");
+    expect(container.querySelector("#trace-track").getAttribute("role"))
+      .toBe("listbox");
+    expect(container.textContent).toMatch(/Drag to zoom/i);
+    expect(container.textContent).toMatch(/Shift-drag to pan/i);
   });
 
   it("renders contextual help and local export as hidden accessible utilities", async () => {
