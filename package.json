@@ -9,7 +9,8 @@
   "scripts": {
     "build": "vite build && node scripts/build_hosted.mjs",
     "start": "npm run build && node server.mjs",
-    "test": "node --test && vitest run"
+    "test": "node --test && vitest run",
+    "verify:pages": "node scripts/verify_pages_artifact.mjs"
   },
   "dependencies": {
     "express": "5.2.1",
