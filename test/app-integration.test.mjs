@@ -69,6 +69,36 @@ test("registry loading falls back to the generated hosted manifest", async () =>
   );
 });
 
+test("hosted registry responses keep bundled trace routing without a 404 probe", async () => {
+  const registry = {
+    traces: [{
+      id: "abc123",
+      relativePath: "nested/capture one.jsonl",
+    }],
+  };
+  const loaded = await loadTraceRegistry(async (url) => {
+    assert.equal(url, "/api/traces");
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get(name) {
+          return name === "x-metal-dispatch-registry" ? "hosted" : null;
+        },
+      },
+      async json() {
+        return registry;
+      },
+    };
+  });
+
+  assert.equal(loaded.hosted, true);
+  assert.equal(
+    traceSourceUrl(loaded.registry.traces[0], { hosted: loaded.hosted }),
+    "/traces/showcase/nested/capture%20one.jsonl",
+  );
+});
+
 test("server registry remains authoritative and ignores metadata source URLs", async () => {
   const registry = {
     traces: [{

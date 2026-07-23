@@ -433,7 +433,8 @@ export async function loadTraceRegistry(fetchImpl, { baseUrl } = {}) {
   const response = await fetchImpl(browserRequestUrl("api/traces", baseUrl));
   if (response?.ok) {
     return {
-      hosted: false,
+      hosted:
+        response.headers?.get?.("x-metal-dispatch-registry") === "hosted",
       registry: await response.json(),
     };
   }

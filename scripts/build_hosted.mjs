@@ -41,6 +41,14 @@ const SITES_WORKER_SOURCE = `export default {
     ) {
       url.pathname = "/hosted-traces.json";
       request = new Request(url, request);
+      const response = await env.ASSETS.fetch(request);
+      const headers = new Headers(response.headers);
+      headers.set("x-metal-dispatch-registry", "hosted");
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
     } else if (
       url.pathname === "/" &&
       readsAsset

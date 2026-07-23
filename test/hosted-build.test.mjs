@@ -107,6 +107,10 @@ test("hosted build emits the Sites worker artifact contract", async (t) => {
   );
   assert.equal(registryResponse.status, 200);
   assert.equal(await registryResponse.text(), "registry");
+  assert.equal(
+    registryResponse.headers.get("x-metal-dispatch-registry"),
+    "hosted",
+  );
   assert.equal(assetPath, "/hosted-traces.json");
 
   const missingBinding = await worker.fetch(
