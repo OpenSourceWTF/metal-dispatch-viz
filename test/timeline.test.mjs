@@ -273,6 +273,14 @@ test("density bins handle endpoint visibility and malformed geometry", () => {
     buildDensityBins([dispatch(0)], { startNs: 0, endNs: 1, width: 0 }),
     [],
   );
+  assert.deepEqual(
+    buildDensityBins([dispatch(0)], {
+      startNs: -Number.MAX_VALUE,
+      endNs: Number.MAX_VALUE,
+      width: 2,
+    }),
+    [],
+  );
 });
 
 test("time transforms round-trip and never produce non-finite output", () => {

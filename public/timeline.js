@@ -177,15 +177,16 @@ export function buildDensityBins(dispatches, { startNs, endNs, width } = {}) {
     dispatches.length === 0 ||
     !Number.isFinite(startNs) ||
     !Number.isFinite(endNs) ||
-    endNs <= startNs ||
     !Number.isFinite(width) ||
     width <= 0
   ) {
     return [];
   }
 
-  const binCount = Math.max(1, Math.floor(width));
   const span = endNs - startNs;
+  if (!Number.isFinite(span) || span <= 0) return [];
+
+  const binCount = Math.max(1, Math.floor(width));
   const bins = new Map();
   for (const item of dispatches) {
     const atNs = timeOf(item);
