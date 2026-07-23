@@ -401,6 +401,22 @@ test("visual system uses measured tokens, effective sizing, and clipped-safe foc
   assert.ok(Number.parseFloat(rangeHandle.get("min-width")) >= 44);
   assert.ok(Number.parseFloat(rangeHandle.get("min-height")) >= 44);
   assert.equal(rangeHandle.get("touch-action"), "none");
+  assert.equal(rangeHandle.get("transform"), "translateY(-50%)");
+  const startHandle =
+    requireDeclarationRule(rules, ".range-handle-start")[0];
+  const endHandle =
+    requireDeclarationRule(rules, ".range-handle-end")[0];
+  assert.equal(startHandle.get("left"), "0");
+  assert.equal(endHandle.get("left"), "100%");
+  assert.equal(endHandle.get("transform"), "translate(-100%, -50%)");
+  assert.equal(
+    requireDeclarationRule(rules, ".range-handle-start::after")[0].get("left"),
+    "0",
+  );
+  assert.equal(
+    requireDeclarationRule(rules, ".range-handle-end::after")[0].get("right"),
+    "0",
+  );
   requireDeclarationRule(rules, ".range-band");
   requireDeclarationRule(rules, '.range-mode-button[aria-pressed="true"]');
 
@@ -605,14 +621,14 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
   assert.match(source, /replaceState/);
   assert.match(source, /new SelectionCoordinator/);
   assert.match(source, /new TraceCache/);
-  assert.match(source, /new TimelineRenderer/);
+  assert.match(source, /new RendererClass/);
   assert.match(source, /isCurrent/);
   assert.match(
     source,
-    /clearAnalysisState\(\);[\s\S]*?if \(cached\)[\s\S]*?else \{\s*renderPendingProvenance\(trace\);\s*showLoading\(trace\);/,
+    /if \(preserveCurrentView\)[\s\S]*?else \{\s*clearAnalysisState\(\);[\s\S]*?if \(cached && !preserveCurrentView\)[\s\S]*?else if \(!preserveCurrentView\) \{\s*renderPendingProvenance\(trace\);\s*showLoading\(trace\);/,
     "a new trace clears prior evidence before showing its loading state",
   );
-  assert.match(source, /new RangeNavigator\(/);
+  assert.match(source, /new RangeNavigatorClass\(/);
   assert.match(source, /new RangeRequestAuthority\(/);
   assert.match(source, /analysisSessionFactory\(\{/);
   assert.match(source, /analysisSession\.analyzeRange\(\{/);

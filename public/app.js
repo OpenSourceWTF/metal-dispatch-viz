@@ -144,6 +144,8 @@ export function parseRangeSelection(input, bounds) {
   const valid =
     fromValue !== null &&
     toValue !== null &&
+    fromValue.trim() !== "" &&
+    toValue.trim() !== "" &&
     Number.isSafeInteger(from) &&
     Number.isSafeInteger(to) &&
     to > from &&
@@ -884,9 +886,12 @@ export async function bootstrap({
   fetchImpl = globalThis.fetch,
   analysisSessionFactory = (options) => new TraceAnalysisSession(options),
   analysisDebounceMs = 100,
+  cacheObject = new TraceCache(),
+  documentObject = globalThis.document,
+  windowObject = documentObject?.defaultView ?? globalThis.window,
+  RendererClass = TimelineRenderer,
+  RangeNavigatorClass = RangeNavigator,
 } = {}) {
-  const documentObject = globalThis.document;
-  const windowObject = documentObject?.defaultView ?? globalThis.window;
   if (!documentObject || !windowObject) {
     throw new Error("bootstrap requires a browser document");
   }
@@ -898,6 +903,19 @@ export async function bootstrap({
   }
   if (!Number.isFinite(analysisDebounceMs) || analysisDebounceMs < 0) {
     throw new TypeError("analysisDebounceMs must be a non-negative number");
+  }
+  if (
+    !cacheObject ||
+    typeof cacheObject.get !== "function" ||
+    typeof cacheObject.set !== "function"
+  ) {
+    throw new TypeError("bootstrap requires a trace cache");
+  }
+  if (
+    typeof RendererClass !== "function" ||
+    typeof RangeNavigatorClass !== "function"
+  ) {
+    throw new TypeError("bootstrap requires renderer constructors");
   }
 
   const byId = (id) => {
@@ -954,7 +972,7 @@ export async function bootstrap({
     tables: byId("analysis-tables"),
   };
 
-  const cache = new TraceCache();
+  const cache = cacheObject;
   const coordinator = new SelectionCoordinator();
   const registrySelection = new RegistrySelectionGuard();
   const rangeAuthority = new RangeRequestAuthority();
@@ -1025,18 +1043,18 @@ export async function bootstrap({
     elements.scale.textContent = `View · ${formatDuration(nanosecondsPerPixel)}/px`;
   }
 
-  const renderer = new TimelineRenderer(elements.canvas, {
+  const renderer = new RendererClass(elements.canvas, {
     onInspect(payload) {
       state.inspectorPayload = payload;
       renderInspector(payload);
     },
-    onViewportChange(viewport) {
+    onViewportChange(viewport, metadata) {
       updateScale(viewport);
-      handleTimelineViewport(viewport);
+      handleTimelineViewport(viewport, metadata);
     },
   });
 
-  const rangeNavigator = new RangeNavigator(
+  const rangeNavigator = new RangeNavigatorClass(
     {
       canvas: elements.rangeOverview,
       band: elements.rangeBand,
@@ -1146,7 +1164,10 @@ export async function bootstrap({
       state.rangeMode === "analyze" ? "Selected range" : "Launch totals";
   }
 
-  function updateRangeReadouts({ updateStatus = true } = {}) {
+  function updateRangeReadouts({
+    updateStatus = true,
+    announceRange = false,
+  } = {}) {
     const bounds = selectedLaunchBounds();
     const range = state.selectedRange;
     if (!bounds || !range) {
@@ -1170,7 +1191,11 @@ export async function bootstrap({
           formatDuration(range.endNs - bounds.startNs)
         : state.rangeMode === "analyze"
           ? "Exact selected-range aggregates"
-          : "Viewport only; metrics show launch totals";
+          : announceRange
+            ? `Viewing ${formatDuration(range.startNs - bounds.startNs)} – ` +
+              `${formatDuration(range.endNs - bounds.startNs)}; ` +
+              "metrics show launch totals"
+            : "Viewport only; metrics show launch totals";
     }
   }
 
@@ -1237,6 +1262,7 @@ export async function bootstrap({
       state.inspectorPayload = pinned;
       renderInspector(pinned);
     }
+    renderSamplingNote(scope);
     if (viewport) updateScale(viewport);
   }
 
@@ -1252,13 +1278,15 @@ export async function bootstrap({
 
   function scheduleRangeAnalysis(range, immediate) {
     clearAnalysisTimer();
+    rangeAuthority.invalidate();
+    const requestedRange = Object.freeze({ ...range });
     if (immediate) {
-      void analyzeSelectedRange(range);
+      void analyzeSelectedRange(requestedRange);
       return;
     }
     state.analysisTimer = windowObject.setTimeout(() => {
       state.analysisTimer = null;
-      void analyzeSelectedRange(state.selectedRange);
+      void analyzeSelectedRange(requestedRange);
     }, analysisDebounceMs);
   }
 
@@ -1345,6 +1373,7 @@ export async function bootstrap({
     updateScale(state.selectedRange);
     updateRangeReadouts({
       updateStatus: committed && state.rangeMode === "view",
+      announceRange: committed && state.rangeMode === "view",
     });
     if (state.rangeMode === "view") {
       if (committed) commitRangeUrl();
@@ -1357,20 +1386,26 @@ export async function bootstrap({
     scheduleRangeAnalysis(state.selectedRange, committed);
   }
 
-  function handleTimelineViewport(viewport) {
+  function handleTimelineViewport(
+    viewport,
+    { committed = false } = {},
+  ) {
     const bounds = selectedLaunchBounds();
     if (!bounds) return;
     state.pendingRangeInput = null;
     state.selectedRange = clampViewport(viewport, bounds);
     rangeNavigator.setRange(state.selectedRange);
-    updateRangeReadouts({ updateStatus: false });
+    updateRangeReadouts({
+      updateStatus: committed,
+      announceRange: committed && state.rangeMode === "view",
+    });
     if (state.rangeMode === "analyze") {
       if (state.canvasScope !== state.launchScope) {
         renderCanvasScope(state.launchScope, { preserveInspector: true });
       }
-      setAnalysisBusy(true, { updateStatus: false });
-      scheduleRangeAnalysis(state.selectedRange, false);
-    } else {
+      setAnalysisBusy(true, { updateStatus: committed });
+      scheduleRangeAnalysis(state.selectedRange, committed);
+    } else if (committed) {
       commitRangeUrl();
     }
   }
@@ -1918,6 +1953,13 @@ export async function bootstrap({
   ) {
     const trace = state.traces.find((item) => item?.id === id);
     if (!trace || state.destroyed) return;
+    if (
+      recordSelection &&
+      id === state.currentTraceId &&
+      state.currentDataset
+    ) {
+      return;
+    }
     if (recordSelection) {
       registrySelection.select(id);
     } else {
@@ -1926,6 +1968,11 @@ export async function bootstrap({
     const token = coordinator.begin(id);
     const cacheKey = traceCacheKey(trace);
     const cached = cache.get(cacheKey);
+    const preserveCurrentView =
+      !recordSelection &&
+      id === state.currentTraceId &&
+      state.currentDataset !== null &&
+      traceCacheKey(state.currentTrace) === cacheKey;
     terminateAnalysisSession();
     state.currentToken = token;
     state.currentTraceId = id;
@@ -1933,15 +1980,21 @@ export async function bootstrap({
     state.pendingRangeInput = requestedRangeInput;
     publishIfCurrent(coordinator, token, () => {
       renderRegistry();
-      clearAnalysisState();
-      state.pendingRangeInput = requestedRangeInput;
-      if (cached) {
+      if (preserveCurrentView) {
+        updateRangeModeControls();
+        elements.rangeStatus.textContent =
+          "Preparing exact analysis; current view preserved";
+      } else {
+        clearAnalysisState();
+        state.pendingRangeInput = requestedRangeInput;
+      }
+      if (cached && !preserveCurrentView) {
         renderLoaded(trace, cached, requestedWindow, {
           requestedRangeInput,
         });
         elements.rangeStatus.textContent =
           "Viewport ready; preparing exact analysis";
-      } else {
+      } else if (!preserveCurrentView) {
         renderPendingProvenance(trace);
         showLoading(trace);
       }
@@ -2018,12 +2071,42 @@ export async function bootstrap({
         cache.set(cacheKey, loaded, loaded.diagnostics.sourceBytes);
       }
       publishIfCurrent(coordinator, token, () => {
-        renderLoaded(
-          trace,
-          loaded,
-          state.currentWindowIndex ?? requestedWindow,
-          { requestedRangeInput: restoredRangeInput },
-        );
+        if (cached || preserveCurrentView) {
+          state.currentDataset = loaded.dataset;
+          state.evidenceByCacheKey.set(cacheKey, loaded.dataset);
+          renderRegistry();
+          renderProvenance(trace, loaded.dataset, loaded.diagnostics);
+          if (state.pendingRangeInput !== null) {
+            const bounds = selectedLaunchBounds();
+            const selection = bounds
+              ? parseRangeSelection(state.pendingRangeInput, bounds)
+              : null;
+            if (selection) {
+              state.selectedRange = selection.range;
+              rangeNavigator.setRange(selection.range);
+              renderer.setViewport(selection.range, { notify: false });
+              if (
+                selection.mode === "analyze" &&
+                analysisAvailable()
+              ) {
+                state.rangeMode = "analyze";
+              }
+            }
+          }
+          updateRangeModeControls();
+          updateRangeReadouts();
+          commitRangeUrl();
+          if (state.rangeMode === "analyze" && state.pendingRangeInput) {
+            scheduleRangeAnalysis(state.selectedRange, true);
+          }
+        } else {
+          renderLoaded(
+            trace,
+            loaded,
+            state.currentWindowIndex ?? requestedWindow,
+            { requestedRangeInput: restoredRangeInput },
+          );
+        }
         state.pendingRangeInput = null;
       });
     } catch (error) {

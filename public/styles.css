@@ -739,7 +739,7 @@ main {
   min-width: 44px;
   height: 44px;
   min-height: 44px;
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   cursor: ew-resize;
   touch-action: none;
 }
@@ -747,14 +747,26 @@ main {
 .range-handle::after {
   position: absolute;
   inset-block: 8px;
-  left: 21px;
   width: 2px;
   background: var(--selection);
   content: "";
 }
 
+.range-handle-start {
+  left: 0;
+}
+
+.range-handle-start::after {
+  left: 0;
+}
+
 .range-handle-end {
   left: 100%;
+  transform: translate(-100%, -50%);
+}
+
+.range-handle-end::after {
+  right: 0;
 }
 
 .range-mode {

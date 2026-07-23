@@ -725,7 +725,11 @@ export class TimelineRenderer {
     return this;
   }
 
-  fit(target = this.selectedWindow ?? this.bounds, notify = true) {
+  fit(
+    target = this.selectedWindow ?? this.bounds,
+    notify = true,
+    metadata = { committed: true, source: "fit" },
+  ) {
     let range = target;
     if (Number.isInteger(target)) {
       range = this.dataset?.launchWindows?.[target];
@@ -734,11 +738,14 @@ export class TimelineRenderer {
     if (validRange(range) && range !== this.bounds) this.selectedWindow = range;
     return this.setViewport(
       { startNs: range.startNs, endNs: range.endNs },
-      { notify },
+      { notify, ...metadata },
     );
   }
 
-  setViewport(viewport, { notify = true } = {}) {
+  setViewport(
+    viewport,
+    { notify = true, committed = true, source = "external" } = {},
+  ) {
     const nextViewport = clampViewport(viewport, this.bounds);
     const changed =
       nextViewport.startNs !== this.viewport.startNs ||
@@ -748,13 +755,16 @@ export class TimelineRenderer {
       this.analysisCache = null;
       this.staticLayerCache = null;
     }
-    if (notify) this.notifyViewportChange();
+    if (notify) this.notifyViewportChange({ committed, source });
     this.requestRender();
     return Object.freeze({ ...this.viewport });
   }
 
-  notifyViewportChange() {
-    this.onViewportChange(Object.freeze({ ...this.viewport }));
+  notifyViewportChange({ committed = true, source = "external" } = {}) {
+    this.onViewportChange(
+      Object.freeze({ ...this.viewport }),
+      Object.freeze({ committed: Boolean(committed), source }),
+    );
   }
 
   requestRender() {
@@ -1539,6 +1549,7 @@ export class TimelineRenderer {
           startNs: this.drag.viewport.startNs + shift,
           endNs: this.drag.viewport.endNs + shift,
         },
+        { committed: false, source: "pointer-pan" },
       );
       return;
     }
@@ -1572,6 +1583,12 @@ export class TimelineRenderer {
     const wasMoved = this.drag.moved;
     this.canvas.releasePointerCapture?.(event.pointerId);
     this.drag = null;
+    if (wasMoved) {
+      this.notifyViewportChange({
+        committed: true,
+        source: "pointer-pan",
+      });
+    }
     if (!wasMoved) {
       const point = this.pointForEvent(event);
       const item = this.hitTest(point.x, point.y);
@@ -1585,8 +1602,13 @@ export class TimelineRenderer {
 
   handlePointerCancel(event) {
     if (this.drag?.pointerId === event.pointerId) {
+      const originalViewport = this.drag.viewport;
       this.canvas.releasePointerCapture?.(event.pointerId);
       this.drag = null;
+      this.setViewport(originalViewport, {
+        committed: false,
+        source: "pointer-pan",
+      });
     }
   }
 
@@ -1611,6 +1633,7 @@ export class TimelineRenderer {
         startNs: anchor - nextSpan * fraction,
         endNs: anchor + nextSpan * (1 - fraction),
       },
+      { committed: true, source: "wheel" },
     );
   }
 
@@ -1625,6 +1648,7 @@ export class TimelineRenderer {
           startNs: this.viewport.startNs + shift,
           endNs: this.viewport.endNs + shift,
         },
+        { committed: true, source: "keyboard" },
       );
     } else if (event.key === "+" || event.key === "=" || event.key === "-") {
       const factor = event.key === "-" ? 1.25 : 0.8;
@@ -1632,9 +1656,13 @@ export class TimelineRenderer {
       const nextSpan = span * factor;
       this.setViewport(
         { startNs: center - nextSpan / 2, endNs: center + nextSpan / 2 },
+        { committed: true, source: "keyboard" },
       );
     } else if (event.key === "0") {
-      this.fit(this.selectedWindow);
+      this.fit(this.selectedWindow, true, {
+        committed: true,
+        source: "keyboard",
+      });
     } else if (event.key === "]" || event.key === "}") {
       this.moveKeyboardActive(1);
     } else if (event.key === "[" || event.key === "{") {
@@ -1678,6 +1706,7 @@ export class TimelineRenderer {
             startNs: atNs - span / 2,
             endNs: atNs + span / 2,
           },
+          { committed: true, source: "keyboard" },
         );
       }
       this.crosshairX = timeToX(atNs, this.viewport, this.width);

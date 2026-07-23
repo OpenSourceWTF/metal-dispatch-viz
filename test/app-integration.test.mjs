@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   analyzeTraceOffMainThread,
+  bootstrap,
   buildDatasetOffMainThread,
   evidenceBadges,
   handleTraceRailKey,
@@ -30,6 +31,897 @@ function deferred() {
   });
   return { promise, reject, resolve };
 }
+
+const BOOTSTRAP_IDS = [
+  "directory-identity",
+  "refresh-button",
+  "theme-toggle",
+  "trace-rail",
+  "trace-track",
+  "provenance-strip",
+  "health-strip",
+  "trace-status",
+  "window-control",
+  "window-select",
+  "metric-scope-label",
+  "metric-grid",
+  "timeline",
+  "plot-frame",
+  "timeline-placeholder",
+  "timeline-sampling-note",
+  "loading-state",
+  "loading-filename",
+  "loading-progress",
+  "loading-readout",
+  "empty-state",
+  "error-state",
+  "inspector-body",
+  "clear-selection",
+  "kernel-table-body",
+  "kernel-table-state",
+  "wait-table-body",
+  "wait-table-state",
+  "timeline-scale",
+  "zoom-out",
+  "fit-timeline",
+  "zoom-in",
+  "range-navigator",
+  "range-overview",
+  "range-overview-summary",
+  "range-band",
+  "range-start-handle",
+  "range-end-handle",
+  "range-mode-view",
+  "range-mode-analyze",
+  "range-start-readout",
+  "range-end-readout",
+  "range-duration-readout",
+  "range-status",
+  "range-omissions",
+  "analysis-tables",
+];
+
+class BootstrapElement {
+  constructor(documentObject, id = "", tagName = "div") {
+    this.ownerDocument = documentObject;
+    this.id = id;
+    this.tagName = tagName.toUpperCase();
+    this.attributes = new Map();
+    this.children = [];
+    this.listeners = new Map();
+    this.className = "";
+    this.disabled = false;
+    this.hidden = false;
+    this.style = {};
+    this.textContent = "";
+    this.value = "";
+    this.max = 1;
+    this.classList = {
+      add: (...names) => {
+        const values = new Set(this.className.split(/\s+/).filter(Boolean));
+        names.forEach((name) => values.add(name));
+        this.className = [...values].join(" ");
+      },
+      remove: (...names) => {
+        const values = new Set(this.className.split(/\s+/).filter(Boolean));
+        names.forEach((name) => values.delete(name));
+        this.className = [...values].join(" ");
+      },
+      toggle: (name, force) => {
+        const present = this.className.split(/\s+/).includes(name);
+        const next = force === undefined ? !present : Boolean(force);
+        if (next) this.classList.add(name);
+        else this.classList.remove(name);
+        return next;
+      },
+      contains: (name) => this.className.split(/\s+/).includes(name),
+    };
+  }
+
+  append(...children) {
+    this.children.push(...children);
+  }
+
+  replaceChildren(...children) {
+    this.children = [...children];
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+    if (name === "disabled") this.disabled = true;
+  }
+
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+
+  removeAttribute(name) {
+    this.attributes.delete(name);
+    if (name === "disabled") this.disabled = false;
+  }
+
+  addEventListener(type, listener) {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  dispatch(type, event = {}) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener({
+        currentTarget: this,
+        target: this,
+        preventDefault() {},
+        ...event,
+      });
+    }
+  }
+
+  click() {
+    if (!this.disabled) this.dispatch("click");
+  }
+
+  focus() {
+    this.ownerDocument.activeElement = this;
+  }
+
+  querySelector(selector) {
+    const tagName = selector.toLowerCase();
+    let child = this.children.find(
+      (item) => item?.tagName?.toLowerCase() === tagName,
+    );
+    if (!child) {
+      child = new BootstrapElement(this.ownerDocument, "", tagName);
+      this.children.push(child);
+    }
+    return child;
+  }
+
+  querySelectorAll(selector) {
+    if (selector !== ".trace-toggle") return [];
+    return this.children.filter((child) =>
+      String(child?.className ?? "").split(/\s+/).includes("trace-toggle"),
+    );
+  }
+
+  getBoundingClientRect() {
+    return { left: 0, top: 0, width: 1120, height: 396 };
+  }
+}
+
+function bootstrapDocument() {
+  const documentObject = {
+    activeElement: null,
+    elements: new Map(),
+    documentElement: null,
+    body: null,
+    getElementById(id) {
+      return this.elements.get(id) ?? null;
+    },
+    createElement(tagName) {
+      return new BootstrapElement(this, "", tagName);
+    },
+    createTextNode(text) {
+      return { textContent: String(text) };
+    },
+  };
+  documentObject.documentElement =
+    new BootstrapElement(documentObject, "document", "html");
+  documentObject.body = new BootstrapElement(documentObject, "body", "body");
+  for (const id of BOOTSTRAP_IDS) {
+    const tagName =
+      id.includes("button") || id.startsWith("range-mode") ? "button" :
+      id === "window-select" ? "select" :
+      id.includes("table-body") ? "tbody" :
+      id === "loading-progress" ? "progress" :
+      "div";
+    documentObject.elements.set(
+      id,
+      new BootstrapElement(documentObject, id, tagName),
+    );
+  }
+  documentObject.getElementById("range-mode-analyze").disabled = true;
+  return documentObject;
+}
+
+function bootstrapWindow(documentObject, href) {
+  let nextTimerId = 1;
+  const timers = new Map();
+  const historyWrites = [];
+  const windowObject = {
+    document: documentObject,
+    location: { href },
+    history: {
+      replaceState(_state, _title, value) {
+        windowObject.location.href =
+          new URL(value, windowObject.location.href).href;
+        historyWrites.push(windowObject.location.href);
+      },
+    },
+    localStorage: {
+      getItem() {
+        return null;
+      },
+      setItem() {},
+    },
+    matchMedia() {
+      return { matches: false };
+    },
+    getComputedStyle() {
+      return { getPropertyValue: () => "" };
+    },
+    addEventListener() {},
+    setTimeout(callback, delay) {
+      const id = nextTimerId++;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+  };
+  documentObject.defaultView = windowObject;
+  return {
+    historyWrites,
+    runTimers() {
+      const pending = [...timers.values()];
+      timers.clear();
+      pending.forEach(({ callback }) => callback());
+    },
+    timerDelays() {
+      return [...timers.values()].map(({ delay }) => delay);
+    },
+    windowObject,
+  };
+}
+
+function renderSampling(active, displayed = 1, total = 10) {
+  return {
+    active,
+    dispatches: { displayed, total },
+    commandBuffers: { displayed, total },
+    waits: { displayed, total },
+  };
+}
+
+function bootstrapLaunch({
+  startNs = 0,
+  endNs = 100,
+  sampling = renderSampling(false),
+  name = "kernel",
+} = {}) {
+  return {
+    startNs,
+    endNs,
+    overview: {
+      startNs,
+      endNs,
+      binCount: 1,
+      bins: [{ dispatchCount: 1, waitCount: 0 }],
+    },
+    rangeAnalysis: { available: true, reason: null },
+    summary: {
+      startNs,
+      endNs,
+      wallSpanNs: endNs - startNs,
+      opsTotal: 1,
+      cbsTotal: 1,
+    },
+    kernelCensus: [{
+      kernel: name,
+      count: 1,
+      setBytesCalls: 0,
+      setBytesTotalBytes: 0,
+      bufferBinds: 0,
+    }],
+    waitTaxonomy: {},
+    dispatches: [],
+    commandBuffers: [],
+    waits: [],
+    renderSampling: sampling,
+  };
+}
+
+function bootstrapDataset(launches) {
+  return {
+    launchWindows: launches,
+    health: {
+      validEvidence: true,
+      sourceCompleteness: "complete",
+      malformedRows: 0,
+    },
+  };
+}
+
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function createBootstrapHarness({
+  href = "http://localhost/?trace=trace-a&window=0",
+  traces = [
+    {
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+      modifiedTime: "2026-07-23T00:00:00.000Z",
+    },
+    {
+      id: "trace-b",
+      label: "Trace B",
+      name: "b.jsonl",
+      relativePath: "b.jsonl",
+      size: 100,
+      modifiedTime: "2026-07-23T00:00:01.000Z",
+    },
+  ],
+  datasets = new Map(),
+  cached = new Map(),
+  deferredLoads = false,
+} = {}) {
+  const documentObject = bootstrapDocument();
+  const windowHarness = bootstrapWindow(documentObject, href);
+  const sessions = [];
+  const renderers = [];
+  const navigators = [];
+  const pendingLoads = [];
+
+  class HarnessRenderer {
+    constructor(_canvas, callbacks) {
+      this.callbacks = callbacks;
+      this.datasets = [];
+      this.viewport = { startNs: 0, endNs: 1 };
+      this.colors = {};
+      this.requestRenderCalls = 0;
+      renderers.push(this);
+    }
+
+    setDataset(scope, options = {}) {
+      this.datasets.push({ scope, options });
+      this.viewport = { ...(options.viewport ?? this.viewport) };
+      this.callbacks.onInspect?.(null);
+      return this;
+    }
+
+    setViewport(viewport, { notify = true, ...metadata } = {}) {
+      this.viewport = { ...viewport };
+      if (notify) {
+        this.callbacks.onViewportChange?.(
+          { ...this.viewport },
+          { committed: true, source: "external", ...metadata },
+        );
+      }
+      return { ...this.viewport };
+    }
+
+    fit(target, notify = true) {
+      this.viewport = { ...target };
+      if (notify) {
+        this.callbacks.onViewportChange?.(
+          { ...this.viewport },
+          { committed: true, source: "fit" },
+        );
+      }
+      return { ...this.viewport };
+    }
+
+    emitViewport(viewport, metadata) {
+      this.viewport = { ...viewport };
+      this.callbacks.onViewportChange?.({ ...viewport }, metadata);
+    }
+
+    emitInspect(payload) {
+      this.callbacks.onInspect?.(payload);
+    }
+
+    clearSelection() {
+      this.callbacks.onInspect?.(null);
+    }
+
+    handleKeyDown() {}
+
+    requestRender() {
+      this.requestRenderCalls += 1;
+    }
+
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  class HarnessNavigator {
+    constructor(_elements, callbacks) {
+      this.callbacks = callbacks;
+      this.requestRenderCalls = 0;
+      navigators.push(this);
+    }
+
+    setOverview(overview) {
+      this.overview = overview;
+      return this;
+    }
+
+    setRange(range) {
+      this.range = { ...range };
+      return { ...this.range };
+    }
+
+    setDisabled(disabled) {
+      this.disabled = disabled;
+      return this;
+    }
+
+    emitInput(range) {
+      this.callbacks.onRangeInput({ ...range });
+    }
+
+    emitCommit(range) {
+      this.callbacks.onRangeCommit({ ...range });
+    }
+
+    requestRender() {
+      this.requestRenderCalls += 1;
+    }
+
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  class HarnessSession {
+    constructor(options) {
+      this.options = options;
+      this.ready = false;
+      this.analysis = [];
+      this.terminated = false;
+      sessions.push(this);
+    }
+
+    load(url) {
+      this.url = url;
+      const trace = traces.find((item) =>
+        url.endsWith(encodeURIComponent(item.id)));
+      const loaded = {
+        dataset: datasets.get(trace?.id),
+        diagnostics: { sourceBytes: trace?.size ?? 0, parsedRows: 1 },
+      };
+      if (!deferredLoads) {
+        this.ready = true;
+        return Promise.resolve(loaded);
+      }
+      const pending = deferred();
+      pendingLoads.push({
+        ...pending,
+        resolve: () => {
+          this.ready = true;
+          pending.resolve(loaded);
+        },
+      });
+      return pending.promise;
+    }
+
+    analyzeRange(request) {
+      const pending = deferred();
+      this.analysis.push({ request, ...pending });
+      return pending.promise;
+    }
+
+    terminate() {
+      this.terminated = true;
+      this.ready = false;
+    }
+  }
+
+  const cacheObject = {
+    get(key) {
+      return cached.get(key);
+    },
+    set(key, value) {
+      cached.set(key, value);
+    },
+  };
+  const bootPromise = bootstrap({
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { rootLabel: "test traces", traces };
+      },
+    }),
+    analysisSessionFactory: (options) => new HarnessSession(options),
+    analysisDebounceMs: 100,
+    cacheObject,
+    documentObject,
+    windowObject: windowHarness.windowObject,
+    RendererClass: HarnessRenderer,
+    RangeNavigatorClass: HarnessNavigator,
+  });
+  return {
+    bootPromise,
+    cacheObject,
+    documentObject,
+    navigators,
+    pendingLoads,
+    renderers,
+    sessions,
+    ...windowHarness,
+  };
+}
+
+function analyzedScope({
+  startNs,
+  endNs,
+  sampling = renderSampling(false),
+  omissions = { unplacedDispatches: 0, unanchoredWaits: 0 },
+  kernel = "range-kernel",
+} = {}) {
+  return {
+    ...bootstrapLaunch({
+      startNs,
+      endNs,
+      sampling,
+      name: kernel,
+    }),
+    range: { startNs, endNs },
+    omissions,
+  };
+}
+
+test("bootstrap renders cached View data while exact analysis hydrates", async () => {
+  const trace = {
+    id: "trace-a",
+    label: "Trace A",
+    name: "a.jsonl",
+    relativePath: "a.jsonl",
+    size: 100,
+    modifiedTime: "2026-07-23T00:00:00.000Z",
+  };
+  const cachedLaunch = bootstrapLaunch({
+    sampling: renderSampling(true, 2, 20),
+    name: "cached",
+  });
+  const exactLaunch = bootstrapLaunch({ name: "exact" });
+  const cachedLoaded = {
+    dataset: bootstrapDataset([cachedLaunch]),
+    diagnostics: { sourceBytes: 100, parsedRows: 1 },
+  };
+  const harness = createBootstrapHarness({
+    traces: [trace],
+    datasets: new Map([["trace-a", bootstrapDataset([exactLaunch])]]),
+    cached: new Map([[traceCacheKey(trace), cachedLoaded]]),
+    deferredLoads: true,
+  });
+
+  await flushMicrotasks();
+  assert.equal(harness.renderers[0].datasets.at(-1).scope, cachedLaunch);
+  assert.equal(
+    harness.documentObject.getElementById("range-mode-analyze").disabled,
+    true,
+  );
+  assert.match(
+    harness.documentObject.getElementById("range-status").textContent,
+    /preparing exact analysis/i,
+  );
+  const renderer = harness.renderers[0];
+  const navigator = harness.navigators[0];
+  renderer.emitInspect({
+    kind: "cb",
+    item: { commandBufferIndex: 1 },
+    title: "Cached pin",
+    values: [],
+  });
+  navigator.emitCommit({ startNs: 20, endNs: 80 });
+  const datasetPublishes = renderer.datasets.length;
+
+  harness.pendingLoads[0].resolve();
+  const app = await harness.bootPromise;
+  assert.equal(
+    renderer.datasets.length,
+    datasetPublishes,
+    "ready hydration does not republish equivalent cached canvas data",
+  );
+  assert.deepEqual(app.state.selectedRange, { startNs: 20, endNs: 80 });
+  assert.equal(
+    harness.documentObject.getElementById("clear-selection").disabled,
+    false,
+    "cached inspector pin survives exact-session readiness",
+  );
+  assert.equal(
+    harness.documentObject.getElementById("range-mode-analyze").disabled,
+    false,
+  );
+  assert.equal(harness.sessions[0].terminated, false);
+});
+
+test("same-trace refresh renews only the exact session and selected rail click is a no-op", async () => {
+  const trace = {
+    id: "trace-a",
+    label: "Trace A",
+    name: "a.jsonl",
+    relativePath: "a.jsonl",
+    size: 100,
+    modifiedTime: "2026-07-23T00:00:00.000Z",
+  };
+  const launch = bootstrapLaunch();
+  const harness = createBootstrapHarness({
+    traces: [trace],
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+  });
+  const app = await harness.bootPromise;
+  const renderer = harness.renderers[0];
+  const navigator = harness.navigators[0];
+  navigator.emitCommit({ startNs: 15, endNs: 75 });
+  harness.documentObject.getElementById("range-mode-analyze").click();
+  harness.sessions[0].analysis[0].resolve({
+    range: { startNs: 15, endNs: 75 },
+    dataset: analyzedScope({ startNs: 15, endNs: 75 }),
+  });
+  await flushMicrotasks();
+  renderer.emitInspect({
+    kind: "cb",
+    item: { commandBufferIndex: 1 },
+    title: "Refresh pin",
+    values: [],
+  });
+  const datasetPublishes = renderer.datasets.length;
+
+  await app.refresh();
+  assert.equal(harness.sessions.length, 2);
+  assert.equal(harness.sessions[0].terminated, true);
+  assert.equal(harness.sessions[1].terminated, false);
+  assert.equal(renderer.datasets.length, datasetPublishes);
+  assert.equal(app.state.rangeMode, "analyze");
+  assert.deepEqual(app.state.selectedRange, { startNs: 15, endNs: 75 });
+  assert.equal(
+    harness.documentObject.getElementById("clear-selection").disabled,
+    false,
+  );
+
+  const selectedButton =
+    harness.documentObject.getElementById("trace-track").children[0];
+  selectedButton.click();
+  await flushMicrotasks();
+  assert.equal(harness.sessions.length, 2, "selected trace click is a no-op");
+});
+
+test("bootstrap debounces Analyze input, rejects stale results, and synchronizes canvas disclosure", async () => {
+  const sampledLaunch = bootstrapLaunch({
+    sampling: renderSampling(true, 2, 20),
+    name: "launch",
+  });
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+    }],
+    datasets: new Map([["trace-a", bootstrapDataset([sampledLaunch])]]),
+  });
+  const app = await harness.bootPromise;
+  const renderer = harness.renderers[0];
+  const navigator = harness.navigators[0];
+  const session = harness.sessions[0];
+  const samplingNote =
+    harness.documentObject.getElementById("timeline-sampling-note");
+  const analyzeButton =
+    harness.documentObject.getElementById("range-mode-analyze");
+
+  assert.equal(samplingNote.hidden, false, "sampled launch is disclosed");
+  analyzeButton.click();
+  assert.equal(session.analysis.length, 1, "mode switch analyzes immediately");
+  session.analysis[0].resolve({
+    range: { startNs: 10, endNs: 40 },
+    dataset: analyzedScope({
+      startNs: 10,
+      endNs: 40,
+      sampling: renderSampling(false),
+      omissions: { unplacedDispatches: 2, unanchoredWaits: 3 },
+    }),
+  });
+  await flushMicrotasks();
+  assert.equal(app.state.rangeMode, "analyze");
+  assert.equal(samplingNote.hidden, true, "unsampled exact range hides launch disclosure");
+  assert.equal(
+    harness.documentObject.getElementById("range-omissions").hidden,
+    false,
+  );
+  assert.match(
+    harness.documentObject.getElementById("range-omissions").textContent,
+    /2 dispatches.+3 waits/s,
+  );
+
+  const pin = {
+    kind: "cb",
+    item: { commandBufferIndex: 1 },
+    title: "Pinned CB",
+    values: [],
+  };
+  renderer.emitInspect(pin);
+  assert.equal(
+    harness.documentObject.getElementById("clear-selection").disabled,
+    false,
+  );
+
+  const historyBeforeInput = harness.historyWrites.length;
+  navigator.emitInput({ startNs: 20, endNs: 50 });
+  assert.deepEqual(harness.timerDelays(), [100]);
+  assert.equal(session.analysis.length, 1, "transient drag waits for debounce");
+  assert.equal(renderer.datasets.at(-1).scope, sampledLaunch);
+  assert.equal(samplingNote.hidden, false, "pending launch sample is disclosed");
+  assert.equal(
+    harness.documentObject.getElementById("clear-selection").disabled,
+    false,
+    "pending launch swap preserves the inspector pin",
+  );
+  assert.equal(harness.historyWrites.length, historyBeforeInput);
+
+  harness.runTimers();
+  assert.equal(session.analysis.length, 2);
+  navigator.emitInput({ startNs: 30, endNs: 60 });
+  session.analysis[1].resolve({
+    range: { startNs: 20, endNs: 50 },
+    dataset: analyzedScope({
+      startNs: 20,
+      endNs: 50,
+      kernel: "stale",
+    }),
+  });
+  await flushMicrotasks();
+  assert.deepEqual(
+    app.state.selectedRange,
+    { startNs: 30, endNs: 60 },
+    "new transient selection invalidates the in-flight older authority",
+  );
+  assert.equal(app.state.rangePending, true);
+  assert.notEqual(app.state.activeScope?.kernelCensus?.[0]?.kernel, "stale");
+
+  harness.runTimers();
+  assert.equal(session.analysis.length, 3);
+  session.analysis[2].resolve({
+    range: { startNs: 30, endNs: 60 },
+    dataset: analyzedScope({
+      startNs: 30,
+      endNs: 60,
+      kernel: "current",
+    }),
+  });
+  await flushMicrotasks();
+  assert.equal(app.state.activeScope.kernelCensus[0].kernel, "current");
+  assert.equal(
+    harness.documentObject.getElementById("clear-selection").disabled,
+    true,
+    "confirmed exact canvas replacement clears the pin",
+  );
+
+  const requestsBeforeFinal = session.analysis.length;
+  navigator.emitInput({ startNs: 35, endNs: 65 });
+  navigator.emitCommit({ startNs: 40, endNs: 70 });
+  assert.equal(
+    session.analysis.length,
+    requestsBeforeFinal + 1,
+    "final pointer commit issues immediately",
+  );
+  harness.runTimers();
+  assert.equal(
+    session.analysis.length,
+    requestsBeforeFinal + 1,
+    "final commit cancels the transient timer",
+  );
+});
+
+test("bootstrap commits timeline View ranges once, resets launch and Fit, and falls back on Analyze failure", async () => {
+  const firstLaunch = bootstrapLaunch({ startNs: 0, endNs: 100 });
+  const secondLaunch = bootstrapLaunch({
+    startNs: 200,
+    endNs: 300,
+    sampling: renderSampling(false),
+    name: "second",
+  });
+  const traceA = {
+    id: "trace-a",
+    label: "Trace A",
+    name: "a.jsonl",
+    relativePath: "a.jsonl",
+    size: 100,
+  };
+  const traceB = {
+    id: "trace-b",
+    label: "Trace B",
+    name: "b.jsonl",
+    relativePath: "b.jsonl",
+    size: 100,
+  };
+  const harness = createBootstrapHarness({
+    traces: [traceA, traceB],
+    datasets: new Map([
+      ["trace-a", bootstrapDataset([firstLaunch, secondLaunch])],
+      ["trace-b", bootstrapDataset([bootstrapLaunch({
+        startNs: 500,
+        endNs: 600,
+        name: "trace-b",
+      })])],
+    ]),
+  });
+  const app = await harness.bootPromise;
+  const renderer = harness.renderers[0];
+  const navigator = harness.navigators[0];
+  const rangeStatus =
+    harness.documentObject.getElementById("range-status");
+
+  const historyBeforePan = harness.historyWrites.length;
+  renderer.emitViewport(
+    { startNs: 10, endNs: 70 },
+    { committed: false, source: "pointer-pan" },
+  );
+  renderer.emitViewport(
+    { startNs: 20, endNs: 80 },
+    { committed: false, source: "pointer-pan" },
+  );
+  assert.equal(harness.historyWrites.length, historyBeforePan);
+  renderer.emitViewport(
+    { startNs: 20, endNs: 80 },
+    { committed: true, source: "pointer-pan" },
+  );
+  assert.equal(harness.historyWrites.length, historyBeforePan + 1);
+  assert.match(rangeStatus.textContent, /Viewing 20 ns.+80 ns/s);
+
+  navigator.emitCommit({ startNs: 30, endNs: 60 });
+  harness.documentObject.getElementById("fit-timeline").click();
+  assert.deepEqual(app.state.selectedRange, { startNs: 0, endNs: 100 });
+  assert.match(rangeStatus.textContent, /Viewing 0 ns.+100 ns/s);
+
+  const windowSelect =
+    harness.documentObject.getElementById("window-select");
+  windowSelect.value = "1";
+  windowSelect.dispatch("change");
+  assert.equal(app.state.currentWindowIndex, 1);
+  assert.equal(app.state.rangeMode, "view");
+  assert.deepEqual(app.state.selectedRange, { startNs: 200, endNs: 300 });
+
+  harness.documentObject.getElementById("range-mode-analyze").click();
+  const sampledExact = harness.sessions[0].analysis.at(-1);
+  sampledExact.resolve({
+    range: { startNs: 200, endNs: 300 },
+    dataset: analyzedScope({
+      startNs: 200,
+      endNs: 300,
+      sampling: renderSampling(true),
+    }),
+  });
+  await flushMicrotasks();
+  const samplingNote =
+    harness.documentObject.getElementById("timeline-sampling-note");
+  assert.equal(
+    samplingNote.hidden,
+    false,
+    "sampled exact range discloses sampling over an unsampled launch",
+  );
+
+  navigator.emitInput({ startNs: 220, endNs: 260 });
+  assert.equal(
+    samplingNote.hidden,
+    true,
+    "pending analysis restores the unsampled launch disclosure",
+  );
+  navigator.emitCommit({ startNs: 220, endNs: 260 });
+  const failing = harness.sessions[0].analysis.at(-1);
+  failing.reject(new Error("range exploded"));
+  await flushMicrotasks();
+  assert.equal(app.state.rangeMode, "view");
+  assert.equal(app.state.activeScope, secondLaunch);
+  assert.match(rangeStatus.textContent, /Exact analysis failed.+range exploded/i);
+
+  await app.selectTrace("trace-b");
+  assert.equal(harness.sessions[0].terminated, true);
+  assert.equal(app.state.currentTraceId, "trace-b");
+  assert.equal(app.state.rangeMode, "view");
+  assert.deepEqual(app.state.selectedRange, { startNs: 500, endNs: 600 });
+});
 
 test("range URL stores launch-relative offsets and mode", () => {
   const url = rangeSelectionUrl(
@@ -62,6 +954,9 @@ test("invalid range URL restores View over the complete launch", () => {
     "http://localhost/?range=analyze&from=wat&to=20",
     "http://localhost/?range=analyze&from=0&to=0",
     "http://localhost/?range=analyze&from=0.5&to=20",
+    "http://localhost/?range=analyze&from=&to=20",
+    "http://localhost/?range=analyze&from=%20%20&to=20",
+    "http://localhost/?range=analyze&from=0&to=%09",
   ]) {
     assert.deepEqual(parseRangeSelection(input, bounds), {
       mode: "view",

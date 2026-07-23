@@ -1021,3 +1021,38 @@ test("external viewport update can avoid a synchronization callback", () => {
   assert.deepEqual(renderer.viewport, { startNs: 10, endNs: 30 });
   renderer.destroy();
 });
+
+test("pointer pans emit transient viewport changes and exactly one committed release", () => {
+  const environment = createEnvironment({ width: 200 });
+  const changes = [];
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onViewportChange(range, metadata) {
+      changes.push({ range, metadata });
+    },
+  });
+  renderer.setDataset(dataset({ startNs: 0, endNs: 200 }), {
+    bounds: { startNs: 0, endNs: 200 },
+    viewport: { startNs: 50, endNs: 150 },
+  });
+
+  environment.emit("pointerdown", { clientX: 100, pointerId: 7 });
+  environment.emit("pointermove", { clientX: 80, pointerId: 7 });
+  environment.emit("pointermove", { clientX: 60, pointerId: 7 });
+  assert.equal(changes.length, 2);
+  assert.ok(changes.every(({ metadata }) => metadata.committed === false));
+  assert.ok(changes.every(({ metadata }) => metadata.source === "pointer-pan"));
+
+  environment.emit("pointerup", { clientX: 60, pointerId: 7 });
+  assert.equal(changes.length, 3);
+  assert.deepEqual(changes.at(-1), {
+    range: renderer.viewport,
+    metadata: { committed: true, source: "pointer-pan" },
+  });
+
+  renderer.handleKeyDown({ key: "ArrowLeft", preventDefault() {} });
+  assert.deepEqual(changes.at(-1).metadata, {
+    committed: true,
+    source: "keyboard",
+  });
+  renderer.destroy();
+});
