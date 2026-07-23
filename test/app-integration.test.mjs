@@ -483,7 +483,10 @@ test("trace rail exposes model, mode, evidence and retains focus across rerender
   const alpha = track.querySelectorAll(".trace-toggle")[0];
   assert.equal(childByClass(alpha, "trace-model").textContent, "Model: Unknown");
   assert.equal(childByClass(alpha, "trace-mode").textContent, "Mode: Unknown");
-  assert.match(childByClass(alpha, "trace-badge").textContent, /pending/i);
+  assert.equal(
+    childByClass(alpha, "trace-badge").textContent,
+    "Not loaded",
+  );
   alpha.focus();
 
   handleTraceRailKey({
@@ -519,7 +522,7 @@ test("rail evidence state is honest before and after parsing", () => {
   assert.deepEqual(traceRailState({ model: "", mode: "" }, null), {
     model: "Unknown",
     mode: "Unknown",
-    evidence: "Pending",
+    evidence: "Not loaded",
     evidenceValid: null,
   });
   assert.deepEqual(
@@ -530,7 +533,7 @@ test("rail evidence state is honest before and after parsing", () => {
     {
       model: "Hy3",
       mode: "MTP K3",
-      evidence: "Complete",
+      evidence: "Capture complete",
       evidenceValid: true,
     },
   );

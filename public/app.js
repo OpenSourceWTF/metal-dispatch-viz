@@ -637,7 +637,7 @@ export function traceRailState(trace, dataset) {
     return {
       model,
       mode,
-      evidence: "Pending",
+      evidence: "Not loaded",
       evidenceValid: null,
     };
   }
@@ -645,7 +645,7 @@ export function traceRailState(trace, dataset) {
     return {
       model,
       mode,
-      evidence: "Complete",
+      evidence: "Capture complete",
       evidenceValid: true,
     };
   }
@@ -736,7 +736,7 @@ export function renderTraceRail({
       documentObject,
       button,
       "span",
-      `Evidence: ${railState.evidence}`,
+      railState.evidence,
       `trace-badge ${evidenceClass}`,
     );
     button.addEventListener("click", () => onSelect?.(trace.id));
