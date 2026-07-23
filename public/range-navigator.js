@@ -14,13 +14,22 @@ function positiveSpan(range, label) {
   return span;
 }
 
+function normalizedMinimumSpan(boundSpan, minimumSpanNs) {
+  const requested =
+    Number.isFinite(minimumSpanNs) && minimumSpanNs > 0
+      ? minimumSpanNs
+      : 1;
+  return Math.min(boundSpan, Math.max(1, requested));
+}
+
+function sameRange(left, right) {
+  return left?.startNs === right?.startNs && left?.endNs === right?.endNs;
+}
+
 export function clampSelectedRange(range, bounds, minimumSpanNs = 1) {
   const boundSpan = positiveSpan(bounds, "Launch");
   const rangeSpan = positiveSpan(range, "Selected range");
-  const minimumSpan = Math.min(
-    boundSpan,
-    Math.max(1, Number.isFinite(minimumSpanNs) ? minimumSpanNs : 1),
-  );
+  const minimumSpan = normalizedMinimumSpan(boundSpan, minimumSpanNs);
   const requestedSpan = Math.max(
     minimumSpan,
     Math.min(boundSpan, rangeSpan),
@@ -38,6 +47,9 @@ export function clampSelectedRange(range, bounds, minimumSpanNs = 1) {
   return Object.freeze({ startNs, endNs });
 }
 
+/**
+ * Move a selected range by a time delta while preserving its duration.
+ */
 export function moveSelectedRange(range, deltaNs, bounds) {
   positiveSpan(range, "Selected range");
   positiveSpan(bounds, "Launch");
@@ -62,27 +74,29 @@ export function resizeSelectedRange(
   bounds,
   minimumSpanNs = 1,
 ) {
+  const boundSpan = positiveSpan(bounds, "Launch");
   positiveSpan(range, "Selected range");
-  positiveSpan(bounds, "Launch");
   if (edge !== "start" && edge !== "end") {
     throw new RangeError('Range edge must be either "start" or "end".');
   }
   if (!Number.isFinite(atNs)) {
     throw new TypeError("Range edge position must be finite.");
   }
+  const minimumSpan = normalizedMinimumSpan(boundSpan, minimumSpanNs);
+  const normalizedRange = clampSelectedRange(range, bounds, minimumSpan);
   return edge === "start"
     ? Object.freeze({
         startNs: Math.max(
           bounds.startNs,
-          Math.min(atNs, range.endNs - minimumSpanNs),
+          Math.min(atNs, normalizedRange.endNs - minimumSpan),
         ),
-        endNs: range.endNs,
+        endNs: normalizedRange.endNs,
       })
     : Object.freeze({
-        startNs: range.startNs,
+        startNs: normalizedRange.startNs,
         endNs: Math.min(
           bounds.endNs,
-          Math.max(atNs, range.startNs + minimumSpanNs),
+          Math.max(atNs, normalizedRange.startNs + minimumSpan),
         ),
       });
 }
@@ -102,12 +116,22 @@ const FALLBACK_COLORS = Object.freeze({
   secondary: "#91aab2",
 });
 
-function cssColor(windowObject, element, property, fallback) {
-  const value = windowObject
-    ?.getComputedStyle?.(element)
-    ?.getPropertyValue?.(property)
-    ?.trim?.();
-  return value || fallback;
+function resolvedPalette(windowObject, element) {
+  const styles = windowObject?.getComputedStyle?.(element);
+  const color = (property, fallback) => {
+    const value = styles?.getPropertyValue?.(property)?.trim?.();
+    return value || fallback;
+  };
+  return Object.freeze({
+    canvas: color("--canvas", FALLBACK_COLORS.canvas),
+    rule: color("--rule", FALLBACK_COLORS.rule),
+    host: color("--exposed-host", FALLBACK_COLORS.host),
+    gpu: color("--gpu", FALLBACK_COLORS.gpu),
+    dispatch: color("--text", FALLBACK_COLORS.dispatch),
+    wait: color("--decision-cap", FALLBACK_COLORS.wait),
+    dependency: color("--dependency", FALLBACK_COLORS.dependency),
+    secondary: color("--secondary", FALLBACK_COLORS.secondary),
+  });
 }
 
 function formatTimeNs(value) {
@@ -146,9 +170,9 @@ function overviewBounds(overview) {
   });
 }
 
-function elementWidth(element) {
+function visibleElementWidth(element) {
   const width = element?.getBoundingClientRect?.().width;
-  return Number.isFinite(width) && width > 0 ? width : 1;
+  return Number.isFinite(width) && width > 0 ? width : null;
 }
 
 function timeAtClientX(clientX, canvas, bounds) {
@@ -187,6 +211,7 @@ export class RangeNavigator {
     this.overview = null;
     this.bounds = null;
     this.range = null;
+    this.rangeRevision = 0;
     this.drag = null;
     this.disabled = false;
     this.destroyed = false;
@@ -213,11 +238,11 @@ export class RangeNavigator {
       this.cancelDrag(event));
     for (const target of [this.band, this.startHandle, this.endHandle]) {
       this.listen(target, "lostpointercapture", (event) =>
-        this.cancelDrag(event));
+        this.cancelDrag(event, { captureLost: true }));
     }
 
     this.resizeObserver = this.window.ResizeObserver
-      ? new this.window.ResizeObserver(() => this.requestRender())
+      ? new this.window.ResizeObserver(() => this.handleResize())
       : null;
     this.resizeObserver?.observe(this.canvas);
     this.setDisabled(false);
@@ -230,10 +255,19 @@ export class RangeNavigator {
 
   minimumSpanNs() {
     if (!this.bounds) return 1;
-    return Math.max(
-      1,
-      (this.bounds.endNs - this.bounds.startNs) / elementWidth(this.canvas),
-    );
+    return this.layoutMinimumSpanNs() ??
+      normalizedMinimumSpan(positiveSpan(this.bounds, "Launch"), 1);
+  }
+
+  layoutMinimumSpanNs() {
+    if (!this.bounds) return null;
+    const width = visibleElementWidth(this.canvas);
+    if (width === null) return null;
+    const boundSpan = positiveSpan(this.bounds, "Launch");
+    const requested = boundSpan / width;
+    return Number.isFinite(requested)
+      ? normalizedMinimumSpan(boundSpan, requested)
+      : boundSpan;
   }
 
   setOverview(overview) {
@@ -254,46 +288,93 @@ export class RangeNavigator {
       `${bins.length} overview bins, ${dispatches} dispatches, ${waits} waits.`;
     this.summary.textContent = description;
     this.canvas.setAttribute("aria-label", description);
-    this.range = clampSelectedRange(
+    const nextRange = clampSelectedRange(
       this.range ?? bounds,
       bounds,
       this.minimumSpanNs(),
     );
+    if (!sameRange(this.range, nextRange)) this.rangeRevision += 1;
+    this.range = nextRange;
     this.updateControls();
     this.requestRender();
     return this;
   }
 
-  setRange(range, { emit = false } = {}) {
+  applyRange(range) {
     if (!this.bounds) {
       throw new Error("Set an overview before setting the selected range.");
     }
     if (!finiteRange(range)) {
       throw new TypeError("Selected range must have positive finite duration.");
     }
-    this.range = clampSelectedRange(range, this.bounds, this.minimumSpanNs());
-    this.updateControls();
+    const nextRange = clampSelectedRange(
+      range,
+      this.bounds,
+      this.minimumSpanNs(),
+    );
+    const changed = !sameRange(this.range, nextRange);
+    if (changed) {
+      this.range = nextRange;
+      this.rangeRevision += 1;
+      this.updateControls();
+    }
+    return Object.freeze({
+      changed,
+      range: Object.freeze({ ...this.range }),
+      revision: this.rangeRevision,
+    });
+  }
+
+  setRange(range, { emit = false } = {}) {
+    const update = this.applyRange(range);
+    if (emit && update.changed) this.onRangeInput(update.range);
+    return update.range;
+  }
+
+  handleResize() {
+    if (this.destroyed) return;
+    const minimumSpanNs = this.layoutMinimumSpanNs();
+    if (minimumSpanNs !== null && this.range) {
+      const nextRange = clampSelectedRange(
+        this.range,
+        this.bounds,
+        minimumSpanNs,
+      );
+      const update = this.applyRange(nextRange);
+      if (!update.changed) {
+        this.updateControls();
+      } else {
+        const disabled = this.disabled;
+        this.onRangeInput(update.range);
+        if (
+          !this.destroyed &&
+          this.rangeRevision === update.revision &&
+          this.disabled === disabled
+        ) {
+          this.onRangeCommit(update.range);
+        }
+      }
+    }
     this.requestRender();
-    const result = Object.freeze({ ...this.range });
-    if (emit) this.onRangeInput(result);
-    return result;
   }
 
   setDisabled(disabled) {
-    this.disabled = Boolean(disabled);
+    const nextDisabled = Boolean(disabled);
+    this.disabled = nextDisabled;
     for (const handle of [this.startHandle, this.endHandle]) {
-      handle.setAttribute("aria-disabled", String(this.disabled));
-      handle.setAttribute("tabindex", this.disabled ? "-1" : "0");
+      handle.setAttribute("aria-disabled", String(nextDisabled));
+      handle.setAttribute("tabindex", nextDisabled ? "-1" : "0");
     }
-    this.band.setAttribute("aria-disabled", String(this.disabled));
-    if (this.disabled && this.drag) {
-      this.cancelActiveDrag();
+    this.band.setAttribute("aria-disabled", String(nextDisabled));
+    if (nextDisabled && this.drag) {
+      this.abandonDrag(this.drag, { restore: false, release: true });
     }
     return this;
   }
 
   updateControls() {
     if (!this.bounds || !this.range) return;
+    const minimumSpanNs = this.minimumSpanNs();
     const startPercent = percent(this.range.startNs, this.bounds);
     const endPercent = percent(this.range.endNs, this.bounds);
     this.band.style.left = `${startPercent}%`;
@@ -302,15 +383,27 @@ export class RangeNavigator {
     this.endHandle.style.left = "100%";
 
     const attributes = [
-      [this.startHandle, "Range start", this.range.startNs],
-      [this.endHandle, "Range end", this.range.endNs],
+      [
+        this.startHandle,
+        "Range start",
+        this.range.startNs,
+        this.bounds.startNs,
+        this.range.endNs - minimumSpanNs,
+      ],
+      [
+        this.endHandle,
+        "Range end",
+        this.range.endNs,
+        this.range.startNs + minimumSpanNs,
+        this.bounds.endNs,
+      ],
     ];
-    for (const [handle, label, value] of attributes) {
+    for (const [handle, label, value, minimum, maximum] of attributes) {
       handle.setAttribute("role", "slider");
       handle.setAttribute("aria-label", label);
       handle.setAttribute("aria-orientation", "horizontal");
-      handle.setAttribute("aria-valuemin", this.bounds.startNs);
-      handle.setAttribute("aria-valuemax", this.bounds.endNs);
+      handle.setAttribute("aria-valuemin", minimum);
+      handle.setAttribute("aria-valuemax", maximum);
       handle.setAttribute("aria-valuenow", value);
       handle.setAttribute(
         "aria-valuetext",
@@ -322,6 +415,7 @@ export class RangeNavigator {
   beginDrag(type, target, event) {
     if (
       this.disabled ||
+      this.drag ||
       !this.bounds ||
       !this.range ||
       event.button !== 0 ||
@@ -333,46 +427,65 @@ export class RangeNavigator {
     if (type !== "band") event.stopPropagation?.();
     target.setPointerCapture?.(event.pointerId);
     if (type === "band") target.classList?.add?.("is-dragging");
-    this.drag = {
+    this.drag = Object.freeze({
       type,
       target,
       pointerId: event.pointerId,
       clientX: event.clientX,
       range: Object.freeze({ ...this.range }),
-    };
+    });
   }
 
-  rangeForPointer(clientX) {
-    if (this.drag.type === "band") {
-      const width = elementWidth(this.canvas);
+  rangeForPointer(drag, clientX) {
+    if (drag.type === "band") {
+      const width = visibleElementWidth(this.canvas);
+      if (width === null) return drag.range;
       const deltaNs =
-        ((clientX - this.drag.clientX) / width) *
+        ((clientX - drag.clientX) / width) *
         (this.bounds.endNs - this.bounds.startNs);
-      return moveSelectedRange(this.drag.range, deltaNs, this.bounds);
+      return moveSelectedRange(drag.range, deltaNs, this.bounds);
     }
     return resizeSelectedRange(
-      this.drag.range,
-      this.drag.type,
+      drag.range,
+      drag.type,
       timeAtClientX(clientX, this.canvas, this.bounds),
       this.bounds,
       this.minimumSpanNs(),
     );
   }
 
-  handlePointerMove(event) {
+  emitDragInput(drag, update) {
+    this.onRangeInput(update.range);
     if (
-      !this.drag ||
-      event.pointerId !== this.drag.pointerId ||
+      this.destroyed ||
+      this.drag !== drag
+    ) {
+      return false;
+    }
+    if (this.disabled || this.rangeRevision !== update.revision) {
+      this.abandonDrag(drag, { restore: false, release: true });
+      return false;
+    }
+    return true;
+  }
+
+  handlePointerMove(event) {
+    const drag = this.drag;
+    if (
+      !drag ||
+      event.pointerId !== drag.pointerId ||
       !Number.isFinite(event.clientX)
     ) {
       return;
     }
     event.preventDefault();
-    this.setRange(this.rangeForPointer(event.clientX), { emit: true });
+    const update = this.applyRange(this.rangeForPointer(drag, event.clientX));
+    if (update.changed) this.emitDragInput(drag, update);
   }
 
-  releasePointerCapture(drag) {
+  finishPointerCapture(drag, { release }) {
     if (drag.type === "band") drag.target.classList?.remove?.("is-dragging");
+    if (!release) return;
     try {
       drag.target.releasePointerCapture?.(drag.pointerId);
     } catch {
@@ -380,31 +493,39 @@ export class RangeNavigator {
     }
   }
 
+  abandonDrag(
+    drag,
+    { restore = false, release = true, notifyInput = false } = {},
+  ) {
+    if (this.drag !== drag) return;
+    this.drag = null;
+    const update = restore ? this.applyRange(drag.range) : null;
+    this.finishPointerCapture(drag, { release });
+    if (notifyInput && update?.changed) this.onRangeInput(update.range);
+  }
+
   finishDrag(event) {
-    if (!this.drag || event.pointerId !== this.drag.pointerId) return;
     const drag = this.drag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
     if (Number.isFinite(event.clientX)) {
-      this.setRange(this.rangeForPointer(event.clientX), { emit: true });
+      const update = this.applyRange(this.rangeForPointer(drag, event.clientX));
+      if (update.changed && !this.emitDragInput(drag, update)) return;
     }
+    if (this.destroyed || this.disabled || this.drag !== drag) return;
+    const result = Object.freeze({ ...this.range });
     this.drag = null;
-    this.releasePointerCapture(drag);
-    this.onRangeCommit(Object.freeze({ ...this.range }));
+    this.finishPointerCapture(drag, { release: true });
+    this.onRangeCommit(result);
   }
 
-  cancelActiveDrag() {
-    if (!this.drag) return;
+  cancelDrag(event, { captureLost = false } = {}) {
     const drag = this.drag;
-    this.drag = null;
-    this.range = drag.range;
-    this.updateControls();
-    this.requestRender();
-    this.releasePointerCapture(drag);
-    this.onRangeInput(Object.freeze({ ...this.range }));
-  }
-
-  cancelDrag(event) {
-    if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-    this.cancelActiveDrag();
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    this.abandonDrag(drag, {
+      restore: true,
+      release: !captureLost,
+      notifyInput: true,
+    });
   }
 
   handleOverviewPointerDown(event) {
@@ -420,12 +541,21 @@ export class RangeNavigator {
     const atNs = timeAtClientX(event.clientX, this.canvas, this.bounds);
     if (atNs >= this.range.startNs && atNs <= this.range.endNs) return;
     event.preventDefault();
-    const centerNs = (this.range.startNs + this.range.endNs) / 2;
-    this.setRange(
+    const centerNs =
+      this.range.startNs + (this.range.endNs - this.range.startNs) / 2;
+    const update = this.applyRange(
       moveSelectedRange(this.range, atNs - centerNs, this.bounds),
-      { emit: true },
     );
-    this.onRangeCommit(Object.freeze({ ...this.range }));
+    if (!update.changed) return;
+    const disabled = this.disabled;
+    this.onRangeInput(update.range);
+    if (
+      !this.destroyed &&
+      this.rangeRevision === update.revision &&
+      this.disabled === disabled
+    ) {
+      this.onRangeCommit(update.range);
+    }
   }
 
   handleKey(edge, event) {
@@ -443,7 +573,7 @@ export class RangeNavigator {
       return;
     }
     event.preventDefault();
-    this.setRange(
+    const update = this.applyRange(
       resizeSelectedRange(
         this.range,
         edge,
@@ -452,7 +582,7 @@ export class RangeNavigator {
         this.minimumSpanNs(),
       ),
     );
-    this.onRangeCommit(Object.freeze({ ...this.range }));
+    if (update.changed) this.onRangeCommit(update.range);
   }
 
   requestRender() {
@@ -477,14 +607,10 @@ export class RangeNavigator {
     if (this.canvas.height !== backingHeight) this.canvas.height = backingHeight;
 
     const context = this.context;
+    const palette = resolvedPalette(this.window, this.canvas);
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     context.clearRect(0, 0, width, height);
-    context.fillStyle = cssColor(
-      this.window,
-      this.canvas,
-      "--canvas",
-      FALLBACK_COLORS.canvas,
-    );
+    context.fillStyle = palette.canvas;
     context.fillRect(0, 0, width, height);
 
     const bins = Array.isArray(this.overview.bins) ? this.overview.bins : [];
@@ -512,19 +638,9 @@ export class RangeNavigator {
         1,
         Math.max(0, (Number.isFinite(bin.gpuBusyNs) ? bin.gpuBusyNs : 0) / binSpan),
       );
-      context.fillStyle = cssColor(
-        this.window,
-        this.canvas,
-        "--exposed-host",
-        FALLBACK_COLORS.host,
-      );
+      context.fillStyle = palette.host;
       context.fillRect(x, 7, drawWidth, 13 * hostRatio);
-      context.fillStyle = cssColor(
-        this.window,
-        this.canvas,
-        "--gpu",
-        FALLBACK_COLORS.gpu,
-      );
+      context.fillStyle = palette.gpu;
       context.fillRect(x, 27, drawWidth, 13 * gpuRatio);
 
       const dispatchRatio = Math.min(
@@ -535,12 +651,7 @@ export class RangeNavigator {
             maxDispatches,
         ),
       );
-      context.fillStyle = cssColor(
-        this.window,
-        this.canvas,
-        "--text",
-        FALLBACK_COLORS.dispatch,
-      );
+      context.fillStyle = palette.dispatch;
       context.fillRect(x, 48 - 5 * dispatchRatio, drawWidth, 5 * dispatchRatio);
       if (Number.isFinite(bin.waitCount) && bin.waitCount > 0) {
         const classes =
@@ -552,12 +663,7 @@ export class RangeNavigator {
           const waitX =
             x + (drawWidth * (classIndex + 1)) / (classes.length + 1);
           if (waitClass === "dependency") {
-            context.strokeStyle = cssColor(
-              this.window,
-              this.canvas,
-              "--dependency",
-              FALLBACK_COLORS.dependency,
-            );
+            context.strokeStyle = palette.dependency;
             context.setLineDash?.([3, 2]);
             context.beginPath();
             context.moveTo(waitX, 0);
@@ -565,12 +671,7 @@ export class RangeNavigator {
             context.stroke();
             context.setLineDash?.([]);
           } else if (waitClass === "cap") {
-            context.fillStyle = cssColor(
-              this.window,
-              this.canvas,
-              "--decision-cap",
-              FALLBACK_COLORS.wait,
-            );
+            context.fillStyle = palette.wait;
             context.beginPath();
             context.moveTo(waitX, 0);
             context.lineTo(waitX + 3, 6);
@@ -578,21 +679,11 @@ export class RangeNavigator {
             context.closePath();
             context.fill();
           } else if (waitClass === "decision") {
-            context.fillStyle = cssColor(
-              this.window,
-              this.canvas,
-              "--decision-cap",
-              FALLBACK_COLORS.wait,
-            );
+            context.fillStyle = palette.wait;
             context.fillRect(waitX - 1.5, 0, 1, height);
             context.fillRect(waitX + 0.5, 0, 1, height);
           } else {
-            context.strokeStyle = cssColor(
-              this.window,
-              this.canvas,
-              "--secondary",
-              FALLBACK_COLORS.secondary,
-            );
+            context.strokeStyle = palette.secondary;
             context.beginPath();
             context.moveTo(waitX, 0);
             context.lineTo(waitX, height);
@@ -602,12 +693,7 @@ export class RangeNavigator {
       }
     }
 
-    context.strokeStyle = cssColor(
-      this.window,
-      this.canvas,
-      "--rule",
-      FALLBACK_COLORS.rule,
-    );
+    context.strokeStyle = palette.rule;
     context.lineWidth = 1;
     context.beginPath();
     context.moveTo(0, 24.5);
@@ -623,7 +709,7 @@ export class RangeNavigator {
     if (this.drag) {
       const drag = this.drag;
       this.drag = null;
-      this.releasePointerCapture(drag);
+      this.finishPointerCapture(drag, { release: true });
     }
     for (const { target, type, listener, options } of this.listeners) {
       target.removeEventListener(type, listener, options);

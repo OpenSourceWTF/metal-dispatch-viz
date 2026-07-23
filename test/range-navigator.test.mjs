@@ -22,7 +22,7 @@ test("selected range clamps without changing duration at launch edges", () => {
   );
 });
 
-test("band movement and handle resize stay inside launch bounds", () => {
+test("band movement applies a time delta and handle resize stays inside bounds", () => {
   assert.deepEqual(
     moveSelectedRange({ startNs: 200, endNs: 400 }, 750, bounds),
     { startNs: 800, endNs: 1_000 },
@@ -96,12 +96,49 @@ test("range geometry rejects non-finite inputs before reaching DOM styles", () =
   );
 });
 
+test("resize minimum normalization always returns a finite non-crossing range", () => {
+  for (const minimumSpanNs of [Number.NaN, Number.POSITIVE_INFINITY, -5]) {
+    assert.deepEqual(
+      resizeSelectedRange(
+        { startNs: 200, endNs: 400 },
+        "start",
+        400,
+        bounds,
+        minimumSpanNs,
+      ),
+      { startNs: 399, endNs: 400 },
+    );
+  }
+  assert.deepEqual(
+    resizeSelectedRange(
+      { startNs: 200, endNs: 400 },
+      "end",
+      300,
+      bounds,
+      2_000,
+    ),
+    bounds,
+  );
+});
+
 function eventTarget(extra = {}) {
   const listeners = new Map();
+  const classes = new Set();
   return {
     attributes: new Map(),
     style: {},
     listeners,
+    classList: {
+      add(...names) {
+        for (const name of names) classes.add(name);
+      },
+      remove(...names) {
+        for (const name of names) classes.delete(name);
+      },
+      contains(name) {
+        return classes.has(name);
+      },
+    },
     addEventListener(type, listener) {
       const handlers = listeners.get(type) ?? new Set();
       handlers.add(listener);
@@ -142,6 +179,9 @@ function eventTarget(extra = {}) {
 
 function navigatorFixture({ width = 500, height = 58 } = {}) {
   const drawCalls = [];
+  let styleReadCount = 0;
+  let currentWidth = width;
+  let currentHeight = height;
   const context = new Proxy(
     {
       setLineDash(value) {
@@ -175,6 +215,7 @@ function navigatorFixture({ width = 500, height = 58 } = {}) {
       animationFrames.delete(id);
     },
     getComputedStyle() {
+      styleReadCount += 1;
       return { getPropertyValue: () => "" };
     },
   });
@@ -214,7 +255,12 @@ function navigatorFixture({ width = 500, height = 58 } = {}) {
     width: 0,
     height: 0,
     getBoundingClientRect() {
-      return { left: 0, top: 0, width, height };
+      return {
+        left: 0,
+        top: 0,
+        width: currentWidth,
+        height: currentHeight,
+      };
     },
     getContext(kind) {
       assert.equal(kind, "2d");
@@ -238,6 +284,21 @@ function navigatorFixture({ width = 500, height = 58 } = {}) {
     releases,
     drawCalls,
     FakeResizeObserver,
+    getStyleReadCount() {
+      return styleReadCount;
+    },
+    setDevicePixelRatio(value) {
+      windowObject.devicePixelRatio = value;
+    },
+    setSize(nextWidth, nextHeight = currentHeight) {
+      currentWidth = nextWidth;
+      currentHeight = nextHeight;
+    },
+    triggerResize() {
+      for (const observer of FakeResizeObserver.instances) {
+        if (!observer.disconnected) observer.callback([{ target: canvas }]);
+      }
+    },
     flushAnimationFrames() {
       const pending = [...animationFrames.values()];
       animationFrames.clear();
@@ -288,10 +349,71 @@ test("handle keyboard commits an accessible range update", () => {
   assert.deepEqual(commits.at(-1), { startNs: 210, endNs: 400 });
   assert.equal(fixture.startHandle.attributes.get("role"), "slider");
   assert.equal(fixture.startHandle.attributes.get("aria-valuenow"), "210");
+  assert.equal(fixture.startHandle.attributes.get("aria-valuemax"), "398");
+  assert.equal(fixture.endHandle.attributes.get("aria-valuemin"), "212");
   assert.equal(fixture.band.style.left, "21%");
   assert.equal(fixture.band.style.width, "19%");
   assert.equal(fixture.startHandle.style.left, "0%");
   assert.equal(fixture.endHandle.style.left, "100%");
+  navigator.destroy();
+});
+
+test("a hidden overview preserves selection until visible layout can reconcile it", () => {
+  const fixture = navigatorFixture({ width: 0 });
+  const inputs = [];
+  const commits = [];
+  const navigator = new RangeNavigator(fixture, {
+    onRangeInput: (range) => inputs.push(range),
+    onRangeCommit: (range) => commits.push(range),
+  });
+  navigator.setOverview(oneBinOverview());
+  assert.deepEqual(
+    navigator.setRange({ startNs: 200, endNs: 202 }),
+    { startNs: 200, endNs: 202 },
+  );
+  assert.deepEqual(inputs, []);
+  assert.deepEqual(commits, []);
+
+  fixture.setSize(100);
+  fixture.triggerResize();
+
+  assert.deepEqual(inputs, [{ startNs: 200, endNs: 210 }]);
+  assert.deepEqual(commits, [{ startNs: 200, endNs: 210 }]);
+  assert.equal(fixture.startHandle.attributes.get("aria-valuemax"), "200");
+  assert.equal(fixture.endHandle.attributes.get("aria-valuemin"), "210");
+  navigator.destroy();
+});
+
+test("hidden sub-nanosecond launches retain valid dynamic slider constraints", () => {
+  const fixture = navigatorFixture({ width: 0 });
+  const navigator = new RangeNavigator(fixture);
+  navigator.setOverview(oneBinOverview(0, 0.5));
+
+  assert.equal(fixture.startHandle.attributes.get("aria-valuemin"), "0");
+  assert.equal(fixture.startHandle.attributes.get("aria-valuemax"), "0");
+  assert.equal(fixture.endHandle.attributes.get("aria-valuemin"), "0.5");
+  assert.equal(fixture.endHandle.attributes.get("aria-valuemax"), "0.5");
+  navigator.destroy();
+});
+
+test("shrinking the overview commits the newly authoritative one-pixel range once", () => {
+  const fixture = navigatorFixture({ width: 1_000 });
+  const inputs = [];
+  const commits = [];
+  const navigator = new RangeNavigator(fixture, {
+    onRangeInput: (range) => inputs.push(range),
+    onRangeCommit: (range) => commits.push(range),
+  });
+  navigator.setOverview(oneBinOverview());
+  navigator.setRange({ startNs: 998, endNs: 1_000 });
+
+  fixture.setSize(100);
+  fixture.triggerResize();
+  fixture.triggerResize();
+
+  assert.deepEqual(inputs, [{ startNs: 990, endNs: 1_000 }]);
+  assert.deepEqual(commits, [{ startNs: 990, endNs: 1_000 }]);
+  assert.equal(fixture.band.style.width, "1%");
   navigator.destroy();
 });
 
@@ -368,6 +490,128 @@ test("pointer cancellation restores the pre-drag range without committing", () =
   navigator.destroy();
 });
 
+test("lost pointer capture restores the range without releasing capture again", () => {
+  const fixture = navigatorFixture({ width: 1_000 });
+  const inputs = [];
+  const commits = [];
+  const navigator = new RangeNavigator(fixture, {
+    onRangeInput: (range) => inputs.push(range),
+    onRangeCommit: (range) => commits.push(range),
+  });
+  navigator.setOverview(oneBinOverview());
+  navigator.setRange({ startNs: 200, endNs: 400 });
+  fixture.band.dispatch("pointerdown", pointerEvent(5, 300));
+  fixture.window.dispatch("pointermove", pointerEvent(5, 500));
+  fixture.band.dispatch("lostpointercapture", pointerEvent(5, 500));
+
+  assert.deepEqual(inputs, [
+    { startNs: 400, endNs: 600 },
+    { startNs: 200, endNs: 400 },
+  ]);
+  assert.deepEqual(commits, []);
+  assert.deepEqual(fixture.releases, []);
+  assert.equal(fixture.band.classList.contains("is-dragging"), false);
+  navigator.destroy();
+});
+
+test("a second pointer cannot replace or leak the active band capture", () => {
+  const fixture = navigatorFixture({ width: 1_000 });
+  const commits = [];
+  const navigator = new RangeNavigator(fixture, {
+    onRangeCommit: (range) => commits.push(range),
+  });
+  navigator.setOverview(oneBinOverview());
+  navigator.setRange({ startNs: 200, endNs: 400 });
+  fixture.band.dispatch("pointerdown", pointerEvent(1, 300));
+  fixture.band.dispatch("pointerdown", pointerEvent(2, 700));
+  fixture.window.dispatch("pointerup", pointerEvent(2, 700));
+
+  assert.deepEqual(
+    fixture.captures.map(([, pointerId]) => pointerId),
+    [1],
+  );
+  assert.equal(fixture.band.classList.contains("is-dragging"), true);
+
+  fixture.window.dispatch("pointerup", pointerEvent(1, 500));
+  assert.deepEqual(commits, [{ startNs: 400, endNs: 600 }]);
+  assert.deepEqual(
+    fixture.releases.map(([, pointerId]) => pointerId),
+    [1],
+  );
+  assert.equal(fixture.band.classList.contains("is-dragging"), false);
+  navigator.destroy();
+});
+
+test("input callback destruction prevents a later commit or duplicate release", () => {
+  const fixture = navigatorFixture({ width: 1_000 });
+  const commits = [];
+  let navigator;
+  navigator = new RangeNavigator(fixture, {
+    onRangeInput() {
+      navigator.destroy();
+    },
+    onRangeCommit: (range) => commits.push(range),
+  });
+  navigator.setOverview(oneBinOverview());
+  navigator.setRange({ startNs: 200, endNs: 400 });
+  fixture.band.dispatch("pointerdown", pointerEvent(8, 300));
+  fixture.window.dispatch("pointerup", pointerEvent(8, 500));
+
+  assert.deepEqual(commits, []);
+  assert.deepEqual(
+    fixture.releases.map(([, pointerId]) => pointerId),
+    [8],
+  );
+});
+
+test("input callback disable prevents a later commit or duplicate release", () => {
+  const fixture = navigatorFixture({ width: 1_000 });
+  const commits = [];
+  let navigator;
+  navigator = new RangeNavigator(fixture, {
+    onRangeInput() {
+      navigator.setDisabled(true);
+    },
+    onRangeCommit: (range) => commits.push(range),
+  });
+  navigator.setOverview(oneBinOverview());
+  navigator.setRange({ startNs: 200, endNs: 400 });
+  fixture.band.dispatch("pointerdown", pointerEvent(8, 300));
+  fixture.window.dispatch("pointerup", pointerEvent(8, 500));
+
+  assert.deepEqual(commits, []);
+  assert.deepEqual(
+    fixture.releases.map(([, pointerId]) => pointerId),
+    [8],
+  );
+  assert.equal(fixture.startHandle.attributes.get("aria-disabled"), "true");
+  navigator.destroy();
+});
+
+test("input callback external range wins without a stale drag commit", () => {
+  const fixture = navigatorFixture({ width: 1_000 });
+  const commits = [];
+  let navigator;
+  navigator = new RangeNavigator(fixture, {
+    onRangeInput() {
+      navigator.setRange({ startNs: 700, endNs: 800 });
+    },
+    onRangeCommit: (range) => commits.push(range),
+  });
+  navigator.setOverview(oneBinOverview());
+  navigator.setRange({ startNs: 200, endNs: 400 });
+  fixture.band.dispatch("pointerdown", pointerEvent(8, 300));
+  fixture.window.dispatch("pointerup", pointerEvent(8, 500));
+
+  assert.deepEqual(commits, []);
+  assert.equal(fixture.startHandle.attributes.get("aria-valuenow"), "700");
+  assert.deepEqual(
+    fixture.releases.map(([, pointerId]) => pointerId),
+    [8],
+  );
+  navigator.destroy();
+});
+
 test("an overview click recenters and immediately commits the selection", () => {
   const fixture = navigatorFixture({ width: 1_000 });
   const inputs = [];
@@ -382,6 +626,32 @@ test("an overview click recenters and immediately commits the selection", () => 
 
   assert.deepEqual(inputs, [{ startNs: 700, endNs: 900 }]);
   assert.deepEqual(commits, [{ startNs: 700, endNs: 900 }]);
+  navigator.destroy();
+});
+
+test("overview recentering remains finite when absolute timestamps would overflow a midpoint sum", () => {
+  const fixture = navigatorFixture({ width: 1_000 });
+  const inputs = [];
+  const commits = [];
+  const startNs = 1e308;
+  const endNs = 1.1e308;
+  const navigator = new RangeNavigator(fixture, {
+    onRangeInput: (range) => inputs.push(range),
+    onRangeCommit: (range) => commits.push(range),
+  });
+  navigator.setOverview(oneBinOverview(startNs, endNs));
+  navigator.setRange({
+    startNs: 1.02e308,
+    endNs: 1.04e308,
+  });
+  fixture.canvas.dispatch("pointerdown", pointerEvent(1, 800));
+
+  const result = commits.at(-1);
+  assert.ok(Number.isFinite(result.startNs));
+  assert.ok(Number.isFinite(result.endNs));
+  assert.ok(Math.abs(result.startNs - 1.07e308) / 1e308 < 1e-12);
+  assert.ok(Math.abs(result.endNs - 1.09e308) / 1e308 < 1e-12);
+  assert.deepEqual(inputs, commits);
   navigator.destroy();
 });
 
@@ -499,6 +769,40 @@ test("overview renders exact bins at device resolution with an accessible summar
     ),
     "dependency waits retain a dashed shape",
   );
+  navigator.destroy();
+});
+
+test("selection changes never redraw the static overview or reread its palette", () => {
+  const fixture = navigatorFixture({ width: 1_000 });
+  const navigator = new RangeNavigator(fixture);
+  navigator.setOverview(oneBinOverview());
+  fixture.flushAnimationFrames();
+  assert.equal(fixture.getStyleReadCount(), 1);
+
+  navigator.setRange({ startNs: 200, endNs: 400 });
+  fixture.band.dispatch("pointerdown", pointerEvent(1, 300));
+  fixture.window.dispatch("pointermove", pointerEvent(1, 500));
+  fixture.window.dispatch("pointerup", pointerEvent(1, 500));
+  fixture.flushAnimationFrames();
+
+  assert.equal(fixture.getStyleReadCount(), 1);
+  navigator.destroy();
+});
+
+test("a DPR-only resize redraws the existing overview at the new backing size", () => {
+  const fixture = navigatorFixture({ width: 512, height: 58 });
+  const navigator = new RangeNavigator(fixture);
+  navigator.setOverview(oneBinOverview());
+  fixture.flushAnimationFrames();
+  assert.equal(fixture.canvas.width, 1_024);
+
+  fixture.setDevicePixelRatio(3);
+  fixture.triggerResize();
+  fixture.flushAnimationFrames();
+
+  assert.equal(fixture.canvas.width, 1_536);
+  assert.equal(fixture.canvas.height, 174);
+  assert.equal(fixture.getStyleReadCount(), 2);
   navigator.destroy();
 });
 
