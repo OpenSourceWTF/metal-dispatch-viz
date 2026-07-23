@@ -893,7 +893,7 @@ git commit -m "Keep exact trace analysis in a worker session"
 
 **Does NOT cover:** Range metrics or overview-band pointer interaction.
 
-- [ ] **Step 1: Write failing renderer tests**
+- [x] **Step 1: Write failing renderer tests**
 
 Append to `test/timeline.test.mjs`:
 
@@ -949,7 +949,7 @@ test("external viewport update can avoid a synchronization callback", () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused renderer tests and verify `setViewport` is missing**
+- [x] **Step 2: Run the focused renderer tests and verify `setViewport` is missing**
 
 Run:
 
@@ -959,7 +959,7 @@ node --test test/timeline.test.mjs
 
 Expected: FAIL because `TimelineRenderer.setViewport` does not exist.
 
-- [ ] **Step 3: Implement explicit bounds and viewport setter**
+- [x] **Step 3: Implement explicit bounds and viewport setter**
 
 Update `TimelineRenderer.setDataset`:
 
@@ -990,7 +990,7 @@ setViewport(viewport, { notify = true } = {}) {
 Route `fit`, wheel zoom, keyboard zoom, and pointer pan through `setViewport`
 without changing their existing input semantics.
 
-- [ ] **Step 4: Run all timeline tests**
+- [x] **Step 4: Run all timeline tests**
 
 Run:
 
@@ -1000,7 +1000,7 @@ node --test test/timeline.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit viewport synchronization**
+- [x] **Step 5: Commit viewport synchronization**
 
 ```bash
 git add public/timeline.js test/timeline.test.mjs
