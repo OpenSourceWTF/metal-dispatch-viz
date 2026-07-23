@@ -129,7 +129,8 @@
 - [x] Exercise all five traces, launch selection, View/Analyze, band and handle drags, zoom, fit, inspector pin/clear, refresh, theme, URL restoration, loading, error, empty, and degraded states.
 - [x] Inspect desktop and narrow screenshots in both themes.
 - [x] Stop only the recorded server PID and verify the port is free.
-- [ ] Push `feature/time-window-navigator` without force and update draft PR #3 with exact verification evidence.
+- [x] Merge current `main` UI fixes into the React shell, including the Field manual, contextual definitions, local AI export, and hidden-drawer hardening.
+- [x] Push `feature/time-window-navigator` without force and update draft PR #3 with exact verification evidence.
 
 ### Task 6: Cut over only after merge
 
@@ -141,8 +142,8 @@
 
 **Security flag:** security
 
-- [ ] Enable workflow-based Pages before PR #3 is merged.
-- [ ] Stop if PR #3 remains open; this plan does not authorize merging.
+- [x] Enable workflow-based Pages before PR #3 is merged.
+- [x] Stop if PR #3 remains open; this plan does not authorize merging.
 - [ ] After merge, verify the automatic `main` workflow and default Pages origin.
 - [ ] Claim `mlx-profiler.opensource.wtf` in GitHub Pages before changing DNS.
 - [ ] Remove only Sites domain `appgdom_6a625f027840819197fc3bcc1ba81169` from project `appgprj_6a6257da7d008191bf19efaa69f939d9`.
