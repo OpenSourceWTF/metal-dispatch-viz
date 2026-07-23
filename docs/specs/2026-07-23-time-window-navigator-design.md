@@ -1,7 +1,8 @@
 # Time-window navigator design
 
-**Date:** 2026-07-23  
-**Status:** Approved direction; awaiting written-spec review
+**Date:** 2026-07-23
+
+**Status:** Approved and implemented; real-browser release gate pending
 
 ## Objective
 
