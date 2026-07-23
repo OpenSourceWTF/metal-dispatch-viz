@@ -741,6 +741,13 @@ test("help styling preserves dense targets and responsive utility-drawer behavio
   assert.equal(manualContent.get("overflow-y"), "auto");
   assert.equal(manualContent.has("height"), false);
 
+  const hidden = requireDeclarationRule(
+    rules,
+    "[hidden]",
+    "author CSS must preserve native hidden state against component display rules",
+  )[0];
+  assert.equal(hidden.get("display"), "none !important");
+
   const mobileDrawer = requireDeclarationRule(rules, ".utility-drawer").find(
     (rule) => rule.get("width") === "100%",
   );
