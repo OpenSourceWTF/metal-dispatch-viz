@@ -95,6 +95,51 @@ test("server registry remains authoritative and ignores metadata source URLs", a
   );
 });
 
+test("browser registry and trace requests resolve against root and project base URLs", async () => {
+  for (const [baseUrl, expectedPrefix] of [
+    ["https://mlx-profiler.opensource.wtf/", "https://mlx-profiler.opensource.wtf/"],
+    [
+      "https://opensourcewtf.github.io/metal-dispatch-viz/",
+      "https://opensourcewtf.github.io/metal-dispatch-viz/",
+    ],
+  ]) {
+    const requests = [];
+    const loaded = await loadTraceRegistry(
+      async (url) => {
+        requests.push(url);
+        if (url.endsWith("/api/traces")) {
+          return { ok: false, status: 404 };
+        }
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              traces: [{
+                id: "trace-a",
+                relativePath: "nested/capture one.jsonl",
+              }],
+            };
+          },
+        };
+      },
+      { baseUrl },
+    );
+
+    assert.deepEqual(requests, [
+      `${expectedPrefix}api/traces`,
+      `${expectedPrefix}hosted-traces.json`,
+    ]);
+    assert.equal(
+      traceSourceUrl(loaded.registry.traces[0], {
+        hosted: true,
+        baseUrl,
+      }),
+      `${expectedPrefix}traces/showcase/nested/capture%20one.jsonl`,
+    );
+  }
+});
+
 const BOOTSTRAP_IDS = [
   "directory-identity",
   "refresh-button",
@@ -331,6 +376,7 @@ function bootstrapWindow(documentObject, href) {
   const timers = new Map();
   const animationFrames = new Map();
   const historyWrites = [];
+  const listeners = new Map();
   const windowObject = {
     document: documentObject,
     location: { href },
@@ -354,7 +400,18 @@ function bootstrapWindow(documentObject, href) {
       return { getPropertyValue: () => "" };
     },
     devicePixelRatio: 1,
-    addEventListener() {},
+    addEventListener(type, listener) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(listener);
+    },
+    removeEventListener(type, listener) {
+      listeners.get(type)?.delete(listener);
+    },
+    dispatchEvent(event) {
+      for (const listener of [...(listeners.get(event?.type) ?? [])]) {
+        listener.call(windowObject, event);
+      }
+    },
     requestAnimationFrame(callback) {
       const id = nextAnimationFrameId++;
       animationFrames.set(id, callback);
@@ -375,6 +432,9 @@ function bootstrapWindow(documentObject, href) {
   documentObject.defaultView = windowObject;
   return {
     historyWrites,
+    listenerCount(type) {
+      return listeners.get(type)?.size ?? 0;
+    },
     runAnimationFrames() {
       const pending = [...animationFrames.values()];
       animationFrames.clear();
@@ -458,6 +518,7 @@ async function flushMicrotasks() {
 
 function createBootstrapHarness({
   href = "http://localhost/?trace=trace-a&window=0",
+  baseURI,
   traces = [
     {
       id: "trace-a",
@@ -482,11 +543,15 @@ function createBootstrapHarness({
   useRealRenderer = false,
 } = {}) {
   const documentObject = bootstrapDocument();
+  if (baseURI !== undefined) {
+    documentObject.baseURI = baseURI;
+  }
   const windowHarness = bootstrapWindow(documentObject, href);
   const sessions = [];
   const renderers = [];
   const navigators = [];
   const pendingLoads = [];
+  const requests = [];
   let loadsDeferred = deferredLoads;
 
   class HarnessRenderer {
@@ -652,9 +717,10 @@ function createBootstrapHarness({
       }
     : HarnessRenderer;
   const bootPromise = bootstrap({
-    fetchImpl: async () => ({
+    fetchImpl: async (url) => ({
       ok: true,
       async json() {
+        requests.push(url);
         return { rootLabel: "test traces", traces };
       },
     }),
@@ -673,6 +739,7 @@ function createBootstrapHarness({
     navigators,
     pendingLoads,
     renderers,
+    requests,
     setLoadsDeferred(value) {
       loadsDeferred = Boolean(value);
     },
@@ -680,6 +747,56 @@ function createBootstrapHarness({
     ...windowHarness,
   };
 }
+
+test("bootstrap passes absolute trace URLs at root and project bases", async () => {
+  for (const baseURI of [
+    "https://mlx-profiler.opensource.wtf/",
+    "https://opensourcewtf.github.io/metal-dispatch-viz/",
+  ]) {
+    const harness = createBootstrapHarness({
+      href: `${baseURI}?trace=trace-a&window=0`,
+      baseURI,
+      traces: [{
+        id: "trace-a",
+        label: "Trace A",
+        name: "a.jsonl",
+        relativePath: "a.jsonl",
+        size: 100,
+      }],
+      datasets: new Map([["trace-a", bootstrapDataset([bootstrapLaunch()])]]),
+    });
+
+    const app = await harness.bootPromise;
+    assert.deepEqual(harness.requests, [`${baseURI}api/traces`]);
+    assert.equal(harness.sessions[0].url, `${baseURI}api/traces/trace-a`);
+    app.destroy();
+  }
+});
+
+test("bootstrap destroy is idempotent and pagehide delegates to the same cleanup", async () => {
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+    }],
+    datasets: new Map([["trace-a", bootstrapDataset([bootstrapLaunch()])]]),
+  });
+  const app = await harness.bootPromise;
+
+  assert.equal(harness.listenerCount("pagehide"), 1);
+  harness.windowObject.dispatchEvent({ type: "pagehide" });
+  assert.equal(app.state.destroyed, true);
+  assert.equal(app.renderer.destroyed, true);
+  assert.equal(app.rangeNavigator.destroyed, true);
+  assert.equal(harness.sessions[0].terminated, true);
+  assert.equal(harness.listenerCount("pagehide"), 0);
+
+  app.destroy();
+  assert.equal(harness.listenerCount("pagehide"), 0);
+});
 
 function analyzedScope({
   startNs,

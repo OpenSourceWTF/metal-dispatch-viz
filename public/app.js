@@ -60,7 +60,16 @@ export function traceLabel(trace) {
   );
 }
 
-export function traceSourceUrl(trace, { hosted = false } = {}) {
+function browserRequestUrl(path, baseUrl) {
+  return baseUrl === undefined || baseUrl === null
+    ? `/${path}`
+    : new URL(path, baseUrl).href;
+}
+
+export function traceSourceUrl(
+  trace,
+  { hosted = false, baseUrl } = {},
+) {
   if (hosted) {
     const relativePath = stringValue(trace?.relativePath);
     const segments = relativePath?.split("/") ?? [];
@@ -72,13 +81,16 @@ export function traceSourceUrl(trace, { hosted = false } = {}) {
     ) {
       throw new TypeError("Hosted traces require a safe relativePath.");
     }
-    return `/traces/showcase/${segments.map(encodeURIComponent).join("/")}`;
+    return browserRequestUrl(
+      `traces/showcase/${segments.map(encodeURIComponent).join("/")}`,
+      baseUrl,
+    );
   }
   const id = stringValue(trace?.id);
   if (!id) {
     throw new TypeError("Server traces require a non-empty ID.");
   }
-  return `/api/traces/${encodeURIComponent(id)}`;
+  return browserRequestUrl(`api/traces/${encodeURIComponent(id)}`, baseUrl);
 }
 
 function registryRequestError(response) {
@@ -89,11 +101,11 @@ function registryRequestError(response) {
   return error;
 }
 
-export async function loadTraceRegistry(fetchImpl) {
+export async function loadTraceRegistry(fetchImpl, { baseUrl } = {}) {
   if (typeof fetchImpl !== "function") {
     throw new TypeError("Trace registry loading requires fetch.");
   }
-  const response = await fetchImpl("/api/traces");
+  const response = await fetchImpl(browserRequestUrl("api/traces", baseUrl));
   if (response?.ok) {
     return {
       hosted: false,
@@ -103,7 +115,9 @@ export async function loadTraceRegistry(fetchImpl) {
   if (response?.status !== 404) {
     throw registryRequestError(response);
   }
-  const hostedResponse = await fetchImpl("/hosted-traces.json");
+  const hostedResponse = await fetchImpl(
+    browserRequestUrl("hosted-traces.json", baseUrl),
+  );
   if (!hostedResponse?.ok) {
     throw registryRequestError(hostedResponse);
   }
@@ -946,6 +960,7 @@ export async function bootstrap({
   windowObject = documentObject?.defaultView ?? globalThis.window,
   RendererClass = TimelineRenderer,
   RangeNavigatorClass = RangeNavigator,
+  signal,
 } = {}) {
   if (!documentObject || !windowObject) {
     throw new Error("bootstrap requires a browser document");
@@ -1032,6 +1047,7 @@ export async function bootstrap({
   const registrySelection = new RegistrySelectionGuard();
   const rangeAuthority = new RangeRequestAuthority();
   const initialUrl = new URL(windowObject.location.href);
+  const requestBaseUrl = documentObject.baseURI ?? undefined;
   const state = {
     traces: [],
     registryHosted: false,
@@ -2123,7 +2139,10 @@ export async function bootstrap({
       state.analysisSession = session;
       updateRangeModeControls();
       const loaded = await session.load(
-        traceSourceUrl(trace, { hosted: state.registryHosted }),
+        traceSourceUrl(trace, {
+          hosted: state.registryHosted,
+          baseUrl: requestBaseUrl,
+        }),
       );
       if (
         !coordinator.isCurrent(token) ||
@@ -2246,7 +2265,9 @@ export async function bootstrap({
     }
     const refreshToken = registrySelection.beginRefresh(state.traces);
     try {
-      const loadedRegistry = await loadTraceRegistry(fetchImpl);
+      const loadedRegistry = await loadTraceRegistry(fetchImpl, {
+        baseUrl: requestBaseUrl,
+      });
       const { registry } = loadedRegistry;
       if (!registrySelection.isCurrentRefresh(refreshToken) || state.destroyed) {
         return;
@@ -2310,11 +2331,11 @@ export async function bootstrap({
     }
   }
 
-  elements.refresh.addEventListener("click", () => {
+  const handleRefresh = () => {
     announce("Refreshing trace directory…");
     void refreshRegistry();
-  });
-  elements.theme.addEventListener("click", () => {
+  };
+  const handleTheme = () => {
     const current =
       documentObject.documentElement.getAttribute("data-theme") === "light"
         ? "light"
@@ -2330,42 +2351,53 @@ export async function bootstrap({
     renderer.requestRender();
     rangeNavigator.requestRender();
     announce(`${next === "light" ? "Light" : "Dark"} theme enabled.`);
-  });
-  elements.windowSelect.addEventListener("change", () => {
+  };
+  const handleWindowChange = () => {
     state.pendingRangeInput = null;
     renderSelectedWindow(Number.parseInt(elements.windowSelect.value, 10));
-  });
-  elements.rangeModeView.addEventListener("click", () => {
+  };
+  const handleRangeModeView = () => {
     state.pendingRangeInput = null;
     switchToView();
-  });
-  elements.rangeModeAnalyze.addEventListener("click", () => {
+  };
+  const handleRangeModeAnalyze = () => {
     state.pendingRangeInput = null;
     switchToAnalyze();
-  });
-  elements.clearSelection.addEventListener("click", () => {
+  };
+  const handleClearSelection = () => {
     renderer.clearSelection();
-  });
-  elements.fit.addEventListener("click", () => {
+  };
+  const handleFit = () => {
     const bounds = selectedLaunchBounds();
     if (!bounds) return;
     const range = renderer.fit(bounds, false);
     rangeNavigator.setRange(range);
     handleNavigatorRange(range, true);
-  });
-  elements.zoomIn.addEventListener("click", () => {
+  };
+  const handleZoomIn = () => {
     renderer.handleKeyDown({ key: "+", preventDefault() {} });
-  });
-  elements.zoomOut.addEventListener("click", () => {
+  };
+  const handleZoomOut = () => {
     renderer.handleKeyDown({ key: "-", preventDefault() {} });
-  });
-  elements.rail.addEventListener("keydown", (event) => {
+  };
+  const handleRailKeydown = (event) => {
     handleTraceRailKey({
       documentObject,
       track: elements.track,
       event,
     });
-  });
+  };
+
+  elements.refresh.addEventListener("click", handleRefresh);
+  elements.theme.addEventListener("click", handleTheme);
+  elements.windowSelect.addEventListener("change", handleWindowChange);
+  elements.rangeModeView.addEventListener("click", handleRangeModeView);
+  elements.rangeModeAnalyze.addEventListener("click", handleRangeModeAnalyze);
+  elements.clearSelection.addEventListener("click", handleClearSelection);
+  elements.fit.addEventListener("click", handleFit);
+  elements.zoomIn.addEventListener("click", handleZoomIn);
+  elements.zoomOut.addEventListener("click", handleZoomOut);
+  elements.rail.addEventListener("keydown", handleRailKeydown);
 
   for (const element of [
     elements.refresh,
@@ -2377,14 +2409,37 @@ export async function bootstrap({
     element.removeAttribute("disabled");
   }
 
-  const pagehide = () => {
+  function destroy() {
+    if (state.destroyed) return;
     state.destroyed = true;
+    clearAnalysisTimer();
+    rangeAuthority.invalidate();
     coordinator.clear();
     terminateAnalysisSession();
     rangeNavigator.destroy();
     renderer.destroy();
-  };
+    elements.refresh.removeEventListener?.("click", handleRefresh);
+    elements.theme.removeEventListener?.("click", handleTheme);
+    elements.windowSelect.removeEventListener?.("change", handleWindowChange);
+    elements.rangeModeView.removeEventListener?.("click", handleRangeModeView);
+    elements.rangeModeAnalyze.removeEventListener?.(
+      "click",
+      handleRangeModeAnalyze,
+    );
+    elements.clearSelection.removeEventListener?.(
+      "click",
+      handleClearSelection,
+    );
+    elements.fit.removeEventListener?.("click", handleFit);
+    elements.zoomIn.removeEventListener?.("click", handleZoomIn);
+    elements.zoomOut.removeEventListener?.("click", handleZoomOut);
+    elements.rail.removeEventListener?.("keydown", handleRailKeydown);
+    windowObject.removeEventListener?.("pagehide", pagehide);
+    signal?.removeEventListener?.("abort", destroy);
+  }
+  const pagehide = () => destroy();
   windowObject.addEventListener("pagehide", pagehide, { once: true });
+  signal?.addEventListener?.("abort", destroy, { once: true });
 
   await refreshRegistry({
     requestedId: initialUrl.searchParams.get("trace"),
@@ -2395,6 +2450,7 @@ export async function bootstrap({
   return {
     cache,
     coordinator,
+    destroy,
     rangeNavigator,
     rangeAuthority,
     renderer,
@@ -2402,22 +2458,4 @@ export async function bootstrap({
     selectTrace,
     state,
   };
-}
-
-if (typeof globalThis.document !== "undefined") {
-  const start = () => {
-    void bootstrap().catch((error) => {
-      const status = globalThis.document?.getElementById("trace-status");
-      if (status) {
-        status.textContent = `Workbench failed to start: ${errorDescription(error)}`;
-      }
-    });
-  };
-  if (globalThis.document.readyState === "loading") {
-    globalThis.document.addEventListener("DOMContentLoaded", start, {
-      once: true,
-    });
-  } else {
-    globalThis.queueMicrotask(start);
-  }
 }

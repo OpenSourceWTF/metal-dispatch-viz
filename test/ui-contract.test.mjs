@@ -15,10 +15,11 @@ import {
   traceLabel,
 } from "../public/app.js";
 
-const publicHtmlUrl = new URL("../public/index.html", import.meta.url);
+const reactShellUrl = new URL("../src/ProfilerApp.jsx", import.meta.url);
 const publicCssUrl = new URL("../public/styles.css", import.meta.url);
 const publicAppUrl = new URL("../public/app.js", import.meta.url);
-const legacyHtmlUrl = new URL("../index.html", import.meta.url);
+const rootHtmlUrl = new URL("../index.html", import.meta.url);
+const publicHtmlUrl = new URL("../public/index.html", import.meta.url);
 
 const voidElements = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
@@ -68,6 +69,13 @@ function parseHtmlStartTags(source) {
     }
   }
   return nodes;
+}
+
+function jsxShellAsHtml(source) {
+  return source
+    .replace(/\bclassName=/g, "class=")
+    .replace(/\bhtmlFor=/g, "for=")
+    .replace(/\btabIndex=/g, "tabindex=");
 }
 
 function hasClass(node, className) {
@@ -149,7 +157,7 @@ function contrastRatio(a, b) {
 }
 
 test("workbench shell has real landmark topology, unique IDs, and safe initial controls", async () => {
-  const html = await readFile(publicHtmlUrl, "utf8");
+  const html = jsxShellAsHtml(await readFile(reactShellUrl, "utf8"));
   const nodes = parseHtmlStartTags(html);
   const byId = new Map();
 
@@ -287,18 +295,14 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     "loading progress is not positioned against 720px plot content",
   );
 
-  const scripts = nodes.filter((node) => node.name === "script");
-  assert.equal(scripts.length, 1, "one external script");
-  assert.equal(scripts[0].attributes.get("type"), "module");
-  assert.equal(scripts[0].attributes.get("src"), "/app.js");
-  assert.equal(rawInlineExecutableScriptCount(html), 0, "no inline executable scripts");
+  const renderedCopy = html.replace(/\s+/g, " ");
   assert.doesNotMatch(html, /\binnerHTML\b/);
-  assert.match(html, /horizontal scrolling reveals more timeline detail/i);
-  assert.match(html, /Your browser does not support canvas/i);
-  assert.match(html, /bytes read/i);
-  assert.match(html, /rows parsed/i);
-  assert.match(html, /invalid or legacy evidence/i);
-  assert.match(html, /ordered placement/i);
+  assert.match(renderedCopy, /horizontal scrolling reveals more timeline detail/i);
+  assert.match(renderedCopy, /Your browser does not support canvas/i);
+  assert.match(renderedCopy, /bytes read/i);
+  assert.match(renderedCopy, /rows parsed/i);
+  assert.match(renderedCopy, /invalid or legacy evidence/i);
+  assert.match(renderedCopy, /ordered placement/i);
 });
 
 function rawInlineExecutableScriptCount(html) {
@@ -459,9 +463,17 @@ function computeInsetBox(viewportWidth, declarations) {
   return { left, width, right: left + width };
 }
 
-test("legacy root document is retired after the public shell exists", async () => {
-  await access(publicHtmlUrl);
-  await assert.rejects(access(legacyHtmlUrl), { code: "ENOENT" });
+test("Vite root mounts React and the retired public document is absent", async () => {
+  const html = await readFile(rootHtmlUrl, "utf8");
+  const nodes = parseHtmlStartTags(html);
+  const scripts = nodes.filter((node) => node.name === "script");
+
+  assert.equal(scripts.length, 1, "one external script");
+  assert.equal(scripts[0].attributes.get("type"), "module");
+  assert.equal(scripts[0].attributes.get("src"), "/src/main.jsx");
+  assert.equal(rawInlineExecutableScriptCount(html), 0, "no inline executable scripts");
+  assert.match(html, /id="root"/);
+  await assert.rejects(access(publicHtmlUrl), { code: "ENOENT" });
 });
 
 test("app module is safe without document and pure trace selection is deterministic", () => {
@@ -600,9 +612,10 @@ test("window, URL, metric, census, wait, and evidence helpers preserve truth lab
 });
 
 test("dynamic integration source exposes secure state hooks and ordered setup", async () => {
-  const [html, source] = await Promise.all([
-    readFile(publicHtmlUrl, "utf8"),
+  const [html, source, reactSource] = await Promise.all([
+    readFile(reactShellUrl, "utf8"),
     readFile(publicAppUrl, "utf8"),
+    readFile(reactShellUrl, "utf8"),
   ]);
 
   for (const id of [
@@ -634,6 +647,13 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
   assert.match(source, /analysisSession\.analyzeRange\(\{/);
   assert.match(source, /analysisDebounceMs/);
   assert.match(source, /rangeAuthority\.isCurrent/);
+  assert.match(reactSource, /dataset-worker\.js\?worker&url/);
+  assert.match(reactSource, /analysisSessionFactory/);
+  assert.match(
+    reactSource,
+    /resolveWorkerUrl\(\s*datasetWorkerUrl,\s*globalThis\.document\?\.baseURI/,
+  );
+  assert.doesNotMatch(source, /typeof globalThis\.document/);
   assert.match(
     source,
     /refreshRendererPalette\(\);\s*renderer\.requestRender\(\);\s*rangeNavigator\.requestRender\(\);/,
