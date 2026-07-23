@@ -1265,7 +1265,7 @@ git commit -m "Add accessible timeline range navigator"
 
 **Does NOT cover:** Live trace tailing, multi-run overlays, or profiler changes.
 
-- [ ] **Step 1: Write failing URL and mode-state tests**
+- [x] **Step 1: Write failing URL and mode-state tests**
 
 Add exports and tests in `test/app-integration.test.mjs`:
 
@@ -1316,7 +1316,7 @@ test("range authority accepts only the newest request for the active launch", ()
 });
 ```
 
-- [ ] **Step 2: Add failing semantic UI contract checks**
+- [x] **Step 2: Add failing semantic UI contract checks**
 
 Extend `test/ui-contract.test.mjs` so the shell must contain:
 
@@ -1354,7 +1354,7 @@ Require CSS rules for `.range-handle`, `.range-band`,
 block. Assert `.range-handle` has a `min-width` and `min-height` of at least
 `44px`.
 
-- [ ] **Step 3: Run integration and UI tests and verify the new contracts fail**
+- [x] **Step 3: Run integration and UI tests and verify the new contracts fail**
 
 Run:
 
@@ -1364,7 +1364,7 @@ node --test test/app-integration.test.mjs test/ui-contract.test.mjs
 
 Expected: FAIL because range state exports and DOM hooks do not exist.
 
-- [ ] **Step 4: Add the semantic navigator markup**
+- [x] **Step 4: Add the semantic navigator markup**
 
 Insert directly below the plot scroller in `public/index.html`:
 
@@ -1423,7 +1423,7 @@ Insert directly below the plot scroller in `public/index.html`:
 Add a visible `<span id="metric-scope-label">Launch totals</span>` beside the
 metric-band heading.
 
-- [ ] **Step 5: Style the navigator within the existing design system**
+- [x] **Step 5: Style the navigator within the existing design system**
 
 Add CSS using current custom properties:
 
@@ -1544,7 +1544,7 @@ Add CSS using current custom properties:
 Use the project’s existing forced-colors and focus-visible rules for both
 handles and the segmented buttons.
 
-- [ ] **Step 6: Implement URL helpers and range authority**
+- [x] **Step 6: Implement URL helpers and range authority**
 
 Add pure exports to `public/app.js`:
 
@@ -1599,7 +1599,7 @@ export class RangeRequestAuthority {
 Compose these range parameters with the existing `selectionUrl` instead of
 creating competing history writes.
 
-- [ ] **Step 7: Integrate the session, navigator, and modes**
+- [x] **Step 7: Integrate the session, navigator, and modes**
 
 In `bootstrap`:
 
@@ -1656,7 +1656,7 @@ elements.rangeOmissions.textContent =
   "from selected-range analysis.";
 ```
 
-- [ ] **Step 8: Run focused integration and UI tests**
+- [x] **Step 8: Run focused integration and UI tests**
 
 Run:
 
@@ -1666,7 +1666,7 @@ node --test test/app-integration.test.mjs test/ui-contract.test.mjs test/range-n
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit the integrated UI**
+- [x] **Step 9: Commit the integrated UI**
 
 ```bash
 git add public/app.js public/index.html public/styles.css test/app-integration.test.mjs test/ui-contract.test.mjs
