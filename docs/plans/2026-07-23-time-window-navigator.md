@@ -1018,7 +1018,7 @@ git commit -m "Separate timeline data from launch bounds"
 
 **Does NOT cover:** Worker requests, metrics, tables, or URL persistence.
 
-- [ ] **Step 1: Write failing geometry and keyboard tests**
+- [x] **Step 1: Write failing geometry and keyboard tests**
 
 Create `test/range-navigator.test.mjs`:
 
@@ -1079,7 +1079,7 @@ test("slider steps are one or ten percent of the launch", () => {
 });
 ```
 
-- [ ] **Step 2: Run the navigator test and verify the missing module fails**
+- [x] **Step 2: Run the navigator test and verify the missing module fails**
 
 Run:
 
@@ -1089,7 +1089,7 @@ node --test test/range-navigator.test.mjs
 
 Expected: FAIL with `ERR_MODULE_NOT_FOUND`.
 
-- [ ] **Step 3: Implement pure range geometry**
+- [x] **Step 3: Implement pure range geometry**
 
 Create `public/range-navigator.js` with exported pure functions:
 
@@ -1113,10 +1113,10 @@ export function clampSelectedRange(range, bounds, minimumSpanNs = 1) {
   return Object.freeze({ startNs, endNs });
 }
 
-export function moveSelectedRange(range, requestedStartNs, bounds) {
+export function moveSelectedRange(range, deltaNs, bounds) {
   return clampSelectedRange({
-    startNs: requestedStartNs,
-    endNs: requestedStartNs + (range.endNs - range.startNs),
+    startNs: range.startNs + deltaNs,
+    endNs: range.endNs + deltaNs,
   }, bounds);
 }
 
@@ -1149,7 +1149,7 @@ export function sliderStepNs(bounds, large) {
 }
 ```
 
-- [ ] **Step 4: Add failing DOM interaction tests**
+- [x] **Step 4: Add failing DOM interaction tests**
 
 Extend `test/range-navigator.test.mjs` with a small fake Canvas/element fixture
 matching the style already used by `test/timeline.test.mjs`, then assert:
@@ -1202,7 +1202,7 @@ test("band pointer drag emits transient updates and one committed range", () => 
 });
 ```
 
-- [ ] **Step 5: Implement `RangeNavigator` drawing and interaction**
+- [x] **Step 5: Implement `RangeNavigator` drawing and interaction**
 
 Add a class with this contract:
 
@@ -1234,7 +1234,7 @@ Implementation requirements:
   result through `onRangeCommit`;
 - remove all listeners and observers in `destroy`.
 
-- [ ] **Step 6: Run navigator tests**
+- [x] **Step 6: Run navigator tests**
 
 Run:
 
@@ -1244,7 +1244,7 @@ node --test test/range-navigator.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit the navigator**
+- [x] **Step 7: Commit the navigator**
 
 ```bash
 git add public/range-navigator.js test/range-navigator.test.mjs
