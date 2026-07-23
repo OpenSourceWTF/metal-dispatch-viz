@@ -213,6 +213,52 @@ test("trace fetch, parse, and analysis stay behind one worker boundary", async (
   assert.equal(terminated, true);
 });
 
+test("one-shot trace analysis reports a synchronous post abort only once", async () => {
+  const controller = new AbortController();
+  const states = [];
+  let terminateCalls = 0;
+  let removedListeners = 0;
+
+  class AbortDuringPostWorker {
+    constructor() {
+      this.listeners = new Map();
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    removeEventListener(type, listener) {
+      if (this.listeners.get(type) === listener) {
+        this.listeners.delete(type);
+        removedListeners += 1;
+      }
+    }
+
+    postMessage() {
+      controller.abort();
+    }
+
+    terminate() {
+      terminateCalls += 1;
+    }
+  }
+
+  await assert.rejects(
+    analyzeTraceOffMainThread("/api/traces/abort", {
+      WorkerClass: AbortDuringPostWorker,
+      signal: controller.signal,
+      onStateChange(state) {
+        states.push(state);
+      },
+    }),
+    { name: "AbortError" },
+  );
+  assert.deepEqual(states, ["aborted"]);
+  assert.equal(terminateCalls, 1);
+  assert.equal(removedListeners, 2);
+});
+
 test("worker payloads retain exact aggregates while bounding timeline records", () => {
   const dispatches = Array.from({ length: 20_000 }, (_, index) => ({
     type: "op",

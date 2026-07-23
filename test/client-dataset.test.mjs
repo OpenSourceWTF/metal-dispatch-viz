@@ -79,3 +79,53 @@ test("dataset compaction remains compatible while preserving launch overviews", 
   assert.equal(compact.health, dataset.health);
   assert.equal(compact.diagnostics, dataset.diagnostics);
 });
+
+test("worker-bound event arrays are bounded and merged GPU intervals stay exact-only", () => {
+  const eventCount = 20_000;
+  const scope = {
+    dispatches: Array.from({ length: eventCount }, (_, index) => ({
+      atNs: index * 4,
+    })),
+    commandBuffers: Array.from({ length: eventCount }, (_, index) => ({
+      commandBufferIndex: index,
+    })),
+    waits: Array.from({ length: eventCount }, (_, index) => ({
+      atNs: index * 4 + 1,
+    })),
+    gpuIntervals: Array.from({ length: eventCount }, (_, index) =>
+      Object.freeze([index * 4 + 2, index * 4 + 3]),
+    ),
+    summary: Object.freeze({ opsTotal: eventCount }),
+  };
+  const limits = {
+    maxDispatches: 40,
+    maxCommandBuffers: 30,
+    maxWaits: 20,
+  };
+  const compactRange = compactScopeForClient(scope, limits);
+  const compact = compactDatasetForClient(
+    {
+      ...scope,
+      launchWindows: [{ index: 0, ...scope }],
+      unassignedDispatches: scope.dispatches,
+      unassignedWaits: scope.waits,
+    },
+    limits,
+  );
+
+  assert.equal(compactRange.dispatches.length, 40);
+  assert.equal(compactRange.commandBuffers.length, 30);
+  assert.equal(compactRange.waits.length, 20);
+  assert.equal("gpuIntervals" in compactRange, false);
+  assert.equal(compact.dispatches.length, 40);
+  assert.equal(compact.commandBuffers.length, 30);
+  assert.equal(compact.waits.length, 20);
+  assert.equal(compact.unassignedDispatches.length, 40);
+  assert.equal(compact.unassignedWaits.length, 20);
+  assert.equal(compact.launchWindows[0].dispatches.length, 40);
+  assert.equal(compact.launchWindows[0].commandBuffers.length, 30);
+  assert.equal(compact.launchWindows[0].waits.length, 20);
+  assert.equal("gpuIntervals" in compact, false);
+  assert.equal("gpuIntervals" in compact.launchWindows[0], false);
+  assert.equal(scope.gpuIntervals.length, eventCount);
+});

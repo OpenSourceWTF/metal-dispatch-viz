@@ -51,6 +51,7 @@ function workerFactory(worker, constructed = []) {
 
 async function readySession({
   generation = 1,
+  onError,
   onProgress,
   onStateChange,
 } = {}) {
@@ -60,6 +61,7 @@ async function readySession({
     WorkerClass: workerFactory(worker, constructed),
     workerUrl: "dataset-worker.js",
     generation,
+    onError,
     onProgress,
     onStateChange,
   });
@@ -73,6 +75,38 @@ async function readySession({
   const loaded = await loading;
   return { constructed, loaded, session, worker };
 }
+
+test("constructor rejects identities that cannot survive structured clone", () => {
+  let constructionCount = 0;
+  class CountingWorker {
+    constructor() {
+      constructionCount += 1;
+    }
+  }
+  const invalidGenerations = [
+    structuredClone(Number.NaN),
+    structuredClone({ generation: 1 }),
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    Number.POSITIVE_INFINITY,
+  ];
+
+  for (const generation of invalidGenerations) {
+    assert.throws(
+      () =>
+        new TraceAnalysisSession({
+          WorkerClass: CountingWorker,
+          generation,
+        }),
+      {
+        name: "TypeError",
+        message: /generation.*non-negative safe integer/i,
+      },
+    );
+  }
+  assert.equal(constructionCount, 0);
+});
 
 test("session retains one module worker after ready and resolves an authoritative range", async () => {
   const progress = [];
@@ -171,6 +205,114 @@ test("session retains one module worker after ready and resolves an authoritativ
 
   session.terminate();
   assert.equal(worker.terminateCalls, 1);
+});
+
+test("invalid ranges reject before posting or superseding authoritative work", async (t) => {
+  const { session, worker } = await readySession({ generation: 6 });
+  t.after(() => session.terminate());
+  const authoritative = session.analyzeRange({
+    launchIndex: 0,
+    startNs: 0,
+    endNs: 100,
+  });
+  let authoritativeSettled = false;
+  authoritative.finally(() => {
+    authoritativeSettled = true;
+  });
+  const postedMessages = worker.messages.length;
+  const cases = [
+    {
+      request: {
+        launchIndex: structuredClone(Number.NaN),
+        startNs: 0,
+        endNs: 1,
+      },
+      errorName: "TypeError",
+    },
+    {
+      request: {
+        launchIndex: structuredClone({ index: 0 }),
+        startNs: 0,
+        endNs: 1,
+      },
+      errorName: "TypeError",
+    },
+    {
+      request: { launchIndex: -1, startNs: 0, endNs: 1 },
+      errorName: "TypeError",
+    },
+    {
+      request: { launchIndex: 0.5, startNs: 0, endNs: 1 },
+      errorName: "TypeError",
+    },
+    {
+      request: {
+        launchIndex: Number.MAX_SAFE_INTEGER + 1,
+        startNs: 0,
+        endNs: 1,
+      },
+      errorName: "TypeError",
+    },
+    {
+      request: {
+        launchIndex: 0,
+        startNs: structuredClone(Number.NaN),
+        endNs: 1,
+      },
+      errorName: "TypeError",
+    },
+    {
+      request: {
+        launchIndex: 0,
+        startNs: structuredClone({ value: 0 }),
+        endNs: 1,
+      },
+      errorName: "TypeError",
+    },
+    {
+      request: {
+        launchIndex: 0,
+        startNs: Number.NEGATIVE_INFINITY,
+        endNs: 1,
+      },
+      errorName: "TypeError",
+    },
+    {
+      request: {
+        launchIndex: 0,
+        startNs: 0,
+        endNs: Number.POSITIVE_INFINITY,
+      },
+      errorName: "TypeError",
+    },
+    {
+      request: { launchIndex: 0, startNs: 5, endNs: 5 },
+      errorName: "RangeError",
+    },
+    {
+      request: { launchIndex: 0, startNs: 6, endNs: 5 },
+      errorName: "RangeError",
+    },
+  ];
+
+  for (const { request, errorName } of cases) {
+    const invalid = session.analyzeRange(request);
+    invalid.catch(() => {});
+    assert.equal(worker.messages.length, postedMessages);
+    await assert.rejects(invalid, { name: errorName });
+    assert.equal(authoritativeSettled, false);
+  }
+
+  const request = worker.messages.at(-1);
+  worker.emit({
+    type: "range-result",
+    generation: 6,
+    requestId: request.requestId,
+    launchIndex: 0,
+    range: { startNs: 0, endNs: 100 },
+    dataset: { summary: { wallSpanNs: 100 } },
+  });
+  assert.equal((await authoritative).dataset.summary.wallSpanNs, 100);
 });
 
 test("newer range request aborts the older promise and ignores stale identities", async () => {
@@ -384,6 +526,40 @@ test("worker and protocol errors reject pending work with useful identities", as
   second.terminate();
 });
 
+test("an idle worker error is observable, terminal, and retained", async () => {
+  const reported = [];
+  const { session, worker } = await readySession({
+    generation: 8,
+    onError(error) {
+      reported.push(error);
+    },
+  });
+  const crash = new Error("idle worker crashed");
+  crash.name = "WorkerCrashError";
+  crash.status = 500;
+  crash.code = "WORKER_CRASHED";
+
+  worker.emitError(crash);
+
+  assert.deepEqual(reported, [crash]);
+  assert.equal(worker.terminateCalls, 1);
+  assert.equal(worker.listeners.has("message"), false);
+  assert.equal(worker.listeners.has("error"), false);
+  await assert.rejects(
+    session.analyzeRange({ launchIndex: 0, startNs: 0, endNs: 1 }),
+    (error) => error === crash,
+  );
+  await assert.rejects(
+    session.load("/api/traces/again"),
+    (error) => error === crash,
+  );
+
+  session.terminate();
+  session.terminate();
+  assert.equal(worker.terminateCalls, 1);
+  assert.deepEqual(reported, [crash]);
+});
+
 test("terminate removes listeners, aborts pending work, and terminates exactly once", async () => {
   const { session, worker } = await readySession({ generation: 9 });
   const range = session.analyzeRange({
@@ -533,6 +709,7 @@ test("dataset worker retains exact rows for range summaries and serializes proto
   );
   assert.equal(outbound[0].dataset.summary.opsTotal, rowCount);
   assert.equal(outbound[0].dataset.dispatches.length, 4_000);
+  assert.equal("gpuIntervals" in outbound[0].dataset, false);
 
   outbound = [];
   await messageListener({

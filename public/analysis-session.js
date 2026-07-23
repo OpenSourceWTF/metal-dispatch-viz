@@ -25,25 +25,52 @@ function structuredWorkerError(payload, fallback) {
   return error;
 }
 
+function assertGeneration(generation) {
+  if (!Number.isSafeInteger(generation) || generation < 0) {
+    throw new TypeError(
+      "generation must be a non-negative safe integer.",
+    );
+  }
+}
+
+function rangeRequestError({ launchIndex, startNs, endNs } = {}) {
+  if (!Number.isSafeInteger(launchIndex) || launchIndex < 0) {
+    return new TypeError(
+      "launchIndex must be a non-negative safe integer.",
+    );
+  }
+  if (!Number.isFinite(startNs) || !Number.isFinite(endNs)) {
+    return new TypeError("Range bounds must be finite numbers.");
+  }
+  if (endNs <= startNs) {
+    return new RangeError("Range endNs must be greater than startNs.");
+  }
+  return null;
+}
+
 export class TraceAnalysisSession {
   constructor({
     WorkerClass = globalThis.Worker,
     workerUrl = new URL("./dataset-worker.js", import.meta.url),
     generation = 1,
+    onError,
     onProgress,
     onStateChange,
   } = {}) {
+    assertGeneration(generation);
     if (typeof WorkerClass !== "function") {
       throw new TypeError("Trace analysis requires Web Worker support.");
     }
 
     this.generation = generation;
+    this.reportError = onError;
     this.onProgress = onProgress;
     this.onStateChange = onStateChange;
     this.requestId = 0;
     this.loadStarted = false;
     this.ready = false;
     this.terminated = false;
+    this.terminalError = null;
     this.loadPending = null;
     this.rangePending = null;
     this.worker = new WorkerClass(workerUrl, {
@@ -51,24 +78,22 @@ export class TraceAnalysisSession {
       name: "metal-dispatch-analysis",
     });
     this.onMessage = (event) => this.handleMessage(event?.data);
-    this.onError = (event) => {
-      this.ready = false;
-      this.failAll(
+    this.onWorkerError = (event) => {
+      this.finishTerminal(
         structuredWorkerError(
           event?.error,
           event?.message ?? "Trace worker failed.",
         ),
+        { report: true },
       );
     };
     this.worker.addEventListener("message", this.onMessage);
-    this.worker.addEventListener("error", this.onError);
+    this.worker.addEventListener("error", this.onWorkerError);
   }
 
   load(url) {
-    if (this.terminated) {
-      return Promise.reject(
-        abortError("Trace analysis session terminated."),
-      );
+    if (this.terminalError) {
+      return Promise.reject(this.terminalError);
     }
     if (this.loadStarted) {
       return Promise.reject(
@@ -91,26 +116,31 @@ export class TraceAnalysisSession {
         generation: this.generation,
         url,
       });
-      this.onStateChange?.("posted");
+      if (!this.terminated) {
+        this.onStateChange?.("posted");
+      }
     } catch (error) {
       const pending = this.loadPending;
       this.loadPending = null;
-      pending.reject(error);
+      pending?.reject(error);
     }
     return promise;
   }
 
-  analyzeRange({ launchIndex, startNs, endNs } = {}) {
-    if (this.terminated) {
-      return Promise.reject(
-        abortError("Trace analysis session terminated."),
-      );
+  analyzeRange(request = {}) {
+    if (this.terminalError) {
+      return Promise.reject(this.terminalError);
     }
     if (!this.ready) {
       return Promise.reject(
         new Error("Trace analysis session is not ready."),
       );
     }
+    const invalid = rangeRequestError(request);
+    if (invalid) {
+      return Promise.reject(invalid);
+    }
+    const { launchIndex, startNs, endNs } = request;
 
     this.rangePending?.reject(abortError());
     const requestId = ++this.requestId;
@@ -134,7 +164,7 @@ export class TraceAnalysisSession {
     } catch (error) {
       const pending = this.rangePending;
       this.rangePending = null;
-      pending.reject(error);
+      pending?.reject(error);
     }
     return promise;
   }
@@ -235,15 +265,25 @@ export class TraceAnalysisSession {
     this.rangePending = null;
   }
 
-  terminate() {
+  finishTerminal(error, { report = false } = {}) {
     if (this.terminated) {
       return;
     }
     this.terminated = true;
     this.ready = false;
-    this.failAll(abortError("Trace analysis session terminated."));
+    this.terminalError = error;
+    this.failAll(error);
     this.worker.removeEventListener("message", this.onMessage);
-    this.worker.removeEventListener("error", this.onError);
+    this.worker.removeEventListener("error", this.onWorkerError);
     this.worker.terminate();
+    if (report) {
+      this.reportError?.(error);
+    }
+  }
+
+  terminate() {
+    this.finishTerminal(
+      abortError("Trace analysis session terminated."),
+    );
   }
 }

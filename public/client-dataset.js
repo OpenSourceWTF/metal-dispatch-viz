@@ -54,7 +54,6 @@ function compactScope(
     dispatches: Object.freeze(dispatches),
     commandBuffers: Object.freeze(commandBuffers),
     waits: Object.freeze(waits),
-    gpuIntervals: source.gpuIntervals,
     waitTaxonomy: source.waitTaxonomy,
     kernelCensus: source.kernelCensus,
     summary: source.summary,
