@@ -172,3 +172,76 @@ test("hosted build keeps the prior artifact when a registered trace path is swap
   );
   assert.match(await readFile(tracePath, "utf8"), /replacement/);
 });
+
+test("hosted build rejects public symlinks before generated trace writes", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-public-link-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const publicRoot = path.join(root, "public");
+  const traceRoot = path.join(root, "showcase");
+  const outputRoot = path.join(root, "dist");
+  const externalRoot = path.join(root, "external");
+  await mkdir(publicRoot, { recursive: true });
+  await mkdir(traceRoot, { recursive: true });
+  await mkdir(outputRoot, { recursive: true });
+  await mkdir(externalRoot, { recursive: true });
+  await writeFile(path.join(publicRoot, "index.html"), "new public");
+  await symlink(externalRoot, path.join(publicRoot, "traces"));
+  await writeFile(
+    path.join(traceRoot, "capture.jsonl"),
+    '{"record":"summary"}\n',
+  );
+  await writeFile(path.join(outputRoot, "sentinel.txt"), "prior artifact");
+
+  await assert.rejects(
+    buildHostedSite({ publicRoot, traceRoot, outputRoot }),
+    /symbolic links/i,
+  );
+
+  await assert.rejects(
+    readFile(path.join(externalRoot, "showcase", "capture.jsonl")),
+    { code: "ENOENT" },
+  );
+  assert.equal(
+    await readFile(path.join(outputRoot, "sentinel.txt"), "utf8"),
+    "prior artifact",
+  );
+});
+
+test("hosted build rolls back when the final artifact rename fails", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "metal-viz-rename-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const publicRoot = path.join(root, "public");
+  const traceRoot = path.join(root, "showcase");
+  const outputRoot = path.join(root, "dist");
+  await mkdir(publicRoot, { recursive: true });
+  await mkdir(traceRoot, { recursive: true });
+  await mkdir(outputRoot, { recursive: true });
+  await writeFile(path.join(publicRoot, "index.html"), "new public");
+  await writeFile(
+    path.join(traceRoot, "capture.jsonl"),
+    '{"record":"summary"}\n',
+  );
+  await writeFile(path.join(outputRoot, "sentinel.txt"), "prior artifact");
+
+  await assert.rejects(
+    buildHostedSite({
+      publicRoot,
+      traceRoot,
+      outputRoot,
+      replacementHooks: {
+        async beforeFinalRename() {
+          throw new Error("injected final rename failure");
+        },
+      },
+    }),
+    /injected final rename failure/,
+  );
+
+  assert.equal(
+    await readFile(path.join(outputRoot, "sentinel.txt"), "utf8"),
+    "prior artifact",
+  );
+  await assert.rejects(readFile(path.join(outputRoot, "index.html")), {
+    code: "ENOENT",
+  });
+});

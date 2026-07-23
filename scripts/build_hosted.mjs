@@ -1,7 +1,9 @@
 import {
   cp,
+  lstat,
   mkdir,
   mkdtemp,
+  opendir,
   realpath,
   rename,
   rm,
@@ -55,6 +57,49 @@ function pathsOverlap(left, right) {
   return containsPath(left, right) || containsPath(right, left);
 }
 
+async function assertNoSymlinks(root) {
+  const pending = [root];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    const entries = await opendir(directory);
+    for await (const entry of entries) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(
+          `Hosted public assets must not contain symbolic links: ${entry.name}`,
+        );
+      }
+      if (entry.isDirectory()) {
+        pending.push(candidate);
+      } else if (!entry.isFile()) {
+        throw new Error(
+          `Hosted public assets must be regular files: ${entry.name}`,
+        );
+      }
+    }
+  }
+}
+
+async function assertMissing(targetPath, label) {
+  try {
+    await lstat(targetPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(`${label} is reserved for generated hosted output.`);
+}
+
+async function pathExists(targetPath) {
+  try {
+    await lstat(targetPath);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function publishRegisteredTraces({
   registry,
   registryPayload,
@@ -92,6 +137,7 @@ export async function buildHostedSite({
   traceRoot,
   outputRoot,
   registryHooks = {},
+  replacementHooks = {},
 }) {
   const sourcePublic = await realpath(
     resolvedDirectory(publicRoot, "publicRoot"),
@@ -115,14 +161,25 @@ export async function buildHostedSite({
     hooks: registryHooks,
   });
   const registryPayload = await registry.refresh();
+  await assertNoSymlinks(sourcePublic);
   const outputParent = path.dirname(output);
   await mkdir(outputParent, { recursive: true });
   const staging = await mkdtemp(
     path.join(outputParent, ".metal-dispatch-viz-hosted-"),
   );
   let published = false;
+  let backup = null;
   try {
     await cp(sourcePublic, staging, { recursive: true });
+    await assertNoSymlinks(staging);
+    await assertMissing(
+      path.join(staging, "traces"),
+      "public/traces",
+    );
+    await assertMissing(
+      path.join(staging, "hosted-traces.json"),
+      "public/hosted-traces.json",
+    );
     await publishRegisteredTraces({
       registry,
       registryPayload,
@@ -132,9 +189,29 @@ export async function buildHostedSite({
       path.join(staging, "hosted-traces.json"),
       `${JSON.stringify(registryPayload)}\n`,
     );
-    await rm(output, { recursive: true, force: true });
-    await rename(staging, output);
+    if (await pathExists(output)) {
+      backup = await mkdtemp(
+        path.join(outputParent, ".metal-dispatch-viz-backup-"),
+      );
+      await rm(backup, { recursive: true, force: true });
+      await rename(output, backup);
+    }
+    try {
+      await replacementHooks.beforeFinalRename?.();
+      await rename(staging, output);
+    } catch (error) {
+      if (backup !== null) {
+        await rm(output, { recursive: true, force: true }).catch(() => {});
+        await rename(backup, output);
+        backup = null;
+      }
+      throw error;
+    }
     published = true;
+    if (backup !== null) {
+      await rm(backup, { recursive: true, force: true });
+      backup = null;
+    }
     return Object.freeze({
       outputRoot: output,
       traceCount: registryPayload.traces.length,
