@@ -181,8 +181,22 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     "health-strip",
     "evidence-badge",
     "window-select",
+    "metric-scope-label",
     "metric-grid",
     "timeline",
+    "range-navigator",
+    "range-overview",
+    "range-overview-summary",
+    "range-band",
+    "range-start-handle",
+    "range-end-handle",
+    "range-mode-view",
+    "range-mode-analyze",
+    "range-start-readout",
+    "range-end-readout",
+    "range-duration-readout",
+    "range-status",
+    "range-omissions",
     "timeline-sampling-note",
     "timeline-viewport",
     "timeline-scroller",
@@ -235,6 +249,24 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     String(canvas.attributes.get("aria-describedby")).split(/\s+/).includes("timeline-description"),
   );
   assert.equal(byId.get("timeline-scroller").attributes.get("tabindex"), "0");
+
+  const overview = byId.get("range-overview");
+  assert.equal(overview.name, "canvas");
+  assert.equal(overview.attributes.get("role"), "img");
+  assert.ok(
+    String(overview.attributes.get("aria-describedby"))
+      .split(/\s+/)
+      .includes("range-overview-summary"),
+  );
+  for (const id of ["range-start-handle", "range-end-handle"]) {
+    assert.equal(byId.get(id).attributes.get("role"), "slider");
+    assert.equal(byId.get(id).attributes.get("tabindex"), "0");
+  }
+  for (const id of ["range-mode-view", "range-mode-analyze"]) {
+    assert.equal(byId.get(id).name, "button");
+    assert.ok(byId.get(id).attributes.has("aria-pressed"));
+  }
+  assert.equal(byId.get("range-mode-analyze").attributes.get("disabled"), true);
 
   assert.equal(byId.get("kernel-table-body").name, "tbody");
   assert.equal(byId.get("wait-table-body").name, "tbody");
@@ -364,6 +396,13 @@ test("visual system uses measured tokens, effective sizing, and clipped-safe foc
   const narrowBox = computeInsetBox(320, narrowLoadingState);
   assert.deepEqual(narrowBox, { left: 8, width: 304, right: 312 });
   assert.ok(narrowBox.right <= 320, "320px loader is fully visible without horizontal scroll");
+
+  const rangeHandle = requireDeclarationRule(rules, ".range-handle")[0];
+  assert.ok(Number.parseFloat(rangeHandle.get("min-width")) >= 44);
+  assert.ok(Number.parseFloat(rangeHandle.get("min-height")) >= 44);
+  assert.equal(rangeHandle.get("touch-action"), "none");
+  requireDeclarationRule(rules, ".range-band");
+  requireDeclarationRule(rules, '.range-mode-button[aria-pressed="true"]');
 
   for (const selector of [
     ".trace-toggle:focus-visible",
@@ -570,9 +609,15 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
   assert.match(source, /isCurrent/);
   assert.match(
     source,
-    /clearAnalysisState\(\);\s*renderPendingProvenance\(trace\);\s*showLoading\(trace\);/,
+    /clearAnalysisState\(\);[\s\S]*?if \(cached\)[\s\S]*?else \{\s*renderPendingProvenance\(trace\);\s*showLoading\(trace\);/,
     "a new trace clears prior evidence before showing its loading state",
   );
+  assert.match(source, /new RangeNavigator\(/);
+  assert.match(source, /new RangeRequestAuthority\(/);
+  assert.match(source, /analysisSessionFactory\(\{/);
+  assert.match(source, /analysisSession\.analyzeRange\(\{/);
+  assert.match(source, /analysisDebounceMs/);
+  assert.match(source, /rangeAuthority\.isCurrent/);
   assert.match(
     source,
     /function showEmpty\(\)[\s\S]*?renderEmptyProvenance\(\);[\s\S]*?No trace files found/,

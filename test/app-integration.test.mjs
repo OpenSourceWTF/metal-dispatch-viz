@@ -8,7 +8,10 @@ import {
   evidenceBadges,
   handleTraceRailKey,
   kernelRowsForScope,
+  parseRangeSelection,
   progressState,
+  RangeRequestAuthority,
+  rangeSelectionUrl,
   RegistrySelectionGuard,
   renderTraceRail,
   samplingDisclosure,
@@ -27,6 +30,79 @@ function deferred() {
   });
   return { promise, reject, resolve };
 }
+
+test("range URL stores launch-relative offsets and mode", () => {
+  const url = rangeSelectionUrl(
+    "http://localhost/?trace=t&window=1",
+    {
+      mode: "analyze",
+      bounds: { startNs: 1_000, endNs: 2_000 },
+      range: { startNs: 1_125, endNs: 1_750 },
+    },
+  );
+
+  assert.equal(url.searchParams.get("trace"), "t");
+  assert.equal(url.searchParams.get("window"), "1");
+  assert.equal(url.searchParams.get("range"), "analyze");
+  assert.equal(url.searchParams.get("from"), "125");
+  assert.equal(url.searchParams.get("to"), "750");
+  assert.deepEqual(
+    parseRangeSelection(url, { startNs: 1_000, endNs: 2_000 }),
+    {
+      mode: "analyze",
+      range: { startNs: 1_125, endNs: 1_750 },
+    },
+  );
+});
+
+test("invalid range URL restores View over the complete launch", () => {
+  const bounds = { startNs: 10, endNs: 110 };
+  for (const input of [
+    "http://localhost/?range=analyze&from=90&to=20",
+    "http://localhost/?range=analyze&from=wat&to=20",
+    "http://localhost/?range=analyze&from=0&to=0",
+    "http://localhost/?range=analyze&from=0.5&to=20",
+  ]) {
+    assert.deepEqual(parseRangeSelection(input, bounds), {
+      mode: "view",
+      range: bounds,
+    });
+  }
+});
+
+test("range URL clamps a valid relative selection to launch bounds", () => {
+  assert.deepEqual(
+    parseRangeSelection(
+      "http://localhost/?range=view&from=-10&to=120",
+      { startNs: 10, endNs: 110 },
+    ),
+    {
+      mode: "view",
+      range: { startNs: 10, endNs: 110 },
+    },
+  );
+});
+
+test("range authority accepts only the newest request for the active launch", () => {
+  const authority = new RangeRequestAuthority();
+  const first = authority.begin(0);
+  const second = authority.begin(0);
+  assert.equal(authority.isCurrent(first, 0), false);
+  assert.equal(authority.isCurrent(second, 0), true);
+  assert.equal(authority.isCurrent(second, 1), false);
+  authority.invalidate();
+  assert.equal(authority.isCurrent(second, 0), false);
+});
+
+test("range authority rejects invalid launch identities before advancing", () => {
+  const authority = new RangeRequestAuthority();
+  for (const launchIndex of [-1, 0.5, Number.NaN, "0"]) {
+    assert.throws(() => authority.begin(launchIndex), TypeError);
+  }
+  const first = authority.begin(0);
+  assert.equal(first.generation, 1);
+  assert.equal(authority.isCurrent(first, Number.NaN), false);
+});
 
 test("a delayed refresh preserves a newer user selection", async () => {
   const guard = new RegistrySelectionGuard("trace-a");
@@ -627,7 +703,9 @@ test("worker and documentation contracts are external, module-safe, and Node 18 
   assert.match(appSource, /const cacheKey = traceCacheKey\(trace\)/);
   assert.match(appSource, /cache\.get\(cacheKey\)/);
   assert.match(appSource, /cache\.set\(cacheKey,/);
-  assert.match(appSource, /await traceAnalyzer\(/);
+  assert.match(appSource, /analysisSessionFactory\(\{/);
+  assert.match(appSource, /await session\.load\(/);
+  assert.match(appSource, /state\.analysisSession\?\.terminate\(\)/);
   assert.doesNotMatch(appSource, /\bbuildDataset\(/);
   assert.match(appSource, /renderProgress\(progress,\s*trace\.size\)/);
   assert.match(appSource, /renderTraceRail\(\{/);

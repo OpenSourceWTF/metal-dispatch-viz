@@ -80,7 +80,10 @@
         </section>
 
         <section class="metric-band" aria-labelledby="metric-heading">
-          <h2 id="metric-heading" class="visually-hidden">Selected window decomposition</h2>
+          <div class="metric-band-heading">
+            <h2 id="metric-heading">Selected window decomposition</h2>
+            <span id="metric-scope-label">Launch totals</span>
+          </div>
           <dl id="metric-grid" class="metric-grid" aria-busy="true">
             <div class="metric metric-primary">
               <dt>Wall span</dt>
@@ -190,6 +193,61 @@
                   </div>
                 </section>
               </div>
+              <section id="range-navigator" class="range-navigator" aria-labelledby="range-heading" hidden>
+                <div class="range-toolbar">
+                  <div>
+                    <p class="eyebrow">Time window</p>
+                    <h3 id="range-heading">Launch overview</h3>
+                  </div>
+                  <div class="range-mode" role="group" aria-label="Time window behavior">
+                    <button id="range-mode-view" class="range-mode-button" type="button" aria-pressed="true">
+                      View
+                    </button>
+                    <button id="range-mode-analyze" class="range-mode-button" type="button" aria-pressed="false" disabled>
+                      Preparing exact analysis
+                    </button>
+                  </div>
+                </div>
+                <div class="range-overview-frame">
+                  <canvas
+                    id="range-overview"
+                    width="1120"
+                    height="58"
+                    role="img"
+                    aria-label="Full-launch host, GPU, dispatch, and wait navigation summary"
+                    aria-describedby="range-overview-summary"
+                  >
+                    The time-window sliders below remain available when the
+                    navigation summary cannot be drawn.
+                  </canvas>
+                  <div id="range-band" class="range-band" aria-disabled="false">
+                    <span
+                      id="range-start-handle"
+                      class="range-handle range-handle-start"
+                      role="slider"
+                      tabindex="0"
+                      aria-label="Range start"
+                    ></span>
+                    <span
+                      id="range-end-handle"
+                      class="range-handle range-handle-end"
+                      role="slider"
+                      tabindex="0"
+                      aria-label="Range end"
+                    ></span>
+                  </div>
+                </div>
+                <p id="range-overview-summary" class="visually-hidden">
+                  The overview is a navigation summary, not measurement-resolution events.
+                </p>
+                <div class="range-readouts">
+                  <output id="range-start-readout">Start —</output>
+                  <output id="range-end-readout">End —</output>
+                  <output id="range-duration-readout">Duration —</output>
+                  <span id="range-status" role="status" aria-live="polite">Complete launch selected</span>
+                </div>
+                <p id="range-omissions" class="range-omissions" role="note" hidden></p>
+              </section>
               <p id="timeline-description" class="timeline-description">
                 Six coupled lanes show the ruler, host encoding, GPU execution, waits,
                 dispatch order, and scale. Dispatch marks use ordered placement within
@@ -214,7 +272,7 @@
               </section>
             </figure>
 
-            <div class="tables-grid">
+            <div id="analysis-tables" class="tables-grid">
               <section class="data-section" aria-labelledby="kernel-heading">
                 <div class="section-heading">
                   <div>
