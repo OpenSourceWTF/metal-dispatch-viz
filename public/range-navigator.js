@@ -217,6 +217,10 @@ export class RangeNavigator {
     this.destroyed = false;
     this.animationFrame = null;
     this.listeners = [];
+    this.resolutionMediaQuery = null;
+    this.resolutionListener = null;
+    this.resolutionListenerKind = null;
+    this.resolutionDpr = null;
 
     this.listen(this.canvas, "pointerdown", (event) =>
       this.handleOverviewPointerDown(event));
@@ -236,6 +240,12 @@ export class RangeNavigator {
       this.finishDrag(event));
     this.listen(this.window, "pointercancel", (event) =>
       this.cancelDrag(event));
+    this.listen(this.window, "resize", () => {
+      this.handleResize();
+      if (this.resolutionDpr !== this.currentDevicePixelRatio()) {
+        this.armResolutionObservation();
+      }
+    });
     for (const target of [this.band, this.startHandle, this.endHandle]) {
       this.listen(target, "lostpointercapture", (event) =>
         this.cancelDrag(event, { captureLost: true }));
@@ -245,6 +255,7 @@ export class RangeNavigator {
       ? new this.window.ResizeObserver(() => this.handleResize())
       : null;
     this.resizeObserver?.observe(this.canvas);
+    this.armResolutionObservation();
     this.setDisabled(false);
   }
 
@@ -272,6 +283,10 @@ export class RangeNavigator {
 
   setOverview(overview) {
     const bounds = overviewBounds(overview);
+    const launchChanged = this.overview !== overview;
+    if (this.drag) {
+      this.abandonDrag(this.drag, { restore: false, release: true });
+    }
     this.overview = overview;
     this.bounds = bounds;
     const bins = Array.isArray(overview.bins) ? overview.bins : [];
@@ -289,7 +304,7 @@ export class RangeNavigator {
     this.summary.textContent = description;
     this.canvas.setAttribute("aria-label", description);
     const nextRange = clampSelectedRange(
-      this.range ?? bounds,
+      launchChanged ? bounds : this.range ?? bounds,
       bounds,
       this.minimumSpanNs(),
     );
@@ -327,20 +342,29 @@ export class RangeNavigator {
 
   setRange(range, { emit = false } = {}) {
     const update = this.applyRange(range);
+    if (this.drag && update.changed) {
+      this.abandonDrag(this.drag, { restore: false, release: true });
+    }
     if (emit && update.changed) this.onRangeInput(update.range);
     return update.range;
   }
 
   handleResize() {
     if (this.destroyed) return;
+    const drag = this.drag;
+    const finalizeDrag = drag?.hadTransientChange === true;
+    if (drag) {
+      this.abandonDrag(drag, { restore: false, release: true });
+    }
     const minimumSpanNs = this.layoutMinimumSpanNs();
+    let update = null;
     if (minimumSpanNs !== null && this.range) {
       const nextRange = clampSelectedRange(
         this.range,
         this.bounds,
         minimumSpanNs,
       );
-      const update = this.applyRange(nextRange);
+      update = this.applyRange(nextRange);
       if (!update.changed) {
         this.updateControls();
       } else {
@@ -353,7 +377,12 @@ export class RangeNavigator {
         ) {
           this.onRangeCommit(update.range);
         }
+        this.requestRender();
+        return;
       }
+    }
+    if (finalizeDrag && this.range) {
+      this.onRangeCommit(Object.freeze({ ...this.range }));
     }
     this.requestRender();
   }
@@ -427,13 +456,14 @@ export class RangeNavigator {
     if (type !== "band") event.stopPropagation?.();
     target.setPointerCapture?.(event.pointerId);
     if (type === "band") target.classList?.add?.("is-dragging");
-    this.drag = Object.freeze({
+    this.drag = {
       type,
       target,
       pointerId: event.pointerId,
       clientX: event.clientX,
       range: Object.freeze({ ...this.range }),
-    });
+      hadTransientChange: false,
+    };
   }
 
   rangeForPointer(drag, clientX) {
@@ -455,6 +485,7 @@ export class RangeNavigator {
   }
 
   emitDragInput(drag, update) {
+    drag.hadTransientChange = true;
     this.onRangeInput(update.range);
     if (
       this.destroyed ||
@@ -513,9 +544,10 @@ export class RangeNavigator {
     }
     if (this.destroyed || this.disabled || this.drag !== drag) return;
     const result = Object.freeze({ ...this.range });
+    const shouldCommit = drag.hadTransientChange;
     this.drag = null;
     this.finishPointerCapture(drag, { release: true });
-    this.onRangeCommit(result);
+    if (shouldCommit) this.onRangeCommit(result);
   }
 
   cancelDrag(event, { captureLost = false } = {}) {
@@ -583,6 +615,67 @@ export class RangeNavigator {
       ),
     );
     if (update.changed) this.onRangeCommit(update.range);
+  }
+
+  currentDevicePixelRatio() {
+    return Number.isFinite(this.window.devicePixelRatio) &&
+        this.window.devicePixelRatio > 0
+      ? this.window.devicePixelRatio
+      : 1;
+  }
+
+  clearResolutionObservation() {
+    if (!this.resolutionMediaQuery || !this.resolutionListener) return;
+    if (this.resolutionListenerKind === "event") {
+      this.resolutionMediaQuery.removeEventListener?.(
+        "change",
+        this.resolutionListener,
+      );
+    } else {
+      this.resolutionMediaQuery.removeListener?.(this.resolutionListener);
+    }
+    this.resolutionMediaQuery = null;
+    this.resolutionListener = null;
+    this.resolutionListenerKind = null;
+  }
+
+  armResolutionObservation() {
+    this.clearResolutionObservation();
+    if (this.destroyed || typeof this.window.matchMedia !== "function") {
+      this.resolutionDpr = null;
+      return;
+    }
+    const dpr = this.currentDevicePixelRatio();
+    let mediaQuery;
+    try {
+      mediaQuery = this.window.matchMedia(`(resolution: ${dpr}dppx)`);
+    } catch {
+      this.resolutionDpr = null;
+      return;
+    }
+    if (!mediaQuery) {
+      this.resolutionDpr = null;
+      return;
+    }
+    const listener = () => {
+      if (this.destroyed) return;
+      this.clearResolutionObservation();
+      this.handleResize();
+      this.armResolutionObservation();
+    };
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", listener);
+      this.resolutionListenerKind = "event";
+    } else if (typeof mediaQuery.addListener === "function") {
+      mediaQuery.addListener(listener);
+      this.resolutionListenerKind = "legacy";
+    } else {
+      this.resolutionDpr = null;
+      return;
+    }
+    this.resolutionMediaQuery = mediaQuery;
+    this.resolutionListener = listener;
+    this.resolutionDpr = dpr;
   }
 
   requestRender() {
@@ -717,6 +810,8 @@ export class RangeNavigator {
     this.listeners.length = 0;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.clearResolutionObservation();
+    this.resolutionDpr = null;
     if (this.animationFrame !== null) {
       this.window.cancelAnimationFrame(this.animationFrame);
       this.animationFrame = null;
