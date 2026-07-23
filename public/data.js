@@ -896,23 +896,35 @@ function kernelCensus(dispatches) {
   );
 }
 
+function waitSummary(waits) {
+  const totals = { cap: 0, dependency: 0, decision: 0, other: 0 };
+  for (const wait of waits) {
+    if (
+      wait.headlineCategory !== null &&
+      Object.hasOwn(totals, wait.headlineCategory) &&
+      Number.isFinite(wait.waitNs) &&
+      wait.waitNs >= 0
+    ) {
+      totals[wait.headlineCategory] += wait.waitNs;
+    }
+  }
+  return Object.freeze({
+    capWaitNs: totals.cap,
+    dependencyWaitNs: totals.dependency,
+    decisionWaitNs: totals.decision,
+    otherWaitNs: totals.other,
+    headlineWaitNs:
+      totals.cap + totals.dependency + totals.decision + totals.other,
+  });
+}
+
 function aggregateData(commandBuffers, dispatches, waits) {
   const gpuWorkIntervals = commandBuffers
     .map(commandBufferGpuInterval)
     .filter((interval) => interval !== null);
   const gpuIntervals = mergeIntervals(gpuWorkIntervals);
   const waitTaxonomy = buildWaitTaxonomy(waits);
-  const waitTotals = { cap: 0, dependency: 0, decision: 0, other: 0 };
-  for (const wait of waits) {
-    if (
-      wait.headlineCategory !== null &&
-      Object.hasOwn(waitTotals, wait.headlineCategory) &&
-      Number.isFinite(wait.waitNs) &&
-      wait.waitNs >= 0
-    ) {
-      waitTotals[wait.headlineCategory] += wait.waitNs;
-    }
-  }
+  const waitTotals = waitSummary(waits);
 
   let startNs = null;
   let endNs = null;
@@ -958,16 +970,258 @@ function aggregateData(commandBuffers, dispatches, waits) {
       gpuBusyNs: intervalDuration(gpuIntervals),
       gpuWorkNs: intervalDuration(gpuWorkIntervals),
       gpuSpanNs: gpuStartNs === null || gpuEndNs === null ? 0 : gpuEndNs - gpuStartNs,
-      capWaitNs: waitTotals.cap,
-      dependencyWaitNs: waitTotals.dependency,
-      decisionWaitNs: waitTotals.decision,
-      otherWaitNs: waitTotals.other,
-      headlineWaitNs:
-        waitTotals.cap + waitTotals.dependency + waitTotals.decision + waitTotals.other,
+      ...waitTotals,
       opsTotal: dispatches.length,
       cbsTotal: commandBuffers.length,
     }),
   };
+}
+
+function clipInterval(interval, range) {
+  if (!validInterval(interval)) {
+    return null;
+  }
+  const start = Math.max(interval[0], range.startNs);
+  const end = Math.min(interval[1], range.endNs);
+  return end > start ? [start, end] : null;
+}
+
+function pointInRange(atNs, range) {
+  return (
+    Number.isFinite(atNs) &&
+    atNs >= range.startNs &&
+    atNs <= range.endNs
+  );
+}
+
+function validSelectedRange(scope, requestedRange) {
+  if (
+    !Number.isFinite(scope?.startNs) ||
+    !Number.isFinite(scope?.endNs) ||
+    !Number.isFinite(requestedRange?.startNs) ||
+    !Number.isFinite(requestedRange?.endNs)
+  ) {
+    throw new TypeError("Range and launch bounds must be finite.");
+  }
+  const startNs = Math.max(scope.startNs, requestedRange.startNs);
+  const endNs = Math.min(scope.endNs, requestedRange.endNs);
+  if (endNs <= startNs) {
+    throw new RangeError("Selected range must have positive duration.");
+  }
+  return Object.freeze({ startNs, endNs });
+}
+
+/**
+ * Build exact aggregates for one positive-duration selection within a launch.
+ * Point records are inclusive at both edges; measured intervals contribute
+ * only their positive-duration intersection with the selected range.
+ */
+export function buildRangeScope(scope, requestedRange) {
+  const range = validSelectedRange(scope, requestedRange);
+  const sourceCommandBuffers = Array.isArray(scope.commandBuffers)
+    ? scope.commandBuffers
+    : [];
+  const sourceDispatches = Array.isArray(scope.dispatches)
+    ? scope.dispatches
+    : [];
+  const sourceWaits = Array.isArray(scope.waits) ? scope.waits : [];
+  const commandBuffers = sourceCommandBuffers
+    .map((commandBuffer) => {
+      const encodeInterval = clipInterval(
+        [commandBuffer.encodeStartNs, commandBuffer.encodeEndNs],
+        range,
+      );
+      const gpuInterval = clipInterval(
+        [commandBuffer.gpuStartNs, commandBuffer.gpuEndNs],
+        range,
+      );
+      if (encodeInterval === null && gpuInterval === null) {
+        return null;
+      }
+      const sourceHiddenIntervals = Array.isArray(commandBuffer.hiddenIntervals)
+        ? commandBuffer.hiddenIntervals
+        : [];
+      const sourceExposedIntervals = Array.isArray(commandBuffer.exposedIntervals)
+        ? commandBuffer.exposedIntervals
+        : [];
+      const hiddenIntervals = sourceHiddenIntervals
+        .map((interval) => clipInterval(interval, range))
+        .filter((interval) => interval !== null);
+      const exposedIntervals = sourceExposedIntervals
+        .map((interval) => clipInterval(interval, range))
+        .filter((interval) => interval !== null);
+      return Object.freeze({
+        ...commandBuffer,
+        hiddenIntervals: freezeIntervals(hiddenIntervals),
+        exposedIntervals: freezeIntervals(exposedIntervals),
+        hiddenHostNs: intervalDuration(hiddenIntervals),
+        exposedHostNs: intervalDuration(exposedIntervals),
+        rangeGpuInterval:
+          gpuInterval === null ? null : Object.freeze(gpuInterval),
+      });
+    })
+    .filter((commandBuffer) => commandBuffer !== null);
+  const dispatches = sourceDispatches.filter((dispatch) =>
+    pointInRange(dispatch.atNs, range));
+  const waits = sourceWaits.filter((wait) => pointInRange(wait.atNs, range));
+  const gpuWorkIntervals = commandBuffers
+    .map((commandBuffer) => commandBuffer.rangeGpuInterval)
+    .filter((interval) => interval !== null);
+  const gpuIntervals = mergeIntervals(gpuWorkIntervals);
+  const waitTotals = waitSummary(waits);
+
+  return Object.freeze({
+    index: scope.index,
+    startNs: range.startNs,
+    endNs: range.endNs,
+    range,
+    commandBuffers: Object.freeze(commandBuffers),
+    dispatches: Object.freeze(dispatches),
+    waits: Object.freeze(waits),
+    gpuIntervals,
+    kernelCensus: kernelCensus(dispatches),
+    waitTaxonomy: buildWaitTaxonomy(waits),
+    omissions: Object.freeze({
+      unplacedDispatches: sourceDispatches.filter(
+        (dispatch) => !Number.isFinite(dispatch.atNs),
+      ).length,
+      unanchoredWaits: sourceWaits.filter(
+        (wait) => !Number.isFinite(wait.atNs),
+      ).length,
+    }),
+    summary: Object.freeze({
+      startNs: range.startNs,
+      endNs: range.endNs,
+      wallSpanNs: range.endNs - range.startNs,
+      exposedHostNs: commandBuffers.reduce(
+        (total, commandBuffer) => total + commandBuffer.exposedHostNs,
+        0,
+      ),
+      hiddenHostNs: commandBuffers.reduce(
+        (total, commandBuffer) => total + commandBuffer.hiddenHostNs,
+        0,
+      ),
+      gpuBusyNs: intervalDuration(gpuIntervals),
+      gpuWorkNs: intervalDuration(gpuWorkIntervals),
+      gpuSpanNs:
+        gpuIntervals.length === 0
+          ? 0
+          : gpuIntervals.at(-1)[1] - gpuIntervals[0][0],
+      ...waitTotals,
+      opsTotal: dispatches.length,
+      cbsTotal: commandBuffers.length,
+    }),
+  });
+}
+
+function overviewPointIndex(atNs, startNs, endNs, binCount) {
+  if (!Number.isFinite(atNs) || atNs < startNs || atNs > endNs) {
+    return -1;
+  }
+  if (atNs === endNs) {
+    return binCount - 1;
+  }
+  return Math.floor(((atNs - startNs) / (endNs - startNs)) * binCount);
+}
+
+function addOverviewInterval(bins, interval, field) {
+  if (!validInterval(interval)) {
+    return;
+  }
+  for (const bin of bins) {
+    const overlapStart = Math.max(interval[0], bin.startNs);
+    const overlapEnd = Math.min(interval[1], bin.endNs);
+    if (overlapEnd > overlapStart) {
+      bin[field] += overlapEnd - overlapStart;
+    }
+    if (bin.startNs >= interval[1]) {
+      break;
+    }
+  }
+}
+
+/**
+ * Reduce a complete launch to fixed-resolution exact coverage and point-event
+ * bins for the overview navigator.
+ */
+export function buildOverviewBins(scope, binCount = 512) {
+  const count = Number.isFinite(binCount)
+    ? Math.max(1, Math.trunc(binCount))
+    : 512;
+  const startNs = scope?.startNs;
+  const endNs = scope?.endNs;
+  if (!Number.isFinite(startNs) || !Number.isFinite(endNs) || endNs <= startNs) {
+    return Object.freeze({
+      startNs: 0,
+      endNs: 1,
+      binCount: count,
+      bins: EMPTY_INTERVALS,
+    });
+  }
+
+  const span = endNs - startNs;
+  const bins = Array.from({ length: count }, (_, index) => ({
+    startNs: startNs + (index * span) / count,
+    endNs: startNs + ((index + 1) * span) / count,
+    hostEncodeNs: 0,
+    gpuBusyNs: 0,
+    dispatchCount: 0,
+    waitCount: 0,
+    waitClasses: new Set(),
+  }));
+  const commandBuffers = Array.isArray(scope.commandBuffers)
+    ? scope.commandBuffers
+    : [];
+  const dispatches = Array.isArray(scope.dispatches) ? scope.dispatches : [];
+  const waits = Array.isArray(scope.waits) ? scope.waits : [];
+
+  for (const commandBuffer of commandBuffers) {
+    const exposedIntervals = Array.isArray(commandBuffer.exposedIntervals)
+      ? commandBuffer.exposedIntervals
+      : [];
+    const hiddenIntervals = Array.isArray(commandBuffer.hiddenIntervals)
+      ? commandBuffer.hiddenIntervals
+      : [];
+    for (const interval of [...exposedIntervals, ...hiddenIntervals]) {
+      addOverviewInterval(bins, interval, "hostEncodeNs");
+    }
+  }
+  const gpuIntervals = mergeIntervals(
+    commandBuffers
+      .map(commandBufferGpuInterval)
+      .filter((interval) => interval !== null),
+  );
+  for (const interval of gpuIntervals) {
+    addOverviewInterval(bins, interval, "gpuBusyNs");
+  }
+  for (const dispatch of dispatches) {
+    const index = overviewPointIndex(dispatch.atNs, startNs, endNs, count);
+    if (index >= 0) {
+      bins[index].dispatchCount += 1;
+    }
+  }
+  for (const wait of waits) {
+    const index = overviewPointIndex(wait.atNs, startNs, endNs, count);
+    if (index < 0) {
+      continue;
+    }
+    bins[index].waitCount += 1;
+    bins[index].waitClasses.add(wait.waitClass ?? "other");
+  }
+
+  return Object.freeze({
+    startNs,
+    endNs,
+    binCount: count,
+    bins: Object.freeze(
+      bins.map((bin) =>
+        Object.freeze({
+          ...bin,
+          waitClasses: Object.freeze([...bin.waitClasses].sort()),
+        }),
+      ),
+    ),
+  });
 }
 
 function buildWindowLookup(windows) {
@@ -1071,7 +1325,7 @@ function buildLaunchWindows(commandBuffers, dispatches, waits) {
       dispatchGroups[index],
       waitGroups[index],
     );
-    return Object.freeze({
+    const launch = {
       ...partition,
       startNs: aggregate.summary.startNs,
       endNs: aggregate.summary.endNs,
@@ -1082,6 +1336,10 @@ function buildLaunchWindows(commandBuffers, dispatches, waits) {
       waitTaxonomy: aggregate.waitTaxonomy,
       kernelCensus: aggregate.kernelCensus,
       summary: aggregate.summary,
+    };
+    return Object.freeze({
+      ...launch,
+      overview: buildOverviewBins(launch),
     });
   });
   return {

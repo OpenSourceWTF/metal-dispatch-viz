@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   buildDataset,
+  buildOverviewBins,
+  buildRangeScope,
   classifyWait,
   formatBytes,
   formatDuration,
@@ -1029,4 +1031,307 @@ test("formats compact durations and byte sizes for browser consumers", () => {
   assert.equal(formatBytes(512), "512 B");
   assert.equal(formatBytes(1536), "1.5 KiB");
   assert.equal(formatBytes(Number.NaN), "—");
+});
+
+test("range scope clips host and GPU intervals and includes points at both edges", () => {
+  const launch = {
+    index: 0,
+    startNs: 0,
+    endNs: 250,
+    commandBuffers: [
+      {
+        commandBufferIndex: 0,
+        encodeStartNs: 0,
+        encodeEndNs: 100,
+        gpuStartNs: 50,
+        gpuEndNs: 150,
+        exposedIntervals: [[0, 50]],
+        hiddenIntervals: [[50, 100]],
+      },
+      {
+        commandBufferIndex: 1,
+        encodeStartNs: 100,
+        encodeEndNs: 200,
+        gpuStartNs: 150,
+        gpuEndNs: 250,
+        exposedIntervals: [],
+        hiddenIntervals: [[100, 200]],
+      },
+    ],
+    dispatches: [
+      { kernel: "edge-a", atNs: 75, setBytesCalls: 1 },
+      { kernel: "middle", atNs: 125, bufferBinds: 2 },
+      { kernel: "edge-b", atNs: 175, setBytesTotalBytes: 16 },
+      { kernel: "outside", atNs: 200 },
+      { kernel: "unplaced", atNs: null },
+    ],
+    waits: [
+      {
+        bucket: "cap_wait",
+        waitClass: "cap",
+        detailClass: "cap",
+        headlineCategory: "cap",
+        waitNs: 7,
+        atNs: 75,
+      },
+      {
+        bucket: "cb_wait_until_completed",
+        waitClass: "decision",
+        detailClass: "decision",
+        headlineCategory: "decision",
+        waitNs: 11,
+        atNs: 175,
+      },
+      {
+        bucket: "dependency_cv_wait",
+        waitClass: "dependency",
+        headlineCategory: "dependency",
+        waitNs: 13,
+        atNs: null,
+      },
+    ],
+  };
+
+  const range = buildRangeScope(launch, { startNs: 75, endNs: 175 });
+
+  assert.deepEqual(range.range, { startNs: 75, endNs: 175 });
+  assert.equal(range.summary.wallSpanNs, 100);
+  assert.equal(range.summary.exposedHostNs, 0);
+  assert.equal(range.summary.hiddenHostNs, 100);
+  assert.equal(range.summary.gpuBusyNs, 100);
+  assert.equal(range.summary.gpuWorkNs, 100);
+  assert.equal(range.summary.cbsTotal, 2);
+  assert.equal(range.summary.opsTotal, 3);
+  assert.equal(range.summary.capWaitNs, 7);
+  assert.equal(range.summary.decisionWaitNs, 11);
+  assert.deepEqual(
+    range.kernelCensus.map(({ kernel, count }) => [kernel, count]),
+    [["edge-a", 1], ["edge-b", 1], ["middle", 1]],
+  );
+  assert.deepEqual(range.gpuIntervals, [[75, 175]]);
+  assert.deepEqual(range.commandBuffers[0].hiddenIntervals, [[75, 100]]);
+  assert.deepEqual(range.commandBuffers[1].hiddenIntervals, [[100, 175]]);
+  assert.deepEqual(range.commandBuffers.map((commandBuffer) => [
+    commandBuffer.encodeStartNs,
+    commandBuffer.encodeEndNs,
+    commandBuffer.gpuStartNs,
+    commandBuffer.gpuEndNs,
+    commandBuffer.rangeGpuInterval,
+  ]), [
+    [0, 100, 50, 150, [75, 150]],
+    [100, 200, 150, 250, [150, 175]],
+  ]);
+  assert.deepEqual(Object.keys(range.waitTaxonomy).sort(), [
+    "cap_wait",
+    "cb_wait_until_completed",
+  ]);
+  assert.deepEqual(range.omissions, {
+    unplacedDispatches: 1,
+    unanchoredWaits: 1,
+  });
+  assert.equal(Object.isFrozen(range), true);
+  assert.equal(Object.isFrozen(range.commandBuffers[0].hiddenIntervals[0]), true);
+});
+
+test("full-launch range preserves exact launch aggregates and endpoint events", () => {
+  const dataset = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      first_op_seq: 0,
+      last_op_seq: 1,
+      encode_start_ns: 0,
+      encode_end_ns: 100,
+      gpu_start_ns: 50,
+      gpu_end_ns: 150,
+    },
+    {
+      record: "op",
+      command_buffer_index: 0,
+      seq: 0,
+      kernel_name: "first",
+    },
+    {
+      record: "op",
+      command_buffer_index: 0,
+      seq: 1,
+      kernel_name: "last",
+    },
+    {
+      record: "wait",
+      bucket: "cap_wait",
+      wait_ns: 3,
+      at_ns: 150,
+    },
+  ]);
+  const launch = dataset.launchWindows[0];
+  const range = buildRangeScope(launch, {
+    startNs: launch.startNs,
+    endNs: launch.endNs,
+  });
+
+  for (const key of [
+    "wallSpanNs",
+    "exposedHostNs",
+    "hiddenHostNs",
+    "gpuBusyNs",
+    "gpuWorkNs",
+    "gpuSpanNs",
+    "capWaitNs",
+    "dependencyWaitNs",
+    "decisionWaitNs",
+    "otherWaitNs",
+    "headlineWaitNs",
+    "opsTotal",
+    "cbsTotal",
+  ]) {
+    assert.equal(range.summary[key], launch.summary[key], key);
+  }
+  assert.equal(range.waits.at(-1).atNs, launch.endNs);
+  assert.equal(range.commandBuffers[0].encodeStartNs, 0);
+  assert.equal(range.commandBuffers[0].gpuEndNs, 150);
+});
+
+test("range validation clamps to one launch and rejects invalid or collapsed bounds", () => {
+  const scope = {
+    startNs: 10,
+    endNs: 90,
+    commandBuffers: [],
+    dispatches: [],
+    waits: [],
+  };
+
+  const clamped = buildRangeScope(scope, { startNs: -100, endNs: 200 });
+  assert.deepEqual(clamped.range, { startNs: 10, endNs: 90 });
+  assert.equal(clamped.summary.wallSpanNs, 80);
+
+  assert.throws(
+    () => buildRangeScope(scope, { startNs: 40, endNs: 40 }),
+    RangeError,
+  );
+  assert.throws(
+    () => buildRangeScope(scope, { startNs: 100, endNs: 120 }),
+    RangeError,
+  );
+  assert.throws(
+    () => buildRangeScope(scope, { startNs: Number.NaN, endNs: 50 }),
+    TypeError,
+  );
+  assert.throws(
+    () => buildRangeScope({ ...scope, endNs: Infinity }, { startNs: 20, endNs: 50 }),
+    TypeError,
+  );
+});
+
+test("empty-event ranges retain the selected wall span and exact omission counts", () => {
+  const range = buildRangeScope({
+    startNs: 0,
+    endNs: 100,
+    commandBuffers: [],
+    dispatches: [{ kernel: "unplaced-a", atNs: null }, { kernel: "unplaced-b" }],
+    waits: [{ bucket: "cap_wait", atNs: null }, { bucket: "memory_wait" }],
+  }, { startNs: 20, endNs: 40 });
+
+  assert.equal(range.summary.wallSpanNs, 20);
+  assert.deepEqual(range.commandBuffers, []);
+  assert.deepEqual(range.dispatches, []);
+  assert.deepEqual(range.waits, []);
+  assert.deepEqual(range.gpuIntervals, []);
+  assert.deepEqual(range.kernelCensus, []);
+  assert.deepEqual(Object.keys(range.waitTaxonomy), []);
+  assert.deepEqual(range.omissions, {
+    unplacedDispatches: 2,
+    unanchoredWaits: 2,
+  });
+  assert.deepEqual(range.summary, {
+    startNs: 20,
+    endNs: 40,
+    wallSpanNs: 20,
+    exposedHostNs: 0,
+    hiddenHostNs: 0,
+    gpuBusyNs: 0,
+    gpuWorkNs: 0,
+    gpuSpanNs: 0,
+    capWaitNs: 0,
+    dependencyWaitNs: 0,
+    decisionWaitNs: 0,
+    otherWaitNs: 0,
+    headlineWaitNs: 0,
+    opsTotal: 0,
+    cbsTotal: 0,
+  });
+});
+
+test("overview bins retain exact coverage, sorted wait classes, and final endpoints", () => {
+  const scope = {
+    startNs: 0,
+    endNs: 100,
+    commandBuffers: [{
+      encodeStartNs: 0,
+      encodeEndNs: 100,
+      gpuStartNs: 25,
+      gpuEndNs: 75,
+      exposedIntervals: [[0, 25], [75, 100]],
+      hiddenIntervals: [[25, 75]],
+    }],
+    dispatches: [{ atNs: 0 }, { atNs: 50 }, { atNs: 100 }],
+    waits: [
+      { atNs: 25, waitClass: "cap" },
+      { atNs: 75, waitClass: "decision" },
+      { atNs: 100, waitClass: "cap" },
+    ],
+  };
+
+  const overview = buildOverviewBins(scope, 4);
+
+  assert.equal(overview.binCount, 4);
+  assert.deepEqual(
+    overview.bins.map((bin) => [bin.startNs, bin.endNs]),
+    [[0, 25], [25, 50], [50, 75], [75, 100]],
+  );
+  assert.deepEqual(
+    overview.bins.map((bin) => bin.hostEncodeNs),
+    [25, 25, 25, 25],
+  );
+  assert.deepEqual(
+    overview.bins.map((bin) => bin.gpuBusyNs),
+    [0, 25, 25, 0],
+  );
+  assert.equal(
+    overview.bins.reduce((total, bin) => total + bin.dispatchCount, 0),
+    3,
+  );
+  assert.equal(
+    overview.bins.reduce((total, bin) => total + bin.waitCount, 0),
+    3,
+  );
+  assert.equal(
+    overview.bins.reduce((total, bin) => total + bin.gpuBusyNs, 0),
+    50,
+  );
+  assert.equal(overview.bins[3].dispatchCount, 1);
+  assert.deepEqual(overview.bins[3].waitClasses, ["cap", "decision"]);
+  assert.equal(Object.isFrozen(overview.bins[3].waitClasses), true);
+});
+
+test("each launch scope carries a frozen overview without circular references", () => {
+  const dataset = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      encode_start_ns: 0,
+      encode_end_ns: 10,
+      gpu_start_ns: 2,
+      gpu_end_ns: 8,
+    },
+  ]);
+  const launch = dataset.launchWindows[0];
+
+  assert.equal(launch.overview.binCount, 512);
+  assert.equal(launch.overview.startNs, launch.startNs);
+  assert.equal(launch.overview.endNs, launch.endNs);
+  assert.doesNotThrow(() => JSON.stringify(launch));
+  assert.equal(Object.isFrozen(launch.overview), true);
+  assert.equal(Object.isFrozen(launch.overview.bins), true);
+  assert.equal(Object.isFrozen(launch.overview.bins[0]), true);
 });
