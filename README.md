@@ -99,6 +99,45 @@ server-generated opaque ID. All metadata fields are optional.
 - Share the current view with `?trace=<opaque-id>&window=<index>`; unrelated
   query parameters are preserved.
 
+### Time-window control
+
+The overview strip always represents the complete selected launch. It is a
+navigation summary, not a measurement-resolution event plot.
+
+- Drag the selection band to pan it, drag either handle to resize it, or click
+  outside the band to recenter the same-duration selection.
+- **View** changes the timeline viewport while the headline metrics and tables
+  remain labeled **Launch totals**.
+- **Analyze** recomputes **Selected range** metrics and tables from the full
+  worker-side trace. It never calculates from the bounded Canvas sample.
+- Wheel zoom and timeline drag update the same selection band. **Fit** or a
+  timeline double-click restores the complete launch.
+- Focus either range handle and use Arrow keys for 1% steps,
+  Shift+Arrow for 10%, Home for the launch start, and End for the launch end.
+
+Analyze is disabled as **Preparing exact analysis** until the trace worker is
+ready. It reads **Analyze unavailable** when the launch lacks the timing needed
+for exact range analysis or worker setup fails. While a range is being analyzed,
+the metrics and tables are marked busy. A range-analysis error is shown in the
+status line, returns the workbench to View, and restores launch totals; no sample
+data is substituted.
+
+The URL stores `trace=<opaque-id>`, the zero-based `window=<index>`,
+`range=view|analyze`, and `from`/`to` as integer nanosecond offsets from the
+launch start. Invalid range parameters restore View over the complete launch.
+Unrelated query parameters are preserved.
+
+The Canvas can use a deterministic compact sample for a large launch or selected
+range. When it does, the note below the timeline gives displayed and total
+record counts; headline metrics, kernel census, and wait taxonomy still use the
+exact full launch in View or the exact selected range in Analyze.
+
+Schema-v1 dispatch membership uses ordered placement within each command buffer,
+not measured per-operation timestamps. Analyze discloses dispatches without an
+ordered placement and waits without an anchor; those records are excluded from
+selected-range aggregates. The schema also lacks tensor producer/consumer
+identity, so a selected range does not establish an output critical path.
+
 Trace fetch, byte-stream parsing, normalization, and interval analysis all run
 inside one module Web Worker. Large files still report byte and row progress,
 but their JSON parsing and exact aggregate construction never cross the browser
