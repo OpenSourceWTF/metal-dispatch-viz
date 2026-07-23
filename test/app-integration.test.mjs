@@ -1263,6 +1263,92 @@ test("real timeline Analyze pan survives exact-to-launch swap and commits once o
   assert.equal(harness.historyWrites.length, historyBeforePan + 1);
 });
 
+test("real timeline drag survives an authoritative exact result arriving after pointer-down", async () => {
+  const launch = bootstrapLaunch();
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+      modifiedTime: "2026-07-23T00:00:00.000Z",
+    }],
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+    useRealRenderer: true,
+  });
+  const app = await harness.bootPromise;
+  harness.runAnimationFrames();
+  const renderer = harness.renderers[0];
+  const navigator = harness.navigators[0];
+  const session = harness.sessions[0];
+  const canvas = harness.documentObject.getElementById("timeline");
+
+  navigator.emitCommit({ startNs: 20, endNs: 80 });
+  harness.documentObject.getElementById("range-mode-analyze").click();
+  assert.equal(session.analysis.length, 1);
+  canvas.dispatch("pointerdown", {
+    button: 0,
+    clientX: 560,
+    clientY: 150,
+    pointerId: 43,
+  });
+  assert.ok(renderer.drag);
+
+  session.analysis[0].resolve({
+    range: { startNs: 20, endNs: 80 },
+    dataset: analyzedScope({ startNs: 20, endNs: 80 }),
+  });
+  await flushMicrotasks();
+  harness.runAnimationFrames();
+  assert.ok(
+    renderer.drag,
+    "same-launch authoritative publication preserves the paused drag",
+  );
+  assert.notEqual(app.state.canvasScope, launch);
+  const historyBeforePan = harness.historyWrites.length;
+
+  canvas.dispatch("pointermove", {
+    clientX: 540,
+    clientY: 150,
+    pointerId: 43,
+  });
+  const firstViewport = { ...renderer.viewport };
+  canvas.dispatch("pointermove", {
+    clientX: 520,
+    clientY: 150,
+    pointerId: 43,
+  });
+  assert.notDeepEqual(renderer.viewport, firstViewport);
+  canvas.dispatch("pointerup", {
+    clientX: 520,
+    clientY: 150,
+    pointerId: 43,
+  });
+  assert.equal(renderer.drag, null);
+  assert.equal(
+    session.analysis.length,
+    2,
+    "release issues exactly one replacement request",
+  );
+  harness.runTimers();
+  assert.equal(session.analysis.length, 2);
+
+  const committed = session.analysis[1].request;
+  session.analysis[1].resolve({
+    range: {
+      startNs: committed.startNs,
+      endNs: committed.endNs,
+    },
+    dataset: analyzedScope({
+      startNs: committed.startNs,
+      endNs: committed.endNs,
+    }),
+  });
+  await flushMicrotasks();
+  assert.equal(harness.historyWrites.length, historyBeforePan + 1);
+});
+
 test("range URL stores launch-relative offsets and mode", () => {
   const url = rangeSelectionUrl(
     "http://localhost/?trace=t&window=1",

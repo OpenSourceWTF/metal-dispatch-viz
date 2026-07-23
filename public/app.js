@@ -1340,7 +1340,7 @@ export async function bootstrap({
       state.activeScope = result.dataset;
       rangeNavigator.setRange(state.selectedRange);
       renderScopeEvidence(result.dataset);
-      renderCanvasScope(result.dataset);
+      renderCanvasScope(result.dataset, { preservePointerDrag: true });
       commitRangeUrl();
     } catch (error) {
       if (
