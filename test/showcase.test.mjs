@@ -1,0 +1,71 @@
+import assert from "node:assert/strict";
+import { readdir, readFile } from "node:fs/promises";
+import test from "node:test";
+
+const showcaseUrl = new URL("../traces/showcase/", import.meta.url);
+const manifestUrl = new URL("traces.json", showcaseUrl);
+
+const EXPECTED_TRACES = new Map([
+  ["glm52-q1t-t158-mtp-k3.jsonl", "GLM-5.2 1.58q"],
+  ["hy3-oq2e-mtp-k2.jsonl", "Hy3 2q"],
+  ["laguna-s21-oq4e-ar.jsonl", "Laguna 2.1 S"],
+  ["qwen36-27b-mtp-k3.jsonl", "Qwen3.6 27B"],
+  ["qwen36-35b-a3b-k1.jsonl", "Qwen3.6 35B"],
+]);
+
+function countRecords(rows, record) {
+  return rows.filter((row) => row?.record === record).length;
+}
+
+test("bundled showcase is an exact five-trace manifest-to-folder bijection", async () => {
+  const manifestText = await readFile(manifestUrl, "utf8");
+  const manifest = JSON.parse(manifestText);
+  const files = (await readdir(showcaseUrl))
+    .filter((name) => name.endsWith(".jsonl"))
+    .sort();
+  const manifestFiles = Object.keys(manifest.traces).sort();
+  const expectedFiles = [...EXPECTED_TRACES.keys()].sort();
+
+  assert.equal(manifest.schema_version, 1);
+  assert.deepEqual(files, expectedFiles);
+  assert.deepEqual(manifestFiles, expectedFiles);
+  assert.doesNotMatch(manifestText, /\/Users\//);
+
+  for (const [filename, expectedLabel] of EXPECTED_TRACES) {
+    const metadata = manifest.traces[filename];
+    assert.equal(metadata.label, expectedLabel);
+    assert.equal(metadata.artifact_status, "curated-window");
+    assert.match(metadata.source_sha256, /^[a-f0-9]{64}$/);
+    assert.equal(typeof metadata.source_complete, metadata.source_complete === null ? "object" : "boolean");
+    assert.equal(typeof metadata.valid_evidence, "boolean");
+  }
+});
+
+test("every bundled window terminates in a count-exact standard v1 summary", async () => {
+  const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
+
+  for (const filename of EXPECTED_TRACES.keys()) {
+    const text = await readFile(new URL(filename, showcaseUrl), "utf8");
+    const rows = text.trimEnd().split("\n").map(JSON.parse);
+    const summary = rows.at(-1);
+
+    assert.equal(summary.record, "summary", `${filename}: terminal record`);
+    assert.equal(summary.schema_version, 1, `${filename}: schema version`);
+    assert.equal(summary.final, true, `${filename}: terminal flag`);
+    assert.equal(summary.complete, true, `${filename}: completeness`);
+    assert.equal(summary.dropped_rows, 0, `${filename}: dropped rows`);
+    assert.equal(summary.ops_total, countRecords(rows, "op"), `${filename}: op total`);
+    assert.equal(summary.cbs_total, countRecords(rows, "cb"), `${filename}: CB total`);
+    assert.equal(summary.curated_window, true, `${filename}: curated marker`);
+    assert.equal(
+      summary.curator_schema,
+      "metal-dispatch-viz.curated-window",
+      `${filename}: curator schema`,
+    );
+    assert.equal(
+      summary.source_sha256,
+      manifest.traces[filename].source_sha256,
+      `${filename}: raw source provenance`,
+    );
+  }
+});

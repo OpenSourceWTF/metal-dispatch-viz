@@ -1,0 +1,863 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  TIMELINE_DRAW_ORDER,
+  TIMELINE_LANES,
+  TimelineRenderer,
+  buildDensityBins,
+  clampViewport,
+  shouldUseDensity,
+  timeToX,
+  xToTime,
+} from "../public/timeline.js";
+
+function dispatch(atNs, kernel = "kernel", commandBufferIndex = 0, seq = atNs) {
+  return {
+    type: "op",
+    atNs,
+    kernel,
+    commandBufferIndex,
+    seq,
+    placement: "ordered",
+    placementDetail: "interpolated-sequence",
+  };
+}
+
+function dataset({
+  dispatches = [],
+  commandBuffers = [],
+  waits = [],
+  launchWindows = [],
+  startNs = 0,
+  endNs = 100,
+} = {}) {
+  return {
+    dispatches,
+    commandBuffers,
+    waits,
+    launchWindows,
+    summary: { startNs, endNs },
+  };
+}
+
+function createEnvironment({
+  width = 600,
+  height = 306,
+  initialAttributes = {},
+} = {}) {
+  const listeners = new Map();
+  const removed = [];
+  const contextCalls = [];
+  const context = new Proxy(
+    {
+      measureText(text) {
+        return { width: String(text).length * 6 };
+      },
+      createPattern() {
+        return "pattern";
+      },
+      setLineDash(value) {
+        contextCalls.push(["setLineDash", value]);
+      },
+    },
+    {
+      get(target, property) {
+        if (property in target) return target[property];
+        if (typeof property === "symbol") return undefined;
+        return (...args) => contextCalls.push([property, ...args]);
+      },
+      set(target, property, value) {
+        contextCalls.push([`set:${property}`, value]);
+        target[property] = value;
+        return true;
+      },
+    },
+  );
+
+  const bodyChildren = [];
+  const createdCanvases = [];
+  const makeElement = () => ({
+    style: {},
+    textContent: "",
+    className: "",
+    setAttribute() {},
+    remove() {
+      const index = bodyChildren.indexOf(this);
+      if (index >= 0) bodyChildren.splice(index, 1);
+    },
+  });
+  const document = {
+    body: {
+      append(element) {
+        bodyChildren.push(element);
+      },
+    },
+    createElement(tagName) {
+      if (String(tagName).toLowerCase() === "canvas") {
+        const backbuffer = {
+          width: 0,
+          height: 0,
+          style: {},
+          getContext(kind) {
+            assert.equal(kind, "2d");
+            return context;
+          },
+        };
+        createdCanvases.push(backbuffer);
+        return backbuffer;
+      }
+      return makeElement();
+    },
+  };
+  let nextRaf = 1;
+  const rafs = new Map();
+  const window = {
+    devicePixelRatio: 2,
+    document,
+    getComputedStyle() {
+      return { getPropertyValue: () => "" };
+    },
+    matchMedia() {
+      return { matches: false };
+    },
+    requestAnimationFrame(callback) {
+      const id = nextRaf++;
+      rafs.set(id, callback);
+      return id;
+    },
+    cancelAnimationFrame(id) {
+      rafs.delete(id);
+    },
+  };
+  document.defaultView = window;
+
+  const canvasAttributes = new Map(Object.entries(initialAttributes));
+  const canvas = {
+    ownerDocument: document,
+    style: {},
+    width: 0,
+    height: 0,
+    tabIndex: Number(initialAttributes.tabindex ?? -1),
+    attributes: canvasAttributes,
+    getContext(kind) {
+      assert.equal(kind, "2d");
+      return context;
+    },
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width, height };
+    },
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+    },
+    getAttribute(name) {
+      return this.attributes.get(name) ?? null;
+    },
+    removeAttribute(name) {
+      this.attributes.delete(name);
+    },
+    addEventListener(type, listener, options) {
+      listeners.set(type, { listener, options });
+    },
+    removeEventListener(type, listener, options) {
+      removed.push({ type, listener, options });
+      if (listeners.get(type)?.listener === listener) listeners.delete(type);
+    },
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    focus() {},
+  };
+
+  class FakeResizeObserver {
+    static instances = [];
+
+    constructor(callback) {
+      this.callback = callback;
+      this.disconnected = false;
+      FakeResizeObserver.instances.push(this);
+    }
+
+    observe(target) {
+      this.target = target;
+    }
+
+    disconnect() {
+      this.disconnected = true;
+    }
+  }
+  window.ResizeObserver = FakeResizeObserver;
+
+  function flushAnimationFrame() {
+    const pending = [...rafs.entries()];
+    rafs.clear();
+    for (const [, callback] of pending) callback(0);
+  }
+
+  function emit(type, overrides = {}) {
+    const entry = listeners.get(type);
+    assert.ok(entry, `missing ${type} listener`);
+    entry.listener({
+      clientX: 20,
+      clientY: 150,
+      pointerId: 1,
+      button: 0,
+      deltaY: 0,
+      preventDefault() {},
+      ...overrides,
+    });
+  }
+
+  return {
+    bodyChildren,
+    canvas,
+    contextCalls,
+    createdCanvases,
+    emit,
+    FakeResizeObserver,
+    flushAnimationFrame,
+    listeners,
+    removed,
+    window,
+  };
+}
+
+test("density bins preserve visible valid dispatch counts and deterministic ties", () => {
+  const bins = buildDensityBins(
+    [
+      dispatch(0, "zeta"),
+      dispatch(1, "zeta"),
+      dispatch(1, "alpha"),
+      dispatch(2, "alpha"),
+      dispatch(10, "outside"),
+      dispatch(null, "unplaced"),
+      dispatch(Number.NaN, "invalid"),
+    ],
+    { startNs: 0, endNs: 4, width: 2 },
+  );
+
+  assert.equal(bins.reduce((sum, bin) => sum + bin.count, 0), 4);
+  assert.deepEqual(
+    bins.map(({ index, count, dominantKernel }) => ({
+      index,
+      count,
+      dominantKernel,
+    })),
+    [
+      { index: 0, count: 3, dominantKernel: "zeta" },
+      { index: 1, count: 1, dominantKernel: "alpha" },
+    ],
+  );
+
+  const tied = buildDensityBins(
+    [dispatch(1, "zeta"), dispatch(1, "alpha")],
+    { startNs: 0, endNs: 2, width: 1 },
+  );
+  assert.equal(tied[0].dominantKernel, "alpha");
+});
+
+test("density bins handle endpoint visibility and malformed geometry", () => {
+  assert.deepEqual(
+    buildDensityBins([dispatch(0), dispatch(10)], {
+      startNs: 0,
+      endNs: 10,
+      width: 10,
+    }).map((bin) => bin.index),
+    [0, 9],
+  );
+  assert.deepEqual(buildDensityBins([], { startNs: 0, endNs: 1, width: 2 }), []);
+  assert.deepEqual(
+    buildDensityBins([dispatch(0)], { startNs: 1, endNs: 1, width: 2 }),
+    [],
+  );
+  assert.deepEqual(
+    buildDensityBins([dispatch(0)], { startNs: 0, endNs: 1, width: 0 }),
+    [],
+  );
+});
+
+test("time transforms round-trip and never produce non-finite output", () => {
+  const viewport = { startNs: 10, endNs: 110 };
+  for (const time of [10, 25, 60, 110]) {
+    assert.ok(Math.abs(xToTime(timeToX(time, viewport, 500), viewport, 500) - time) < 1e-9);
+  }
+  assert.equal(timeToX(10, { startNs: 3, endNs: 3 }, 0), 0);
+  assert.equal(xToTime(Number.NaN, { startNs: 3, endNs: 3 }, 0), 3);
+  assert.ok(Number.isFinite(timeToX(Number.POSITIVE_INFINITY, viewport, 500)));
+  assert.ok(Number.isFinite(xToTime(Number.POSITIVE_INFINITY, viewport, 500)));
+});
+
+test("clamping preserves a valid span at bounds and applies zoom limits", () => {
+  assert.deepEqual(
+    clampViewport({ startNs: -20, endNs: 30 }, { startNs: 0, endNs: 100 }),
+    { startNs: 0, endNs: 50 },
+  );
+  assert.deepEqual(
+    clampViewport({ startNs: 90, endNs: 140 }, { startNs: 0, endNs: 100 }),
+    { startNs: 50, endNs: 100 },
+  );
+  assert.deepEqual(
+    clampViewport({ startNs: -100, endNs: 500 }, { startNs: 0, endNs: 100 }),
+    { startNs: 0, endNs: 100 },
+  );
+  const tiny = clampViewport({ startNs: 50, endNs: 50 }, { startNs: 0, endNs: 100 });
+  assert.equal(tiny.endNs - tiny.startNs, 1);
+  assert.deepEqual(
+    clampViewport({ startNs: Number.NaN, endNs: Infinity }, { startNs: 4, endNs: 9 }),
+    { startNs: 4, endNs: 9 },
+  );
+});
+
+test("lane geometry, draw order, and density threshold are stable contracts", () => {
+  assert.deepEqual(TIMELINE_LANES, {
+    ruler: { y: 0, height: 28 },
+    host: { y: 28, height: 68 },
+    gpu: { y: 96, height: 68 },
+    waits: { y: 164, height: 46 },
+    dispatch: { y: 210, height: 72 },
+    footer: { y: 282, height: 24 },
+    totalHeight: 306,
+  });
+  assert.deepEqual(TIMELINE_DRAW_ORDER, [
+    "background",
+    "timing-grid",
+    "launch-cycle-boundaries",
+    "wait-curtains",
+    "host",
+    "gpu",
+    "dispatch",
+    "selection",
+    "crosshair",
+    "labels",
+  ]);
+  assert.equal(shouldUseDensity([dispatch(0), dispatch(10)], { startNs: 0, endNs: 100 }, 100), false);
+  assert.equal(
+    shouldUseDensity(
+      Array.from({ length: 40 }, (_, atNs) => dispatch(atNs)),
+      { startNs: 0, endNs: 100 },
+      100,
+    ),
+    true,
+  );
+});
+
+test("renderer links dispatch and command-buffer selection and ignores unplaced ops", () => {
+  const environment = createEnvironment({ width: 100, height: 306 });
+  const inspected = [];
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onInspect(payload) {
+      inspected.push(payload);
+    },
+  });
+  renderer.setDataset(
+    dataset({
+      dispatches: [
+        dispatch(20, "placed", 7, 1),
+        dispatch(null, "unplaced", 7, 2),
+      ],
+      commandBuffers: [
+        {
+          type: "cb",
+          commandBufferIndex: 7,
+          encodeStartNs: 10,
+          encodeEndNs: 30,
+          gpuStartNs: 35,
+          gpuEndNs: 50,
+          exposedIntervals: [[10, 30]],
+          hiddenIntervals: [],
+          firstOpSeq: 1,
+          lastOpSeq: 2,
+        },
+      ],
+    }),
+  );
+  renderer.render();
+
+  assert.equal(renderer.lastRenderStats.visibleDispatches, 1);
+  assert.equal(renderer.lastRenderStats.unplacedDispatches, 1);
+  renderer.selectDispatch(renderer.visibleDispatches[0]);
+  renderer.render();
+  assert.equal(renderer.selection.commandBuffer.commandBufferIndex, 7);
+  assert.equal(renderer.selection.dispatch.kernel, "placed");
+  assert.equal(renderer.lastRenderStats.selectedCommandBufferIndex, 7);
+
+  const payload = renderer.inspect(renderer.visibleDispatches[0]);
+  assert.match(payload.text, /ordered placement/i);
+  assert.ok(payload.values.every((entry) => /^(measured|derived|ordered|metadata)$/.test(entry.provenance)));
+  assert.equal(inspected.at(-1), payload);
+  const unplacedPayload = renderer.inspect(renderer.unplacedDispatches[0]);
+  assert.match(unplacedPayload.text, /unplaced/i);
+  assert.equal(
+    unplacedPayload.values.find((entry) => entry.label === "time").provenance,
+    "ordered",
+  );
+  assert.doesNotMatch(unplacedPayload.text, /\[measured\].*unplaced/i);
+  renderer.destroy();
+});
+
+test("renderer keeps zero-op command buffers visible when an interval exists", () => {
+  const environment = createEnvironment();
+  const renderer = new TimelineRenderer(environment.canvas);
+  renderer.setDataset(
+    dataset({
+      waits: [
+        {
+          type: "wait",
+          commandBufferIndex: 10,
+          atNs: 60,
+          waitNs: 5,
+          waitClass: "cap",
+        },
+      ],
+      commandBuffers: [
+        {
+          type: "cb",
+          commandBufferIndex: 9,
+          opCount: 0,
+          gpuStartNs: 40,
+          gpuEndNs: 41,
+          exposedIntervals: [],
+          hiddenIntervals: [],
+        },
+        {
+          type: "cb",
+          commandBufferIndex: 10,
+          opCount: 0,
+          exposedIntervals: [],
+          hiddenIntervals: [],
+        },
+      ],
+    }),
+  );
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.zeroOpHairlines, 2);
+  renderer.destroy();
+});
+
+test("renderer pre-indexes 320k dispatches and simple pan visits only visible dispatches", () => {
+  const environment = createEnvironment({ width: 1000 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  const dispatches = Array.from({ length: 320_000 }, (_, atNs) =>
+    dispatch(atNs, `k${atNs % 7}`, Math.floor(atNs / 100), atNs),
+  );
+  renderer.setDataset(dataset({ dispatches, startNs: 0, endNs: 319_999 }));
+  renderer.viewport = { startNs: 100_000, endNs: 100_100 };
+  renderer.render();
+
+  assert.equal(renderer.lastRenderStats.indexedDispatches, 320_000);
+  assert.equal(renderer.lastRenderStats.visibleDispatches, 101);
+  assert.ok(renderer.lastRenderStats.dispatchesVisited <= 103);
+
+  renderer.viewport = { startNs: 200_000, endNs: 200_100 };
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.visibleDispatches, 101);
+  assert.ok(renderer.lastRenderStats.dispatchesVisited <= 103);
+  renderer.destroy();
+});
+
+test("repeated fit-scale density renders reuse cached 320k analytical geometry", (t) => {
+  const environment = createEnvironment({ width: 1000 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  const dispatches = Array.from({ length: 320_000 }, (_, atNs) =>
+    dispatch(atNs, `k${atNs % 11}`, 12, atNs),
+  );
+  renderer.setDataset(dataset({ dispatches, startNs: 0, endNs: 319_999 }));
+
+  const firstStarted = performance.now();
+  renderer.render();
+  const firstElapsedMs = performance.now() - firstStarted;
+  assert.equal(renderer.lastRenderStats.densityMode, true);
+  assert.equal(renderer.lastRenderStats.densityCacheHit, false);
+  assert.equal(renderer.lastRenderStats.dispatchesVisited, 320_000);
+  assert.equal(renderer.lastRenderStats.dispatchesBinned, 320_000);
+
+  renderer.crosshairX = 333;
+  const secondStarted = performance.now();
+  renderer.render();
+  const secondElapsedMs = performance.now() - secondStarted;
+  assert.equal(renderer.lastRenderStats.densityCacheHit, true);
+  assert.equal(renderer.lastRenderStats.dispatchesVisited, 0);
+  assert.equal(renderer.lastRenderStats.dispatchesBinned, 0);
+  assert.ok(
+    secondElapsedMs < Math.max(20, firstElapsedMs),
+    `cached ${secondElapsedMs.toFixed(2)}ms vs first ${firstElapsedMs.toFixed(2)}ms`,
+  );
+  t.diagnostic(
+    `320k fit: first=${firstElapsedMs.toFixed(2)}ms/visited=320000/binned=320000 ` +
+      `repeat=${secondElapsedMs.toFixed(2)}ms/visited=0/binned=0`,
+  );
+  renderer.destroy();
+});
+
+test("crosshair frames reuse static 10k-CB/13k-wait lanes and hit targets", (t) => {
+  const environment = createEnvironment({ width: 1000 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  const dispatches = Array.from({ length: 320_000 }, (_, atNs) =>
+    dispatch(atNs, `k${atNs % 11}`, Math.floor(atNs / 32), atNs),
+  );
+  const commandBuffers = Array.from({ length: 10_000 }, (_, index) => {
+    const startNs = index * 30;
+    return {
+      type: "cb",
+      commandBufferIndex: index,
+      opCount: 32,
+      encodeStartNs: startNs,
+      encodeEndNs: startNs + 8,
+      gpuStartNs: startNs + 8,
+      gpuEndNs: startNs + 12,
+      exposedIntervals: [[startNs, startNs + 4]],
+      hiddenIntervals: [[startNs + 4, startNs + 8]],
+    };
+  });
+  const waits = Array.from({ length: 13_000 }, (_, index) => ({
+    type: "wait",
+    atNs: index * 20,
+    waitNs: 2,
+    waitClass: index % 3 === 0 ? "dependency" : index % 3 === 1 ? "cap" : "decision",
+    commandBufferIndex: index % 10_000,
+  }));
+  renderer.setDataset(
+    dataset({
+      dispatches,
+      commandBuffers,
+      waits,
+      startNs: 0,
+      endNs: 319_999,
+    }),
+  );
+
+  renderer.render();
+  const firstHitTargets = renderer.hitTargets;
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, false);
+  assert.equal(renderer.lastRenderStats.commandBuffersVisited, 10_000);
+  assert.equal(renderer.lastRenderStats.waitsVisited, 13_000);
+  assert.ok(renderer.lastRenderStats.staticHitTargetsRebuilt >= 40_000);
+  assert.equal(environment.createdCanvases.length, 1);
+
+  environment.contextCalls.length = 0;
+  renderer.crosshairX = 500;
+  const repeatStarted = performance.now();
+  renderer.render();
+  const repeatElapsedMs = performance.now() - repeatStarted;
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, true);
+  assert.equal(renderer.lastRenderStats.commandBuffersVisited, 0);
+  assert.equal(renderer.lastRenderStats.waitsVisited, 0);
+  assert.equal(renderer.lastRenderStats.staticHitTargetsRebuilt, 0);
+  assert.equal(renderer.hitTargets, firstHitTargets);
+  assert.ok(
+    environment.contextCalls.some(([method]) => method === "drawImage"),
+    "cached static canvas is blitted to the visible canvas",
+  );
+  assert.ok(
+    repeatElapsedMs < 20,
+    `cached 10k-CB/13k-wait frame took ${repeatElapsedMs.toFixed(2)}ms`,
+  );
+  t.diagnostic(
+    `10k CB + 13k waits repeat=${repeatElapsedMs.toFixed(2)}ms ` +
+      `targets=${renderer.hitTargets.length} CB-visits=0 wait-visits=0`,
+  );
+  renderer.destroy();
+});
+
+test("renderer coalesces frames, scales for DPR, and completely tears down lifecycle state", () => {
+  const environment = createEnvironment({ width: 450, height: 400 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  renderer.setDataset(dataset());
+  renderer.render();
+  assert.equal(environment.canvas.width, 900);
+  assert.equal(environment.canvas.height, 800);
+  assert.equal(environment.canvas.style.height, undefined);
+  assert.equal(renderer.height, 400);
+  assert.equal(renderer.laneScaleY, 400 / TIMELINE_LANES.totalHeight);
+  assert.ok(
+    environment.contextCalls.some(
+      ([method, xScale, , , yScale]) =>
+        method === "setTransform" &&
+        xScale === 2 &&
+        Math.abs(yScale - (800 / TIMELINE_LANES.totalHeight)) < 1e-9,
+    ),
+    "logical lanes scale to the measured CSS canvas height",
+  );
+  assert.equal(environment.canvas.attributes.get("role"), "img");
+  assert.match(environment.canvas.attributes.get("aria-description"), /timeline/i);
+  assert.equal(environment.bodyChildren.length, 1);
+
+  const anchorBefore = xToTime(225, renderer.viewport, 450);
+  environment.emit("wheel", { clientX: 225, deltaY: -10 });
+  const anchorAfter = xToTime(225, renderer.viewport, 450);
+  assert.ok(Math.abs(anchorAfter - anchorBefore) < 1e-9);
+  environment.emit("pointermove", { clientX: 230, clientY: 100 });
+  assert.equal(renderer.framePending, true);
+  environment.flushAnimationFrame();
+  assert.equal(renderer.framePending, false);
+
+  const listenerCount = environment.listeners.size;
+  assert.ok(listenerCount >= 9);
+  renderer.destroy();
+  assert.equal(environment.listeners.size, 0);
+  assert.equal(environment.removed.length, listenerCount);
+  assert.equal(environment.FakeResizeObserver.instances[0].disconnected, true);
+  assert.equal(environment.bodyChildren.length, 0);
+  assert.equal(renderer.destroyed, true);
+});
+
+test("360–440px canvases keep logical lanes, hit targets, and pointer mapping aligned", () => {
+  for (const height of [360, 440]) {
+    const environment = createEnvironment({ width: 200, height });
+    const renderer = new TimelineRenderer(environment.canvas);
+    const item = dispatch(50, `kernel-${height}`);
+    renderer.setDataset(dataset({ dispatches: [item] }));
+    renderer.render();
+
+    const scale = height / TIMELINE_LANES.totalHeight;
+    assert.equal(environment.canvas.height, height * 2);
+    assert.equal(renderer.height, height);
+    assert.ok(
+      Math.abs(
+        renderer.pointForEvent({ clientX: 100, clientY: height }).y -
+          TIMELINE_LANES.totalHeight,
+      ) < 1e-9,
+    );
+
+    const target = renderer.hitTargets.find(
+      ({ kind, item: targetItem }) => kind === "op" && targetItem === item,
+    );
+    assert.ok(target, `${height}px canvas has a dispatch hit target`);
+    const clientX = target.x + target.width / 2;
+    const clientY = (target.y + target.height / 2) * scale;
+    environment.emit("pointermove", { clientX, clientY });
+    assert.equal(renderer.hovered, item);
+    environment.emit("pointerdown", { clientX, clientY });
+    environment.emit("pointerup", { clientX, clientY });
+    assert.equal(renderer.selection.dispatch, item);
+
+    renderer.clearSelection();
+    renderer.handleKeyDown({ key: "]", preventDefault() {} });
+    environment.contextCalls.length = 0;
+    renderer.render();
+    assert.equal(renderer.keyboardActive, item);
+    assert.ok(
+      environment.contextCalls.some(
+        ([method, , , , yScale]) =>
+          method === "setTransform" &&
+          Math.abs(yScale - (2 * scale)) < 1e-9,
+      ),
+      `${height}px canvas installs the scaled lane transform`,
+    );
+    assert.ok(
+      environment.contextCalls.some(
+        ([method, , y]) =>
+          method === "lineTo" && y === TIMELINE_LANES.totalHeight,
+      ),
+      "keyboard crosshair spans the complete logical plot",
+    );
+    renderer.destroy();
+  }
+});
+
+test("tooltip colors remain live semantic theme references", () => {
+  const environment = createEnvironment();
+  const renderer = new TimelineRenderer(environment.canvas);
+  const tooltip = environment.bodyChildren[0];
+
+  assert.equal(tooltip.style.border, "1px solid var(--rule)");
+  assert.equal(tooltip.style.background, "var(--canvas)");
+  assert.equal(tooltip.style.color, "var(--text)");
+  assert.doesNotMatch(tooltip.style.border, /#[0-9a-f]{3,8}/i);
+  assert.doesNotMatch(tooltip.style.background, /#[0-9a-f]{3,8}/i);
+  assert.doesNotMatch(tooltip.style.color, /#[0-9a-f]{3,8}/i);
+
+  renderer.destroy();
+});
+
+test("renderer activates and restores a shell-disabled canvas", () => {
+  const environment = createEnvironment({
+    initialAttributes: {
+      "aria-disabled": "true",
+      tabindex: "-1",
+    },
+  });
+  const renderer = new TimelineRenderer(environment.canvas);
+  assert.equal(environment.canvas.tabIndex, 0);
+  assert.equal(environment.canvas.getAttribute("tabindex"), "0");
+  assert.equal(environment.canvas.getAttribute("aria-disabled"), "false");
+
+  renderer.destroy();
+  assert.equal(environment.canvas.tabIndex, -1);
+  assert.equal(environment.canvas.getAttribute("tabindex"), "-1");
+  assert.equal(environment.canvas.getAttribute("aria-disabled"), "true");
+});
+
+test("fit accepts a selected launch window without escaping dataset bounds", () => {
+  const environment = createEnvironment();
+  const renderer = new TimelineRenderer(environment.canvas);
+  const selectedWindow = { startNs: 20, endNs: 40 };
+  renderer.setDataset(
+    dataset({
+      launchWindows: [selectedWindow],
+      startNs: 0,
+      endNs: 100,
+    }),
+    selectedWindow,
+  );
+  assert.deepEqual(renderer.viewport, selectedWindow);
+  renderer.fit({ startNs: -20, endNs: 30 });
+  assert.deepEqual(renderer.viewport, { startNs: 0, endNs: 50 });
+  renderer.destroy();
+});
+
+test("crosshair spans every fixed lane and footer names ordered placement", () => {
+  const environment = createEnvironment({ width: 200 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  renderer.setDataset(dataset({ dispatches: [dispatch(50)] }));
+  renderer.crosshairX = 50;
+  environment.contextCalls.length = 0;
+  renderer.render();
+
+  assert.ok(
+    environment.contextCalls.some(
+      ([method, x, y]) => method === "moveTo" && x === 50.5 && y === 0,
+    ),
+    "crosshair begins above the ruler",
+  );
+  assert.ok(
+    environment.contextCalls.some(
+      ([method, x, y]) =>
+        method === "lineTo" && x === 50.5 && y === TIMELINE_LANES.totalHeight,
+    ),
+    "crosshair ends below the footer",
+  );
+  assert.ok(
+    environment.contextCalls.some(
+      ([method, text]) =>
+        method === "fillText" && /\bordered placement\b/.test(String(text)),
+    ),
+    "footer visibly identifies dispatch timestamps as ordered placement",
+  );
+  assert.ok(
+    renderer.lastRenderStats.drawOrder.indexOf("crosshair") <
+      renderer.lastRenderStats.drawOrder.indexOf("labels"),
+  );
+  renderer.destroy();
+});
+
+test("setDataset clears pinned selection, tooltip, and inspector state", () => {
+  const environment = createEnvironment();
+  const inspected = [];
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onInspect(payload) {
+      inspected.push(payload);
+    },
+  });
+  const firstDispatch = dispatch(20, "first", 1);
+  renderer.setDataset(dataset({ dispatches: [firstDispatch] }));
+  renderer.render();
+  assert.ok(renderer.hitTargets.length > 0);
+  renderer.selectDispatch(firstDispatch);
+  renderer.showTooltip(renderer.inspect(firstDispatch), {
+    clientX: 20,
+    clientY: 220,
+  });
+  assert.equal(environment.bodyChildren[0].style.display, "block");
+
+  renderer.setDataset(dataset({ dispatches: [dispatch(30, "second", 2)] }));
+  assert.equal(renderer.hitTargets.length, 0);
+  environment.emit("pointermove", { clientX: 120, clientY: 240 });
+  environment.emit("pointerdown", { clientX: 120, clientY: 240 });
+  environment.emit("pointerup", { clientX: 120, clientY: 240 });
+  assert.deepEqual(renderer.selection, {
+    dispatch: null,
+    commandBuffer: null,
+    wait: null,
+    bin: null,
+  });
+  assert.equal(renderer.hovered, null);
+  assert.equal(environment.bodyChildren[0].style.display, "none");
+  assert.equal(inspected.at(-1), null);
+  renderer.destroy();
+});
+
+test("selected density bin gets an explicit outline and links a sole parent CB", () => {
+  const environment = createEnvironment({ width: 20 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  const commandBuffer = {
+    type: "cb",
+    commandBufferIndex: 7,
+    encodeStartNs: 0,
+    encodeEndNs: 100,
+    exposedIntervals: [[0, 100]],
+    hiddenIntervals: [],
+  };
+  renderer.setDataset(
+    dataset({
+      dispatches: Array.from({ length: 20 }, (_, index) =>
+        dispatch(index, "dense", 7, index)),
+      commandBuffers: [commandBuffer],
+    }),
+  );
+  renderer.render();
+  const bin = renderer.hitTargets.find((target) => target.kind === "dispatch-bin")?.item;
+  assert.ok(bin);
+  environment.contextCalls.length = 0;
+  renderer.selectItem(bin);
+  renderer.render();
+
+  assert.equal(renderer.selection.bin, bin);
+  assert.equal(renderer.selection.commandBuffer, commandBuffer);
+  assert.ok(
+    environment.contextCalls.some(
+      ([method, , y, , height]) =>
+        method === "strokeRect" &&
+        y === TIMELINE_LANES.dispatch.y + 6 &&
+        height === TIMELINE_LANES.dispatch.height - 12,
+    ),
+    "selected density pixel/interval is visibly outlined",
+  );
+  renderer.destroy();
+});
+
+test("bracket keys move an active timeline mark and Enter pins it", () => {
+  const inspected = [];
+  const environment = createEnvironment({ width: 200 });
+  const renderer = new TimelineRenderer(environment.canvas, {
+    onInspect(payload) {
+      inspected.push(payload);
+    },
+  });
+  const first = dispatch(10, "first", 0, 1);
+  const second = dispatch(20, "second", 0, 2);
+  const wait = {
+    type: "wait",
+    bucket: "cap_wait",
+    waitClass: "cap",
+    waitNs: 2,
+    atNs: 15,
+  };
+  renderer.setDataset(
+    dataset({
+      dispatches: [first, second],
+      waits: [wait],
+      startNs: 0,
+      endNs: 30,
+    }),
+  );
+
+  const keys = [];
+  const press = (key) =>
+    renderer.handleKeyDown({
+      key,
+      preventDefault() {
+        keys.push(key);
+      },
+    });
+  press("]");
+  assert.equal(renderer.keyboardActive, first);
+  press("]");
+  assert.equal(renderer.keyboardActive, wait);
+  press("[");
+  assert.equal(renderer.keyboardActive, first);
+  press("Enter");
+  assert.equal(renderer.selection.dispatch, first);
+  assert.equal(inspected.at(-1).item, first);
+  assert.deepEqual(keys, ["]", "]", "[", "Enter"]);
+  renderer.destroy();
+});

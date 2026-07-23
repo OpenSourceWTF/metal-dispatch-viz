@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "root_label": "MLX dispatch-census showcase",
+  "traces": {
+    "hy3-oq2e-mtp-k2.jsonl": {
+      "label": "Hy3 2q",
+      "model": "Hy3 oQ2e",
+      "checkpoint": "hy3-oq2e-mlx + hy3-bf16-and-mtp-layer80",
+      "quantization": "expert Q2 group 64; resident projections re-quantized Q4 group 64; BF16 MTP head",
+      "mode": "MTP K2",
+      "capture": "curated 64-command-buffer decision-drain window from the parity-stamped AR + K2 lane",
+      "capture_date": "2026-07-23",
+      "artifact_status": "curated-window",
+      "source_file": "hy3-oq2e-mtp-k2-20260723.jsonl",
+      "source_sha256": "00ae87a156f814773b76d4495a7747ff363dd5207b6bc441f537293197de388f",
+      "source_complete": true,
+      "valid_evidence": true,
+      "source_evidence_status": "verified-complete",
+      "raw_row_counts": {
+        "rows": 182299,
+        "ops": 143627,
+        "command_buffers": 18101,
+        "waits": 20560,
+        "summaries": 11
+      },
+      "curator_command": "python3 scripts/curate_trace.py --max-command-buffers 64 RAW traces/showcase/hy3-oq2e-mtp-k2.jsonl"
+    },
+    "qwen36-27b-mtp-k3.jsonl": {
+      "label": "Qwen3.6 27B",
+      "model": "Qwen3.6 27B",
+      "checkpoint": "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed",
+      "quantization": "affine Q4 group 64 target with native MTP head",
+      "mode": "MTP K3",
+      "capture": "curated 64-command-buffer decision-drain window from the sustained native-MTP lane",
+      "capture_date": "2026-07-23",
+      "artifact_status": "curated-window",
+      "source_file": "qwen36-27b-mtp-k3-20260723.jsonl",
+      "source_sha256": "35869a09e6616bd14bfcbde502415ecf9f54071068f752cf2b13dd8cc6dd55ac",
+      "source_complete": true,
+      "valid_evidence": true,
+      "source_evidence_status": "verified-complete",
+      "raw_row_counts": {
+        "rows": 25510,
+        "ops": 17503,
+        "command_buffers": 1228,
+        "waits": 6777,
+        "summaries": 2
+      },
+      "curator_command": "python3 scripts/curate_trace.py --max-command-buffers 64 RAW traces/showcase/qwen36-27b-mtp-k3.jsonl"
+    },
+    "qwen36-35b-a3b-k1.jsonl": {
+      "label": "Qwen3.6 35B",
+      "model": "Qwen3.6 35B-A3B",
+      "checkpoint": "Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed",
+      "quantization": "affine Q4 group 64; router gates affine Q8 group 64",
+      "mode": "MTP K1",
+      "capture": "curated 64-command-buffer decision-drain window from the A3B K1 lane",
+      "capture_date": "2026-07-21",
+      "artifact_status": "curated-window",
+      "source_file": "a3b-174-s2a-census-20260721-172229.jsonl",
+      "source_sha256": "584680d284234995c6fcc0d278b239db3a4aa4cd42d1a063421fcc463904ef03",
+      "source_complete": null,
+      "valid_evidence": false,
+      "source_evidence_status": "legacy-unverifiable",
+      "raw_row_counts": {
+        "rows": 344695,
+        "ops": 320922,
+        "command_buffers": 10710,
+        "waits": 13062,
+        "summaries": 1
+      },
+      "curator_command": "python3 scripts/curate_trace.py --max-command-buffers 64 --allow-legacy-summary RAW traces/showcase/qwen36-35b-a3b-k1.jsonl"
+    },
+    "glm52-q1t-t158-mtp-k3.jsonl": {
+      "label": "GLM-5.2 1.58q",
+      "model": "GLM-5.2 t158",
+      "checkpoint": "glm52-expert-q1t + glm52-mtp-layer78-q4",
+      "quantization": "t158 ternary expert sidecar derived from Q2; Q4 MTP head",
+      "mode": "MTP K3",
+      "capture": "curated 64-command-buffer decision-drain window from the cache72 uncached-SSD AR + K3 lane",
+      "capture_date": "2026-07-23",
+      "artifact_status": "curated-window",
+      "source_file": "glm52-q1t-t158-mtp-k3-20260723.jsonl",
+      "source_sha256": "5f19679cf22e337e793a8ecdcd4890cae4292f0050d3f4e4ce5c9ebafca21ac3",
+      "source_complete": true,
+      "valid_evidence": true,
+      "source_evidence_status": "verified-complete",
+      "raw_row_counts": {
+        "rows": 459848,
+        "ops": 333284,
+        "command_buffers": 66022,
+        "waits": 60531,
+        "summaries": 11
+      },
+      "curator_command": "python3 scripts/curate_trace.py --max-command-buffers 64 RAW traces/showcase/glm52-q1t-t158-mtp-k3.jsonl"
+    },
+    "laguna-s21-oq4e-ar.jsonl": {
+      "label": "Laguna 2.1 S",
+      "model": "Laguna-S-2.1",
+      "checkpoint": "mlx-community/Laguna-S-2.1-oQ4e",
+      "quantization": "optimized mixed-bit oQ4e with base Q4 group 128",
+      "mode": "Target-only AR",
+      "capture": "curated 64-command-buffer decision-drain window from the verified native AR-only lane",
+      "capture_date": "2026-07-23",
+      "artifact_status": "curated-window",
+      "source_file": "laguna-s21-oq4e-ar-20260723.jsonl",
+      "source_sha256": "da12054e8d5cf3c95c87f8c0273b65c81e6aaad687aa8020a0ecb42703db0457",
+      "source_complete": true,
+      "valid_evidence": true,
+      "source_evidence_status": "verified-complete",
+      "raw_row_counts": {
+        "rows": 52312,
+        "ops": 41991,
+        "command_buffers": 3438,
+        "waits": 6881,
+        "summaries": 2
+      },
+      "curator_command": "python3 scripts/curate_trace.py --max-command-buffers 64 RAW traces/showcase/laguna-s21-oq4e-ar.jsonl"
+    }
+  }
+}

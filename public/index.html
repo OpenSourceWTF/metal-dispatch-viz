@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Metal Dispatch Workbench</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="identity-lockup">
+        <p class="wordmark" aria-hidden="true">MDV</p>
+        <div>
+          <h1>Metal Dispatch Workbench</h1>
+          <p class="directory-line">
+            Trace directory
+            <code id="directory-identity">resolving local source…</code>
+          </p>
+        </div>
+      </div>
+      <div class="header-actions" aria-label="Workbench controls">
+        <button id="refresh-button" type="button" aria-label="Refresh trace directory" data-ready-control disabled>
+          Refresh
+        </button>
+        <button id="theme-toggle" type="button" aria-label="Switch color theme" aria-pressed="false" data-ready-control disabled>
+          Theme
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <div class="instrument">
+        <h2 class="visually-hidden">Available traces</h2>
+        <nav
+          id="trace-rail"
+          class="trace-rail"
+          aria-label="Trace files"
+          aria-busy="true"
+        >
+          <div id="trace-track" class="trace-track">
+            <button class="trace-toggle trace-toggle-placeholder" type="button" aria-pressed="false" disabled>
+              <span class="trace-name">Scanning directory</span>
+              <span class="trace-model">Model: Unknown</span>
+              <span class="trace-mode">Mode: Unknown</span>
+              <span class="trace-badge trace-evidence-pending">Evidence: Pending</span>
+            </button>
+          </div>
+        </nav>
+
+        <section class="trace-context" aria-labelledby="trace-context-heading">
+          <h2 id="trace-context-heading" class="visually-hidden">Selected trace provenance</h2>
+          <div id="provenance-strip" class="provenance-strip">
+            <span class="strip-label">Provenance</span>
+            <span class="provenance-item"><b>File</b> waiting for registry</span>
+            <span class="provenance-item"><b>Model</b> —</span>
+            <span class="provenance-item"><b>Quantization</b> —</span>
+            <span class="provenance-item"><b>Mode</b> —</span>
+            <span id="evidence-badges" class="evidence-badges">
+              <span id="evidence-badge" class="evidence-badge evidence-badge-invalid">Invalid or legacy evidence</span>
+            </span>
+          </div>
+          <div id="health-strip" class="health-strip">
+            <div
+              id="trace-status"
+              class="trace-status"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              Reading the trace registry…
+            </div>
+            <label id="window-control" class="window-control" for="window-select">
+              Launch
+              <select id="window-select" disabled>
+                <option selected>Waiting for launch windows</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="metric-band" aria-labelledby="metric-heading">
+          <h2 id="metric-heading" class="visually-hidden">Selected window decomposition</h2>
+          <dl id="metric-grid" class="metric-grid" aria-busy="true">
+            <div class="metric metric-primary">
+              <dt>Wall span</dt>
+              <dd>—<span class="unit"> ms</span></dd>
+            </div>
+            <div class="metric metric-exposed">
+              <dt>Exposed host</dt>
+              <dd>—<span class="unit"> ms</span></dd>
+            </div>
+            <div class="metric metric-hidden">
+              <dt>Hidden host</dt>
+              <dd>—<span class="unit"> ms</span></dd>
+            </div>
+            <div class="metric metric-gpu">
+              <dt>GPU busy</dt>
+              <dd>—<span class="unit"> ms</span></dd>
+            </div>
+            <div class="metric metric-gpu">
+              <dt>GPU work</dt>
+              <dd>—<span class="unit"> ms</span></dd>
+            </div>
+            <div class="metric metric-decision">
+              <dt>Decision drain</dt>
+              <dd>—<span class="unit"> ms</span></dd>
+            </div>
+            <div class="metric metric-cap">
+              <dt>Cap wait</dt>
+              <dd>—<span class="unit"> ms</span></dd>
+            </div>
+            <div class="metric metric-dependency">
+              <dt>Dependency</dt>
+              <dd>—<span class="unit"> ms</span></dd>
+            </div>
+            <div class="metric">
+              <dt>Command buffers</dt>
+              <dd>—</dd>
+            </div>
+            <div class="metric">
+              <dt>Dispatches</dt>
+              <dd>—</dd>
+            </div>
+          </dl>
+        </section>
+
+        <div class="workbench-grid">
+          <div class="analysis-column">
+            <figure class="timeline-figure" aria-labelledby="timeline-heading">
+              <div class="timeline-toolbar">
+                <div>
+                  <p class="eyebrow">Synchronized pipeline</p>
+                  <h2 id="timeline-heading">Dispatch overlap timeline</h2>
+                </div>
+                <div class="timeline-actions" aria-label="Timeline view controls">
+                  <output id="timeline-scale" class="timeline-scale">Fit · — ns/px</output>
+                  <button id="zoom-out" type="button" aria-label="Zoom timeline out" disabled>−</button>
+                  <button id="fit-timeline" type="button" disabled>Fit</button>
+                  <button id="zoom-in" type="button" aria-label="Zoom timeline in" disabled>+</button>
+                </div>
+              </div>
+
+              <p id="timeline-scroll-label" class="scroll-label">
+                Timeline viewport; horizontal scrolling reveals more timeline detail on narrow screens.
+              </p>
+              <div id="timeline-viewport" class="timeline-viewport">
+                <div
+                  id="timeline-scroller"
+                  class="timeline-scroller"
+                  role="region"
+                  aria-label="Scrollable dispatch timeline"
+                  aria-describedby="timeline-scroll-label timeline-description"
+                  tabindex="0"
+                >
+                  <div id="plot-frame" class="plot-frame is-loading">
+                    <canvas
+                      id="timeline"
+                      width="1120"
+                      height="396"
+                      tabindex="-1"
+                      role="img"
+                      aria-label="Dispatch overlap timeline"
+                      aria-describedby="timeline-description"
+                      aria-disabled="true"
+                      data-ready-control
+                    >
+                      Your browser does not support canvas. The selected trace metrics,
+                      kernel census, and wait taxonomy remain available in the tables below.
+                    </canvas>
+                    <div id="timeline-placeholder" class="timeline-placeholder" aria-hidden="true">
+                      <div class="placeholder-lane lane-ruler"><span>Ruler</span></div>
+                      <div class="placeholder-lane lane-host"><span>Host encode</span></div>
+                      <div class="placeholder-lane lane-gpu"><span>GPU execute</span></div>
+                      <div class="placeholder-lane lane-waits"><span>Waits</span></div>
+                      <div class="placeholder-lane lane-dispatch"><span>Dispatch order</span></div>
+                      <div class="placeholder-lane lane-footer"><span>Footer</span></div>
+                    </div>
+                  </div>
+                </div>
+                <section id="loading-state" class="state-region loading-state" aria-label="Trace loading progress">
+                  <div>
+                    <strong>Preparing timeline</strong>
+                    <span id="loading-filename">Waiting for a trace selection</span>
+                  </div>
+                  <div class="progress-readout">
+                    <label class="visually-hidden" for="loading-progress">Trace read progress</label>
+                    <progress id="loading-progress" value="0" max="1">0%</progress>
+                    <p id="loading-readout" class="mono">0 bytes read · 0 rows parsed</p>
+                  </div>
+                </section>
+              </div>
+              <p id="timeline-description" class="timeline-description">
+                Six coupled lanes show the ruler, host encoding, GPU execution, waits,
+                dispatch order, and scale. Dispatch marks use ordered placement within
+                each command buffer; they are not measured per-operation timestamps.
+                With the canvas focused, [ and ] move to the previous and next mark;
+                Enter pins the active mark.
+              </p>
+              <p
+                id="timeline-sampling-note"
+                class="timeline-sampling-note"
+                role="note"
+                hidden
+              ></p>
+
+              <section id="empty-state" class="state-region" hidden>
+                <h3>No trace files found</h3>
+                <p>Add a <code>.jsonl</code> or <code>.ndjson</code> profiler capture to the configured directory, then refresh.</p>
+              </section>
+              <section id="error-state" class="state-region state-error" role="alert" hidden>
+                <h3>Trace unavailable</h3>
+                <p>The selected file could not be read. Its timeline remains empty; no sample data has been substituted.</p>
+              </section>
+            </figure>
+
+            <div class="tables-grid">
+              <section class="data-section" aria-labelledby="kernel-heading">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Dispatch census</p>
+                    <h2 id="kernel-heading">Kernel families</h2>
+                  </div>
+                  <span id="kernel-table-state" class="table-state">Awaiting rows</span>
+                </div>
+                <div class="table-scroller" tabindex="0" role="region" aria-label="Scrollable kernel census">
+                  <table id="kernel-table">
+                    <caption>Kernel dispatch counts, setBytes activity, and buffer binds</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Kernel family</th>
+                        <th scope="col">Dispatches</th>
+                        <th scope="col">setBytes calls</th>
+                        <th scope="col">setBytes bytes</th>
+                        <th scope="col">Buffer binds</th>
+                      </tr>
+                    </thead>
+                    <tbody id="kernel-table-body">
+                      <tr class="placeholder-row">
+                        <th scope="row">No parsed kernels</th>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section class="data-section" aria-labelledby="wait-heading">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Synchronization cost</p>
+                    <h2 id="wait-heading">Wait taxonomy</h2>
+                  </div>
+                  <span id="wait-table-state" class="table-state">Awaiting rows</span>
+                </div>
+                <div class="table-scroller" tabindex="0" role="region" aria-label="Scrollable wait taxonomy">
+                  <table id="wait-table">
+                    <caption>Wait causes, counts, and measured duration</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Wait cause</th>
+                        <th scope="col">Events</th>
+                        <th scope="col">Duration</th>
+                        <th scope="col">Evidence</th>
+                      </tr>
+                    </thead>
+                    <tbody id="wait-table-body">
+                      <tr class="placeholder-row">
+                        <th scope="row">No parsed waits</th>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <aside id="inspector" class="inspector" aria-labelledby="inspector-heading">
+            <div class="inspector-heading">
+              <div>
+                <p class="eyebrow">Pinned detail</p>
+                <h2 id="inspector-heading">Inspector</h2>
+              </div>
+              <button id="clear-selection" type="button" disabled>Clear</button>
+            </div>
+            <div id="inspector-body">
+              <p class="inspector-empty">Select a command buffer or dispatch to connect host, GPU, wait, and kernel evidence.</p>
+              <dl class="inspector-readout">
+                <div>
+                  <dt>Selection</dt>
+                  <dd>None</dd>
+                </div>
+                <div>
+                  <dt>Source</dt>
+                  <dd>—</dd>
+                </div>
+                <div>
+                  <dt>Time basis</dt>
+                  <dd>—</dd>
+                </div>
+              </dl>
+              <p class="inspector-note">Values are labeled as measured, derived, ordered, or metadata when available.</p>
+            </div>
+          </aside>
+        </div>
+
+        <footer class="disclosure">
+          <p>
+            Evidence note: dispatch marks are <strong>ordered placement</strong>
+            within their parent command buffer, not measured timestamps.
+          </p>
+          <p>Local read-only workbench · source files are never modified</p>
+        </footer>
+      </div>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
