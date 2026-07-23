@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -1023,6 +1024,229 @@ test("aggregates large wait streams without spreading all timestamps onto the st
   assert.equal(data.waitTaxonomy.alloc_lock.count, 130_000);
 });
 
+test("rejects combined headline wait overflow from otherwise finite categories", () => {
+  assert.throws(
+    () => buildDataset([
+      {
+        record: "wait",
+        bucket: "cap_wait",
+        wait_ns: Number.MAX_VALUE,
+        at_ns: 0,
+      },
+      {
+        record: "wait",
+        bucket: "memory_wait",
+        wait_ns: Number.MAX_VALUE,
+        at_ns: 1,
+      },
+      {
+        record: "summary",
+        schema_version: 1,
+        complete: true,
+        dropped_rows: 0,
+        ops_total: 0,
+        cbs_total: 0,
+      },
+    ]),
+    {
+      name: "RangeError",
+      message: /Headline wait duration exceeds the finite numeric range/,
+    },
+  );
+});
+
+test("rejects non-additive wait-taxonomy overflow from finite scheduler waits", () => {
+  assert.throws(
+    () => buildDataset([
+      {
+        record: "wait",
+        bucket: "sched_backpressure",
+        wait_ns: Number.MAX_VALUE,
+        at_ns: 0,
+      },
+      {
+        record: "wait",
+        bucket: "sched_backpressure",
+        wait_ns: Number.MAX_VALUE,
+        at_ns: 1,
+      },
+    ]),
+    {
+      name: "RangeError",
+      message: /Wait taxonomy duration exceeds the finite numeric range/,
+    },
+  );
+});
+
+test("rejects kernel-census accumulator overflow from raw dispatch rows", () => {
+  const fields = [
+    ["setBytes_calls", "setBytes calls"],
+    ["setBytes_total_bytes", "setBytes bytes"],
+    ["buffer_binds", "buffer binds"],
+  ];
+
+  for (const [field, label] of fields) {
+    assert.throws(
+      () => buildDataset([
+        {
+          record: "cb",
+          command_buffer_index: 0,
+          first_op_seq: 0,
+          last_op_seq: 1,
+          encode_start_ns: 0,
+          encode_end_ns: 1,
+        },
+        {
+          record: "op",
+          command_buffer_index: 0,
+          seq: 0,
+          kernel_name: "overflow",
+          [field]: Number.MAX_VALUE,
+        },
+        {
+          record: "op",
+          command_buffer_index: 0,
+          seq: 1,
+          kernel_name: "overflow",
+          [field]: Number.MAX_VALUE,
+        },
+      ]),
+      {
+        name: "RangeError",
+        message: new RegExp(`Kernel ${label} exceeds the finite numeric range`),
+      },
+      field,
+    );
+  }
+});
+
+test("rejects construction-time host, GPU work, and wall-span overflow", () => {
+  const cases = [
+    {
+      label: "host",
+      rows: [
+        {
+          record: "cb",
+          command_buffer_index: 0,
+          encode_start_ns: 0,
+          encode_end_ns: Number.MAX_VALUE,
+        },
+        {
+          record: "cb",
+          command_buffer_index: 1,
+          encode_start_ns: 0,
+          encode_end_ns: Number.MAX_VALUE,
+        },
+      ],
+      message: /Exposed host duration exceeds the finite numeric range/,
+    },
+    {
+      label: "GPU work",
+      rows: [
+        {
+          record: "cb",
+          command_buffer_index: 0,
+          gpu_start_ns: 0,
+          gpu_end_ns: Number.MAX_VALUE,
+        },
+        {
+          record: "cb",
+          command_buffer_index: 1,
+          gpu_start_ns: 0,
+          gpu_end_ns: Number.MAX_VALUE,
+        },
+      ],
+      message: /GPU work duration exceeds the finite numeric range/,
+    },
+    {
+      label: "wall span",
+      rows: [
+        {
+          record: "wait",
+          bucket: "cap_wait",
+          wait_ns: 0,
+          at_ns: -Number.MAX_VALUE,
+        },
+        {
+          record: "wait",
+          bucket: "cap_wait",
+          wait_ns: 0,
+          at_ns: Number.MAX_VALUE,
+        },
+      ],
+      message: /Wall span exceeds the finite numeric range/,
+    },
+  ];
+
+  for (const { label, rows, message } of cases) {
+    assert.throws(
+      () => buildDataset(rows),
+      { name: "RangeError", message },
+      label,
+    );
+  }
+});
+
+test("range aggregation rejects overflow using retained launch records", () => {
+  const dispatchDataset = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      first_op_seq: 0,
+      last_op_seq: 0,
+      encode_start_ns: 0,
+      encode_end_ns: 10,
+    },
+    {
+      record: "op",
+      command_buffer_index: 0,
+      seq: 0,
+      kernel_name: "overflow",
+      setBytes_total_bytes: Number.MAX_VALUE,
+    },
+  ]);
+  const dispatchLaunch = dispatchDataset.launchWindows[0];
+  assert.throws(
+    () => buildRangeScope({
+      ...dispatchLaunch,
+      dispatches: Object.freeze([
+        dispatchLaunch.dispatches[0],
+        dispatchLaunch.dispatches[0],
+      ]),
+    }, { startNs: 0, endNs: 10 }),
+    {
+      name: "RangeError",
+      message: /Kernel setBytes bytes exceeds the finite numeric range/,
+    },
+  );
+
+  const waitDataset = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      encode_start_ns: 0,
+      encode_end_ns: 10,
+    },
+    {
+      record: "wait",
+      bucket: "sched_backpressure",
+      wait_ns: Number.MAX_VALUE,
+      at_ns: 5,
+    },
+  ]);
+  const waitLaunch = waitDataset.launchWindows[0];
+  assert.throws(
+    () => buildRangeScope({
+      ...waitLaunch,
+      waits: Object.freeze([waitLaunch.waits[0], waitLaunch.waits[0]]),
+    }, { startNs: 0, endNs: 10 }),
+    {
+      name: "RangeError",
+      message: /Wait taxonomy duration exceeds the finite numeric range/,
+    },
+  );
+});
+
 test("formats compact durations and byte sizes for browser consumers", () => {
   assert.equal(formatDuration(950), "950 ns");
   assert.equal(formatDuration(1_500), "1.5 µs");
@@ -1573,5 +1797,180 @@ test("dataset construction retains untimed command buffers without fabricating a
   assert.equal(dataset.launchWindows[0].startNs, null);
   assert.equal(dataset.launchWindows[0].endNs, null);
   assert.equal(dataset.launchWindows[0].overview, null);
+  assert.deepEqual(dataset.launchWindows[0].rangeAnalysis, {
+    available: false,
+    reason: "missing-launch-timing",
+  });
+  assert.throws(
+    () => buildRangeScope(dataset.launchWindows[0], { startNs: 0, endNs: 1 }),
+    {
+      name: "RangeError",
+      message: /missing launch timing/,
+    },
+  );
   assert.equal(Object.isFrozen(dataset.launchWindows[0]), true);
+});
+
+test("mixed timed and untimed command buffers remain inspectable but not range-analyzable", () => {
+  const dataset = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      encode_start_ns: 0,
+      encode_end_ns: 100,
+      gpu_start_ns: 25,
+      gpu_end_ns: 75,
+    },
+    {
+      record: "cb",
+      command_buffer_index: 1,
+    },
+  ]);
+  const launch = dataset.launchWindows[0];
+
+  assert.equal(launch.summary.cbsTotal, 2);
+  assert.equal(launch.commandBuffers.length, 2);
+  assert.deepEqual(launch.rangeAnalysis, {
+    available: false,
+    reason: "missing-command-buffer-timing",
+  });
+  assert.equal(Object.isFrozen(launch.rangeAnalysis), true);
+  assert.equal(launch.overview.binCount, 512);
+  assert.throws(
+    () => buildRangeScope(launch, {
+      startNs: launch.startNs,
+      endNs: launch.endNs,
+    }),
+    {
+      name: "RangeError",
+      message: /missing command-buffer timing/,
+    },
+  );
+});
+
+test("anchored zero-op command buffers use inclusive point membership with zero duration", () => {
+  const dataset = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      op_count: 1,
+      encode_start_ns: 0,
+      encode_end_ns: 100,
+    },
+    {
+      record: "cb",
+      command_buffer_index: 1,
+      op_count: 0,
+      encode_start_ns: 50,
+      encode_end_ns: 50,
+      gpu_start_ns: 60,
+      gpu_end_ns: 60,
+    },
+  ]);
+  const launch = dataset.launchWindows[0];
+
+  assert.deepEqual(launch.rangeAnalysis, { available: true, reason: null });
+  const full = buildRangeScope(launch, {
+    startNs: launch.startNs,
+    endNs: launch.endNs,
+  });
+  const excluding = buildRangeScope(launch, { startNs: 0, endNs: 49 });
+  const including = buildRangeScope(launch, { startNs: 50, endNs: 55 });
+
+  assert.equal(full.summary.cbsTotal, launch.summary.cbsTotal);
+  assert.equal(excluding.summary.cbsTotal, 1);
+  assert.equal(including.summary.cbsTotal, 2);
+  assert.equal(including.summary.exposedHostNs, 5);
+  assert.equal(including.summary.hiddenHostNs, 0);
+  assert.equal(including.summary.gpuWorkNs, 0);
+  assert.deepEqual(
+    including.commandBuffers.find(
+      (commandBuffer) => commandBuffer.commandBufferIndex === 1,
+    ).rangeGpuInterval,
+    null,
+  );
+});
+
+test("a degenerate anchored command buffer that owns ops remains unavailable", () => {
+  const dataset = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      op_count: 1,
+      encode_start_ns: 0,
+      encode_end_ns: 100,
+    },
+    {
+      record: "cb",
+      command_buffer_index: 1,
+      op_count: 0,
+      first_op_seq: 1,
+      last_op_seq: 1,
+      encode_start_ns: 50,
+      encode_end_ns: 50,
+    },
+    {
+      record: "op",
+      command_buffer_index: 1,
+      seq: 1,
+    },
+  ]);
+
+  assert.deepEqual(dataset.launchWindows[0].rangeAnalysis, {
+    available: false,
+    reason: "missing-command-buffer-timing",
+  });
+});
+
+test("all launches in the five bundled showcases satisfy the range-analysis invariant", async () => {
+  const showcaseUrl = new URL("../traces/showcase/", import.meta.url);
+  const filenames = [
+    "glm52-q1t-t158-mtp-k3.jsonl",
+    "hy3-oq2e-mtp-k2.jsonl",
+    "laguna-s21-oq4e-ar.jsonl",
+    "qwen36-27b-mtp-k3.jsonl",
+    "qwen36-35b-a3b-k1.jsonl",
+  ];
+  let traceCount = 0;
+
+  for (const filename of filenames) {
+    const text = await readFile(new URL(filename, showcaseUrl), "utf8");
+    const rows = text.trimEnd().split("\n").map(JSON.parse);
+    const dataset = buildDataset(rows);
+    assert.ok(dataset.launchWindows.length > 0, filename);
+    for (const launch of dataset.launchWindows) {
+      assert.deepEqual(
+        launch.rangeAnalysis,
+        { available: true, reason: null },
+        filename,
+      );
+      const range = buildRangeScope(launch, {
+        startNs: launch.startNs,
+        endNs: launch.endNs,
+      });
+      for (const key of [
+        "wallSpanNs",
+        "exposedHostNs",
+        "hiddenHostNs",
+        "gpuBusyNs",
+        "gpuWorkNs",
+        "gpuSpanNs",
+        "capWaitNs",
+        "dependencyWaitNs",
+        "decisionWaitNs",
+        "otherWaitNs",
+        "headlineWaitNs",
+        "opsTotal",
+        "cbsTotal",
+      ]) {
+        assert.equal(
+          range.summary[key],
+          launch.summary[key],
+          `${filename}: full-range ${key} parity`,
+        );
+      }
+    }
+    traceCount += 1;
+  }
+  assert.equal(traceCount, 5);
 });

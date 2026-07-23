@@ -3,6 +3,18 @@ const LAUNCH_GAP_MULTIPLIER = 20;
 const DEFAULT_OVERVIEW_BIN_COUNT = 512;
 const MAX_OVERVIEW_BIN_COUNT = 4_096;
 const TRACE_OMISSION_SCOPE = "trace-level-unattributable";
+const RANGE_ANALYSIS_AVAILABLE = Object.freeze({
+  available: true,
+  reason: null,
+});
+const RANGE_ANALYSIS_MISSING_COMMAND_BUFFER_TIMING = Object.freeze({
+  available: false,
+  reason: "missing-command-buffer-timing",
+});
+const RANGE_ANALYSIS_MISSING_LAUNCH_TIMING = Object.freeze({
+  available: false,
+  reason: "missing-launch-timing",
+});
 
 const TYPE_ALIASES = new Map([
   ["op", "op"],
@@ -634,14 +646,41 @@ export function partitionLaunchWindows(commandBuffers) {
   }));
 }
 
-function intervalDuration(intervals) {
-  return intervals.reduce((total, [start, end]) => total + (end - start), 0);
+function checkedFiniteAdd(total, value, label) {
+  if (!Number.isFinite(total) || !Number.isFinite(value)) {
+    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  }
+  const result = total + value;
+  if (!Number.isFinite(result)) {
+    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  }
+  return result;
+}
+
+function checkedFiniteDifference(end, start, label) {
+  if (!Number.isFinite(end) || !Number.isFinite(start)) {
+    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  }
+  const result = end - start;
+  if (!Number.isFinite(result)) {
+    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  }
+  return result;
+}
+
+function checkedFiniteSum(values, label) {
+  let total = 0;
+  for (const value of values) {
+    total = checkedFiniteAdd(total, value, label);
+  }
+  return total;
 }
 
 function finiteIntervalDuration(intervals, label) {
-  const duration = intervalDuration(intervals);
-  if (!Number.isFinite(duration)) {
-    throw new RangeError(`${label} exceeds the finite numeric range.`);
+  let duration = 0;
+  for (const [start, end] of intervals) {
+    const intervalDuration = checkedFiniteDifference(end, start, label);
+    duration = checkedFiniteAdd(duration, intervalDuration, label);
   }
   return duration;
 }
@@ -649,10 +688,7 @@ function finiteIntervalDuration(intervals, label) {
 function finitePropertyTotal(items, property, label) {
   let total = 0;
   for (const item of items) {
-    total += item[property];
-    if (!Number.isFinite(total)) {
-      throw new RangeError(`${label} exceeds the finite numeric range.`);
-    }
+    total = checkedFiniteAdd(total, item[property], label);
   }
   return total;
 }
@@ -681,8 +717,14 @@ function classifyCommandBufferExposure(commandBuffer, gpuIntervals) {
     ...commandBuffer,
     hiddenIntervals,
     exposedIntervals,
-    hiddenHostNs: intervalDuration(hiddenIntervals),
-    exposedHostNs: intervalDuration(exposedIntervals),
+    hiddenHostNs: finiteIntervalDuration(
+      hiddenIntervals,
+      "Hidden host duration",
+    ),
+    exposedHostNs: finiteIntervalDuration(
+      exposedIntervals,
+      "Exposed host duration",
+    ),
   });
 }
 
@@ -880,9 +922,17 @@ function buildWaitTaxonomy(waits) {
           count: 0,
           waitNs: 0,
         };
-    entry.count += 1;
+    entry.count = checkedFiniteAdd(
+      entry.count,
+      1,
+      "Wait taxonomy count",
+    );
     if (Number.isFinite(wait.waitNs) && wait.waitNs >= 0) {
-      entry.waitNs += wait.waitNs;
+      entry.waitNs = checkedFiniteAdd(
+        entry.waitNs,
+        wait.waitNs,
+        "Wait taxonomy duration",
+      );
     }
     taxonomy[wait.bucket] = entry;
   }
@@ -905,10 +955,26 @@ function kernelCensus(dispatches) {
       setBytesTotalBytes: 0,
       bufferBinds: 0,
     };
-    entry.count += 1;
-    entry.setBytesCalls += dispatch.setBytesCalls ?? 0;
-    entry.setBytesTotalBytes += dispatch.setBytesTotalBytes ?? 0;
-    entry.bufferBinds += dispatch.bufferBinds ?? 0;
+    entry.count = checkedFiniteAdd(
+      entry.count,
+      1,
+      "Kernel dispatch count",
+    );
+    entry.setBytesCalls = checkedFiniteAdd(
+      entry.setBytesCalls,
+      dispatch.setBytesCalls ?? 0,
+      "Kernel setBytes calls",
+    );
+    entry.setBytesTotalBytes = checkedFiniteAdd(
+      entry.setBytesTotalBytes,
+      dispatch.setBytesTotalBytes ?? 0,
+      "Kernel setBytes bytes",
+    );
+    entry.bufferBinds = checkedFiniteAdd(
+      entry.bufferBinds,
+      dispatch.bufferBinds ?? 0,
+      "Kernel buffer binds",
+    );
     byKernel.set(dispatch.kernel, entry);
   }
   return Object.freeze(
@@ -927,19 +993,23 @@ function waitSummary(waits) {
       Number.isFinite(wait.waitNs) &&
       wait.waitNs >= 0
     ) {
-      totals[wait.headlineCategory] += wait.waitNs;
-      if (!Number.isFinite(totals[wait.headlineCategory])) {
-        throw new RangeError("Wait duration exceeds the finite numeric range.");
-      }
+      totals[wait.headlineCategory] = checkedFiniteAdd(
+        totals[wait.headlineCategory],
+        wait.waitNs,
+        "Wait duration",
+      );
     }
   }
+  const headlineWaitNs = checkedFiniteSum(
+    [totals.cap, totals.dependency, totals.decision, totals.other],
+    "Headline wait duration",
+  );
   return Object.freeze({
     capWaitNs: totals.cap,
     dependencyWaitNs: totals.dependency,
     decisionWaitNs: totals.decision,
     otherWaitNs: totals.other,
-    headlineWaitNs:
-      totals.cap + totals.dependency + totals.decision + totals.other,
+    headlineWaitNs,
   });
 }
 
@@ -975,26 +1045,47 @@ function aggregateData(commandBuffers, dispatches, waits) {
   }
   const gpuStartNs = gpuIntervals.length > 0 ? gpuIntervals[0][0] : null;
   const gpuEndNs = gpuIntervals.length > 0 ? gpuIntervals.at(-1)[1] : null;
+  const wallSpanNs =
+    startNs === null || endNs === null
+      ? 0
+      : checkedFiniteDifference(endNs, startNs, "Wall span");
+  const exposedHostNs = finitePropertyTotal(
+    commandBuffers,
+    "exposedHostNs",
+    "Exposed host duration",
+  );
+  const hiddenHostNs = finitePropertyTotal(
+    commandBuffers,
+    "hiddenHostNs",
+    "Hidden host duration",
+  );
+  const gpuBusyNs = finiteIntervalDuration(
+    gpuIntervals,
+    "GPU busy duration",
+  );
+  const gpuWorkNs = finiteIntervalDuration(
+    gpuWorkIntervals,
+    "GPU work duration",
+  );
+  const gpuSpanNs =
+    gpuStartNs === null || gpuEndNs === null
+      ? 0
+      : checkedFiniteDifference(gpuEndNs, gpuStartNs, "GPU span");
+  const exactKernelCensus = kernelCensus(dispatches);
 
   return {
     gpuIntervals: Object.freeze(gpuIntervals),
     waitTaxonomy,
-    kernelCensus: kernelCensus(dispatches),
+    kernelCensus: exactKernelCensus,
     summary: Object.freeze({
       startNs,
       endNs,
-      wallSpanNs: startNs === null || endNs === null ? 0 : endNs - startNs,
-      exposedHostNs: commandBuffers.reduce(
-        (total, commandBuffer) => total + commandBuffer.exposedHostNs,
-        0,
-      ),
-      hiddenHostNs: commandBuffers.reduce(
-        (total, commandBuffer) => total + commandBuffer.hiddenHostNs,
-        0,
-      ),
-      gpuBusyNs: intervalDuration(gpuIntervals),
-      gpuWorkNs: intervalDuration(gpuWorkIntervals),
-      gpuSpanNs: gpuStartNs === null || gpuEndNs === null ? 0 : gpuEndNs - gpuStartNs,
+      wallSpanNs,
+      exposedHostNs,
+      hiddenHostNs,
+      gpuBusyNs,
+      gpuWorkNs,
+      gpuSpanNs,
       ...waitTotals,
       opsTotal: dispatches.length,
       cbsTotal: commandBuffers.length,
@@ -1053,6 +1144,132 @@ function propagatedOmissionCount(scope, key) {
   return omissions[key];
 }
 
+function commandBufferHasFinitePositiveTiming(
+  commandBuffer,
+  hasOwnedDispatch,
+) {
+  let hasTiming = false;
+  let hasDegenerateAnchor = false;
+  for (const [start, end] of [
+    [commandBuffer.encodeStartNs, commandBuffer.encodeEndNs],
+    [commandBuffer.gpuStartNs, commandBuffer.gpuEndNs],
+  ]) {
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      continue;
+    }
+    if (end === start) {
+      hasDegenerateAnchor = true;
+      continue;
+    }
+    if (end < start) {
+      continue;
+    }
+    checkedFiniteDifference(end, start, "Command-buffer timing span");
+    hasTiming = true;
+  }
+  // The profiler emits finite zero-width hairlines for empty command buffers.
+  // They own no work or duration, but their measured point is sufficient for
+  // inclusive range membership. A degenerate CB that owns ops is unavailable.
+  return (
+    hasTiming ||
+    (
+      commandBuffer.opCount === 0 &&
+      !hasOwnedDispatch &&
+      hasDegenerateAnchor
+    )
+  );
+}
+
+function anchoredEmptyCommandBufferInRange(commandBuffer, range) {
+  if (commandBuffer.opCount !== 0) {
+    return false;
+  }
+  return [
+    [commandBuffer.encodeStartNs, commandBuffer.encodeEndNs],
+    [commandBuffer.gpuStartNs, commandBuffer.gpuEndNs],
+  ].some(
+    ([start, end]) =>
+      Number.isFinite(start) &&
+      end === start &&
+      pointInRange(start, range),
+  );
+}
+
+function rangeAnalysisForScope(scope) {
+  const startNs = scope?.startNs;
+  const endNs = scope?.endNs;
+  if (startNs === null || startNs === undefined || endNs === null || endNs === undefined) {
+    return RANGE_ANALYSIS_MISSING_LAUNCH_TIMING;
+  }
+  if (!Number.isFinite(startNs) || !Number.isFinite(endNs)) {
+    throw new TypeError("Launch bounds must be finite.");
+  }
+  const spanNs = endNs - startNs;
+  if (!Number.isFinite(spanNs)) {
+    throw new RangeError(
+      "Launch must have finite positive duration; span exceeds the finite numeric range.",
+    );
+  }
+  if (spanNs <= 0) {
+    return RANGE_ANALYSIS_MISSING_LAUNCH_TIMING;
+  }
+  const commandBuffers = Array.isArray(scope.commandBuffers)
+    ? scope.commandBuffers
+    : [];
+  const dispatches = Array.isArray(scope.dispatches) ? scope.dispatches : [];
+  const dispatchOwnerIndices = new Set(
+    dispatches
+      .map((dispatch) => dispatch.commandBufferIndex)
+      .filter(Number.isFinite),
+  );
+  let missingCommandBufferTiming = false;
+  for (const commandBuffer of commandBuffers) {
+    if (
+      !commandBufferHasFinitePositiveTiming(
+        commandBuffer,
+        dispatchOwnerIndices.has(commandBuffer.commandBufferIndex),
+      )
+    ) {
+      missingCommandBufferTiming = true;
+    }
+  }
+  if (missingCommandBufferTiming) {
+    return RANGE_ANALYSIS_MISSING_COMMAND_BUFFER_TIMING;
+  }
+  return RANGE_ANALYSIS_AVAILABLE;
+}
+
+function installedOrDerivedRangeAnalysis(scope) {
+  const installed = scope?.rangeAnalysis;
+  if (
+    installed?.available === true &&
+    installed.reason === null
+  ) {
+    return installed;
+  }
+  if (
+    installed?.available === false &&
+    (
+      installed.reason === "missing-command-buffer-timing" ||
+      installed.reason === "missing-launch-timing"
+    )
+  ) {
+    return installed;
+  }
+  return rangeAnalysisForScope(scope);
+}
+
+function assertRangeAnalysisAvailable(rangeAnalysis) {
+  if (rangeAnalysis.available) {
+    return;
+  }
+  const reason =
+    rangeAnalysis.reason === "missing-command-buffer-timing"
+      ? "missing command-buffer timing"
+      : "missing launch timing";
+  throw new RangeError(`Range analysis unavailable: ${reason}.`);
+}
+
 /**
  * Build exact aggregates for one positive-duration selection within a launch.
  * Point records are inclusive at both edges; measured intervals contribute
@@ -1063,6 +1280,8 @@ function propagatedOmissionCount(scope, key) {
  * wrappers and clipped interval fragments are created for each range.
  */
 export function buildRangeScope(scope, requestedRange) {
+  const rangeAnalysis = installedOrDerivedRangeAnalysis(scope);
+  assertRangeAnalysisAvailable(rangeAnalysis);
   const range = validSelectedRange(scope, requestedRange);
   const sourceCommandBuffers = Array.isArray(scope.commandBuffers)
     ? scope.commandBuffers
@@ -1081,7 +1300,11 @@ export function buildRangeScope(scope, requestedRange) {
         [commandBuffer.gpuStartNs, commandBuffer.gpuEndNs],
         range,
       );
-      if (encodeInterval === null && gpuInterval === null) {
+      const anchoredEmpty = anchoredEmptyCommandBufferInRange(
+        commandBuffer,
+        range,
+      );
+      if (encodeInterval === null && gpuInterval === null && !anchoredEmpty) {
         return null;
       }
       const sourceHiddenIntervals = Array.isArray(commandBuffer.hiddenIntervals)
@@ -1144,12 +1367,21 @@ export function buildRangeScope(scope, requestedRange) {
     gpuWorkIntervals,
     "GPU work duration",
   );
+  const gpuSpanNs =
+    gpuIntervals.length === 0
+      ? 0
+      : checkedFiniteDifference(
+          gpuIntervals.at(-1)[1],
+          gpuIntervals[0][0],
+          "GPU span",
+        );
 
   return Object.freeze({
     index: scope.index,
     startNs: range.startNs,
     endNs: range.endNs,
     range,
+    rangeAnalysis,
     commandBuffers: Object.freeze(commandBuffers),
     dispatches: Object.freeze(dispatches),
     waits: Object.freeze(waits),
@@ -1172,10 +1404,7 @@ export function buildRangeScope(scope, requestedRange) {
       hiddenHostNs,
       gpuBusyNs,
       gpuWorkNs,
-      gpuSpanNs:
-        gpuIntervals.length === 0
-          ? 0
-          : gpuIntervals.at(-1)[1] - gpuIntervals[0][0],
+      gpuSpanNs,
       ...waitTotals,
       opsTotal: dispatches.length,
       cbsTotal: commandBuffers.length,
@@ -1205,15 +1434,6 @@ function finitePositiveSpan(startNs, endNs, label) {
     throw new RangeError(`${label} must have finite positive duration.`);
   }
   return spanNs;
-}
-
-function hasFinitePositiveSpan(startNs, endNs) {
-  return (
-    Number.isFinite(startNs) &&
-    Number.isFinite(endNs) &&
-    endNs > startNs &&
-    Number.isFinite(endNs - startNs)
-  );
 }
 
 function overviewPointIndex(atNs, startNs, endNs, spanNs, binCount) {
@@ -1275,13 +1495,16 @@ function addOverviewInterval(
     const overlapStart = Math.max(clippedStartNs, bin.startNs);
     const overlapEnd = Math.min(clippedEndNs, bin.endNs);
     if (overlapEnd > overlapStart) {
-      const coverage = bin[field] + (overlapEnd - overlapStart);
-      if (!Number.isFinite(coverage)) {
-        throw new RangeError(
-          "Overview coverage exceeds the finite numeric range.",
-        );
-      }
-      bin[field] = coverage;
+      const overlap = checkedFiniteDifference(
+        overlapEnd,
+        overlapStart,
+        "Overview coverage",
+      );
+      bin[field] = checkedFiniteAdd(
+        bin[field],
+        overlap,
+        "Overview coverage",
+      );
     }
   }
 }
@@ -1510,11 +1733,13 @@ function buildLaunchWindows(commandBuffers, dispatches, waits) {
       summary: aggregate.summary,
       omissions,
     };
+    const rangeAnalysis = rangeAnalysisForScope(launch);
     return Object.freeze({
       ...launch,
-      overview: hasFinitePositiveSpan(launch.startNs, launch.endNs)
-        ? buildOverviewBins(launch)
-        : null,
+      rangeAnalysis,
+      overview: rangeAnalysis.reason === "missing-launch-timing"
+        ? null
+        : buildOverviewBins(launch),
     });
   });
   return {

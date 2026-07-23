@@ -61,6 +61,7 @@ function compactScope(
     overview: source.overview,
     range: source.range,
     omissions: source.omissions,
+    rangeAnalysis: source.rangeAnalysis,
     renderSampling: Object.freeze({
       active:
         dispatches.length !== sourceDispatches.length ||

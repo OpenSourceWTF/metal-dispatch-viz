@@ -18,6 +18,10 @@ test("scope compaction retains exact range metadata and overview bins", () => {
     unplacedDispatches: 1,
     unanchoredWaits: 2,
   });
+  const rangeAnalysis = Object.freeze({
+    available: false,
+    reason: "missing-command-buffer-timing",
+  });
   const scope = {
     dispatches: Array.from({ length: 20 }, (_, atNs) => ({ atNs })),
     commandBuffers: [],
@@ -25,6 +29,7 @@ test("scope compaction retains exact range metadata and overview bins", () => {
     overview,
     range,
     omissions,
+    rangeAnalysis,
   };
 
   const compact = compactScopeForClient(scope, { maxDispatches: 4 });
@@ -33,6 +38,7 @@ test("scope compaction retains exact range metadata and overview bins", () => {
   assert.equal(compact.overview, overview);
   assert.equal(compact.range, range);
   assert.equal(compact.omissions, omissions);
+  assert.equal(compact.rangeAnalysis, rangeAnalysis);
   assert.equal(Object.isFrozen(compact), true);
 });
 
@@ -51,6 +57,7 @@ test("dataset compaction remains compatible while preserving launch overviews", 
     commandBuffers: [],
     waits: [],
     overview,
+    rangeAnalysis: Object.freeze({ available: true, reason: null }),
   };
   const dataset = {
     ...launch,
@@ -65,6 +72,10 @@ test("dataset compaction remains compatible while preserving launch overviews", 
   assert.equal(compact.launchWindows[0].dispatches.length, 3);
   assert.equal(compact.overview, overview);
   assert.equal(compact.launchWindows[0].overview, overview);
+  assert.equal(
+    compact.launchWindows[0].rangeAnalysis,
+    launch.rangeAnalysis,
+  );
   assert.equal(compact.health, dataset.health);
   assert.equal(compact.diagnostics, dataset.diagnostics);
 });
