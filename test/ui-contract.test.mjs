@@ -25,6 +25,7 @@ import {
   setPinnedDefinitionState,
   selectedLaunchExportContext,
   selectionUrl,
+  shouldTeardownOnPageHide,
   traceLabel,
 } from "../public/app.js";
 
@@ -592,6 +593,16 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
     "an empty refresh cannot retain provenance from a removed trace",
   );
   assert.match(source, /addEventListener\(["']click["']/);
+  assert.match(
+    source,
+    /if \(!shouldTeardownOnPageHide\(event\)\) return;/,
+    "BFCache pagehide retains live controllers and renderer",
+  );
+  assert.match(source, /addEventListener\(["']pagehide["'], pagehide\)/);
+  assert.doesNotMatch(
+    source,
+    /addEventListener\(["']pagehide["'], pagehide,\s*\{\s*once:\s*true/,
+  );
   assert.match(source, /removeAttribute\(["']disabled["']\)/);
   assert.ok(
     source.indexOf('addEventListener("click"') <
@@ -806,6 +817,12 @@ test("help helpers filter shared definitions, dismiss in priority order, and res
   assert.equal(focused, "opener");
 });
 
+test("BFCache pagehide preserves live controllers for pageshow restoration", () => {
+  assert.equal(shouldTeardownOnPageHide({ persisted: true }), false);
+  assert.equal(shouldTeardownOnPageHide({ persisted: false }), true);
+  assert.equal(shouldTeardownOnPageHide({}), true);
+});
+
 test("drawer focus cycles at both boundaries and pinned definition restores its trigger", () => {
   const focused = [];
   const first = { focus() { focused.push("first"); } };
@@ -860,8 +877,12 @@ test("drawer focus cycles at both boundaries and pinned definition restores its 
   };
   const triggerAttrs = new Map();
   const trigger = {
+    isConnected: true,
     setAttribute(name, value) { triggerAttrs.set(name, value); },
     focus() { focused.push("trigger"); },
+  };
+  const stableFallback = {
+    focus() { focused.push("fallback"); },
   };
   const action = { focus() { focused.push("action"); } };
   const state = {};
@@ -882,6 +903,18 @@ test("drawer focus cycles at both boundaries and pinned definition restores its 
   assert.equal(attrs.get("aria-hidden"), "true");
   assert.equal(triggerAttrs.get("aria-expanded"), "false");
   assert.equal(focused.at(-1), "trigger");
+
+  trigger.isConnected = false;
+  setPinnedDefinitionState({
+    popover,
+    open: true,
+    trigger,
+    focusTarget: action,
+    focusFallback: stableFallback,
+    state,
+  });
+  setPinnedDefinitionState({ popover, open: false, state });
+  assert.equal(focused.at(-1), "fallback");
 });
 
 test("outside pointer dismissal preserves focus on the newly clicked control", () => {
@@ -1195,6 +1228,8 @@ test("AI export controller requires a real selected launch and wires local actio
   const snapshotWindows = [];
   let closeOtherCount = 0;
   let clipboardText = null;
+  let deferClipboard = false;
+  let resolveClipboard = null;
   const revoked = [];
   const timestamps = [
     new Date("2026-07-23T12:00:00.000Z"),
@@ -1213,6 +1248,11 @@ test("AI export controller requires a real selected launch and wires local actio
       clipboard: {
         async writeText(value) {
           clipboardText = value;
+          if (deferClipboard) {
+            await new Promise((resolve) => {
+              resolveClipboard = resolve;
+            });
+          }
         },
       },
     },
@@ -1338,6 +1378,22 @@ test("AI export controller requires a real selected launch and wires local actio
     clientWidth: 240,
   });
   assert.equal(controller.state.payload.generated_at, "2026-07-23T12:00:02.000Z");
+
+  elements.exportFormat.value = "markdown";
+  await elements.exportFormat.emit("change");
+  deferClipboard = true;
+  const delayedCopy = elements.copyExport.emit("click");
+  elements.exportFormat.value = "json";
+  await elements.exportFormat.emit("change");
+  resolveClipboard();
+  await delayedCopy;
+  assert.match(elements.exportPreview.value, /^\{/);
+  assert.doesNotMatch(
+    elements.exportStatus.textContent,
+    /copied/i,
+    "stale clipboard completion does not describe a different preview",
+  );
+
   await elements.exportClose.emit("click");
   assert.equal(elements.exportButton.focusCount, 2);
 

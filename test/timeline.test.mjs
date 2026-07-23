@@ -880,6 +880,47 @@ test("visible evidence snapshot maps a horizontally scrolled pixel window to tim
   renderer.destroy();
 });
 
+test("visible evidence snapshot includes command-buffer hairlines from partial endpoints", () => {
+  const environment = createEnvironment({ width: 100 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  renderer.setDataset(
+    dataset({
+      commandBuffers: [
+        {
+          type: "cb",
+          commandBufferIndex: 7,
+          opCount: 0,
+          gpuStartNs: 50,
+        },
+      ],
+      waits: [
+        {
+          type: "wait",
+          commandBufferIndex: 7,
+          atNs: 50,
+          waitNs: 3,
+        },
+      ],
+      startNs: 0,
+      endNs: 100,
+    }),
+  );
+  renderer.render();
+
+  assert.ok(
+    renderer.hitTargets.some(
+      ({ kind, item }) =>
+        kind === "cb" && item.commandBufferIndex === 7,
+    ),
+  );
+  assert.ok(
+    renderer
+      .visibleEvidenceSnapshot()
+      .commandBuffers.some(({ commandBufferIndex }) => commandBufferIndex === 7),
+  );
+  renderer.destroy();
+});
+
 test("clipped snapshot preserves the renderer full-viewport density mode", () => {
   const environment = createEnvironment({ width: 720 });
   const renderer = new TimelineRenderer(environment.canvas);

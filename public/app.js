@@ -230,6 +230,7 @@ export function setHelpDrawerState({
   open,
   opener = null,
   focusTarget = null,
+  focusFallback = null,
   restoreFocus = true,
   state,
 }) {
@@ -244,12 +245,21 @@ export function setHelpDrawerState({
   }
   if (open) {
     state.opener = opener;
+    state.focusFallback = focusFallback;
     focusTarget?.focus?.({ preventScroll: true });
     return;
   }
   const previousOpener = state.opener;
+  const previousFallback = state.focusFallback;
   state.opener = null;
-  if (restoreFocus) previousOpener?.focus?.({ preventScroll: true });
+  state.focusFallback = null;
+  if (restoreFocus) {
+    const target =
+      previousOpener?.isConnected === false
+        ? previousFallback
+        : previousOpener ?? previousFallback;
+    target?.focus?.({ preventScroll: true });
+  }
 }
 
 export function cycleHelpDrawerFocus(event, drawer) {
@@ -294,11 +304,16 @@ export function guardHelpDrawerFocus(event, drawer, fallback) {
   return true;
 }
 
+export function shouldTeardownOnPageHide(event) {
+  return event?.persisted !== true;
+}
+
 export function setPinnedDefinitionState({
   popover,
   open,
   trigger = null,
   focusTarget = null,
+  focusFallback = null,
   restoreFocus = true,
   state,
 }) {
@@ -307,6 +322,7 @@ export function setPinnedDefinitionState({
   }
   if (open) {
     state.pinnedTrigger = trigger;
+    state.pinnedFocusFallback = focusFallback;
     popover.hidden = false;
     popover.setAttribute?.("aria-hidden", "false");
     trigger?.setAttribute?.("aria-expanded", "true");
@@ -315,12 +331,20 @@ export function setPinnedDefinitionState({
     return;
   }
   const previousTrigger = state.pinnedTrigger;
+  const previousFallback = state.pinnedFocusFallback;
   state.pinnedTrigger = null;
+  state.pinnedFocusFallback = null;
   popover.hidden = true;
   popover.setAttribute?.("aria-hidden", "true");
   previousTrigger?.setAttribute?.("aria-expanded", "false");
   previousTrigger?.setAttribute?.("aria-controls", "definition-tooltip");
-  if (restoreFocus) previousTrigger?.focus?.({ preventScroll: true });
+  if (restoreFocus) {
+    const target =
+      previousTrigger?.isConnected === false
+        ? previousFallback
+        : previousTrigger ?? previousFallback;
+    target?.focus?.({ preventScroll: true });
+  }
 }
 
 export function chooseTraceId(traces, requestedId) {
@@ -1088,6 +1112,7 @@ export function createHelpController({
       open: true,
       trigger,
       focusTarget: elements.definitionPopoverClose,
+      focusFallback: elements.manualButton,
       state,
     });
     positionDefinitionTooltip(
@@ -1141,6 +1166,7 @@ export function createHelpController({
       open: true,
       opener,
       focusTarget,
+      focusFallback: elements.manualButton,
       state,
     });
     focusTarget.scrollIntoView?.({ block: "start" });
@@ -1328,6 +1354,7 @@ export function createAiExportController({
     text: "",
     extension: "md",
     mimeType: "text/markdown",
+    contentRevision: 0,
   };
   const background = [
     documentObject.querySelector?.(".site-header"),
@@ -1353,6 +1380,7 @@ export function createAiExportController({
     state.extension = formatted.extension;
     state.mimeType = formatted.mimeType;
     elements.exportPreview.value = formatted.text;
+    state.contentRevision += 1;
     return true;
   }
 
@@ -1423,6 +1451,7 @@ export function createAiExportController({
       open: true,
       opener: elements.exportButton,
       focusTarget: elements.exportFormat,
+      focusFallback: elements.exportButton,
       state,
     });
     return true;
@@ -1446,9 +1475,18 @@ export function createAiExportController({
     }
   };
   const onCopy = async () => {
-    const result = await copyExportText(state.text, {
+    const copiedText = state.text;
+    const copiedRevision = state.contentRevision;
+    const result = await copyExportText(copiedText, {
       clipboard: windowObject.navigator?.clipboard,
     });
+    if (
+      !state.drawerOpen ||
+      state.contentRevision !== copiedRevision ||
+      state.text !== copiedText
+    ) {
+      return;
+    }
     elements.exportStatus.textContent = result.message;
   };
   const onDownload = () => {
@@ -2665,14 +2703,15 @@ export async function bootstrap({
     element.removeAttribute("disabled");
   }
 
-  const pagehide = () => {
+  const pagehide = (event) => {
+    if (!shouldTeardownOnPageHide(event)) return;
     state.destroyed = true;
     coordinator.clear();
     helpController.destroy();
     exportController.destroy();
     renderer.destroy();
   };
-  windowObject.addEventListener("pagehide", pagehide, { once: true });
+  windowObject.addEventListener("pagehide", pagehide);
 
   await refreshRegistry({
     requestedId: initialUrl.searchParams.get("trace"),

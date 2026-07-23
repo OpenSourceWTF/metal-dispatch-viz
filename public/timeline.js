@@ -341,28 +341,24 @@ function commandBufferBounds(commandBuffer) {
   return { startNs: Math.min(...values), endNs: Math.max(...values) };
 }
 
-function intervalIntersectsViewport(startNs, endNs, viewport) {
+function commandBufferIntersectsViewport(
+  commandBuffer,
+  viewport,
+  waitsByCommandBuffer,
+) {
+  const bounds = commandBufferBounds(commandBuffer);
+  if (
+    bounds &&
+    bounds.endNs >= viewport.startNs &&
+    bounds.startNs <= viewport.endNs
+  ) {
+    return true;
+  }
+  const wait = waitsByCommandBuffer?.get?.(commandBuffer?.commandBufferIndex);
   return (
-    Number.isFinite(startNs) &&
-    Number.isFinite(endNs) &&
-    endNs >= startNs &&
-    endNs >= viewport.startNs &&
-    startNs <= viewport.endNs
-  );
-}
-
-function commandBufferIntersectsViewport(commandBuffer, viewport) {
-  return (
-    intervalIntersectsViewport(
-      commandBuffer?.encodeStartNs,
-      commandBuffer?.encodeEndNs,
-      viewport,
-    ) ||
-    intervalIntersectsViewport(
-      commandBuffer?.gpuStartNs,
-      commandBuffer?.gpuEndNs,
-      viewport,
-    )
+    Number.isFinite(wait?.atNs) &&
+    wait.atNs >= viewport.startNs &&
+    wait.atNs <= viewport.endNs
   );
 }
 
@@ -887,7 +883,11 @@ export class TimelineRenderer {
     );
     const commandBuffers = cloneAndFreezeSnapshotRecords(
       this.commandBuffers.filter((commandBuffer) =>
-        commandBufferIntersectsViewport(commandBuffer, viewport)),
+        commandBufferIntersectsViewport(
+          commandBuffer,
+          viewport,
+          this.waitsByCommandBuffer,
+        )),
     );
     const dispatches = cloneAndFreezeSnapshotRecords(
       this.placedDispatches.slice(dispatchRange.first, dispatchRange.after),
