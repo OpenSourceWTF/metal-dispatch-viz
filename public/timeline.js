@@ -44,13 +44,17 @@ function finite(value, fallback = 0) {
 }
 
 function validRange(range) {
-  return (
+  if (
     range !== null &&
     typeof range === "object" &&
     Number.isFinite(range.startNs) &&
     Number.isFinite(range.endNs) &&
     range.endNs > range.startNs
-  );
+  ) {
+    const span = range.endNs - range.startNs;
+    return Number.isFinite(span) && span > 0;
+  }
+  return false;
 }
 
 function normalizedBounds(bounds) {
@@ -90,14 +94,7 @@ function mergeKeyboardMarks(dispatches, waits) {
  * deterministic result so a malformed trace cannot poison the canvas state.
  */
 export function timeToX(timeNs, viewport, width) {
-  if (
-    viewport &&
-    Number.isFinite(viewport.startNs) &&
-    Number.isFinite(viewport.endNs) &&
-    viewport.endNs <= viewport.startNs
-  ) {
-    return 0;
-  }
+  if (viewport && !validRange(viewport)) return 0;
   const range = validRange(viewport) ? viewport : { startNs: 0, endNs: 1 };
   const safeWidth = Number.isFinite(width) && width > 0 ? width : 0;
   const safeTime = Number.isFinite(timeNs) ? timeNs : range.startNs;
@@ -109,14 +106,7 @@ export function timeToX(timeNs, viewport, width) {
  * timeToX for valid inputs.
  */
 export function xToTime(x, viewport, width) {
-  if (
-    viewport &&
-    Number.isFinite(viewport.startNs) &&
-    Number.isFinite(viewport.endNs) &&
-    viewport.endNs <= viewport.startNs
-  ) {
-    return viewport.startNs;
-  }
+  if (viewport && !validRange(viewport)) return finite(viewport.startNs);
   const range = validRange(viewport) ? viewport : { startNs: 0, endNs: 1 };
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(x)) {
     return range.startNs;
@@ -366,8 +356,11 @@ function traceBounds(data, placedDispatches) {
   if (!Number.isFinite(startNs) || !Number.isFinite(endNs)) {
     return { startNs: 0, endNs: 1 };
   }
-  if (endNs > startNs) return { startNs, endNs };
-  return { startNs: startNs - 0.5, endNs: endNs + 0.5 };
+  if (validRange({ startNs, endNs })) return { startNs, endNs };
+  return normalizedBounds({
+    startNs: startNs - 0.5,
+    endNs: endNs + 0.5,
+  });
 }
 
 function formatTime(value) {
@@ -745,9 +738,15 @@ export class TimelineRenderer {
   }
 
   setViewport(viewport, { notify = true } = {}) {
-    this.viewport = clampViewport(viewport, this.bounds);
-    this.analysisCache = null;
-    this.staticLayerCache = null;
+    const nextViewport = clampViewport(viewport, this.bounds);
+    const changed =
+      nextViewport.startNs !== this.viewport.startNs ||
+      nextViewport.endNs !== this.viewport.endNs;
+    this.viewport = nextViewport;
+    if (changed) {
+      this.analysisCache = null;
+      this.staticLayerCache = null;
+    }
     if (notify) this.notifyViewportChange();
     this.requestRender();
     return Object.freeze({ ...this.viewport });

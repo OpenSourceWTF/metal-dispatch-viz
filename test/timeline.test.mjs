@@ -286,6 +286,20 @@ test("time transforms round-trip and never produce non-finite output", () => {
   assert.ok(Number.isFinite(xToTime(Number.POSITIVE_INFINITY, viewport, 500)));
 });
 
+test("time transforms and clamping reject ranges with an overflowing span", () => {
+  const overflowRange = {
+    startNs: -Number.MAX_VALUE,
+    endNs: Number.MAX_VALUE,
+  };
+
+  assert.equal(timeToX(Number.MAX_VALUE, overflowRange, 500), 0);
+  assert.equal(xToTime(250, overflowRange, 500), -Number.MAX_VALUE);
+  assert.deepEqual(clampViewport(overflowRange, overflowRange), {
+    startNs: 0,
+    endNs: 1,
+  });
+});
+
 test("clamping preserves a valid span at bounds and applies zoom limits", () => {
   assert.deepEqual(
     clampViewport({ startNs: -20, endNs: 30 }, { startNs: 0, endNs: 100 }),
@@ -485,6 +499,64 @@ test("repeated fit-scale density renders reuse cached 320k analytical geometry",
     `320k fit: first=${firstElapsedMs.toFixed(2)}ms/visited=320000/binned=320000 ` +
       `repeat=${secondElapsedMs.toFixed(2)}ms/visited=0/binned=0`,
   );
+  renderer.destroy();
+});
+
+test("identical and edge-clamped viewport sync preserves renderer caches", () => {
+  const environment = createEnvironment({ width: 100 });
+  const renderer = new TimelineRenderer(environment.canvas);
+  const dispatches = Array.from({ length: 1_000 }, (_, atNs) =>
+    dispatch(atNs, `k${atNs % 5}`, 0, atNs),
+  );
+  renderer.setDataset(
+    dataset({
+      dispatches,
+      commandBuffers: [
+        {
+          type: "cb",
+          commandBufferIndex: 0,
+          opCount: dispatches.length,
+          encodeStartNs: 0,
+          encodeEndNs: 100,
+          gpuStartNs: 10,
+          gpuEndNs: 90,
+          exposedIntervals: [[0, 10]],
+          hiddenIntervals: [[10, 100]],
+        },
+      ],
+      startNs: 0,
+      endNs: 999,
+    }),
+  );
+  renderer.setViewport({ startNs: 0, endNs: 100 }, { notify: false });
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.densityMode, true);
+  assert.equal(renderer.lastRenderStats.densityCacheHit, false);
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, false);
+
+  const analysisCache = renderer.analysisCache;
+  const staticLayerCache = renderer.staticLayerCache;
+  renderer.setViewport({ startNs: 0, endNs: 100 }, { notify: false });
+  assert.equal(renderer.analysisCache, analysisCache);
+  assert.equal(renderer.staticLayerCache, staticLayerCache);
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.densityCacheHit, true);
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, true);
+
+  renderer.setViewport({ startNs: -50, endNs: 50 }, { notify: false });
+  assert.deepEqual(renderer.viewport, { startNs: 0, endNs: 100 });
+  assert.equal(renderer.analysisCache, analysisCache);
+  assert.equal(renderer.staticLayerCache, staticLayerCache);
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.densityCacheHit, true);
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, true);
+
+  renderer.setViewport({ startNs: -50, endNs: 50 }, { notify: false });
+  assert.equal(renderer.analysisCache, analysisCache);
+  assert.equal(renderer.staticLayerCache, staticLayerCache);
+  renderer.render();
+  assert.equal(renderer.lastRenderStats.densityCacheHit, true);
+  assert.equal(renderer.lastRenderStats.staticLayerCacheHit, true);
   renderer.destroy();
 });
 
@@ -891,6 +963,36 @@ test("range dataset keeps complete launch navigation bounds", () => {
     endNs: 100,
   });
   assert.deepEqual(changes.at(-1), { startNs: 70, endNs: 100 });
+  renderer.destroy();
+});
+
+test("setDataset rejects overflow-width launch bounds and viewports", () => {
+  const environment = createEnvironment();
+  const renderer = new TimelineRenderer(environment.canvas);
+  const overflowRange = {
+    startNs: -Number.MAX_VALUE,
+    endNs: Number.MAX_VALUE,
+  };
+
+  renderer.setDataset(dataset({ startNs: 10, endNs: 20 }), {
+    bounds: overflowRange,
+    viewport: overflowRange,
+  });
+  assert.deepEqual(renderer.bounds, { startNs: 10, endNs: 20 });
+  assert.deepEqual(renderer.viewport, { startNs: 10, endNs: 20 });
+
+  renderer.setDataset(dataset({
+    commandBuffers: [{
+      type: "cb",
+      commandBufferIndex: 0,
+      encodeStartNs: overflowRange.startNs,
+      encodeEndNs: overflowRange.endNs,
+    }],
+    startNs: overflowRange.startNs,
+    endNs: overflowRange.endNs,
+  }));
+  assert.deepEqual(renderer.bounds, { startNs: 0, endNs: 1 });
+  assert.deepEqual(renderer.viewport, { startNs: 0, endNs: 1 });
   renderer.destroy();
 });
 
