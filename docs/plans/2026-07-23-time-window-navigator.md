@@ -525,7 +525,7 @@ git commit -m "Add exact launch range analysis"
 
 **Does NOT cover:** Simultaneous full-trace workers, server-side range requests, or client-sample arithmetic.
 
-- [ ] **Step 1: Write failing session lifecycle and stale-result tests**
+- [x] **Step 1: Write failing session lifecycle and stale-result tests**
 
 Create `test/analysis-session.test.mjs`:
 
@@ -640,7 +640,7 @@ test("newer range request rejects and ignores the older request", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the session test and verify the missing module fails**
+- [x] **Step 2: Run the session test and verify the missing module fails**
 
 Run:
 
@@ -650,7 +650,7 @@ node --test test/analysis-session.test.mjs
 
 Expected: FAIL with `ERR_MODULE_NOT_FOUND` for `public/analysis-session.js`.
 
-- [ ] **Step 3: Implement the main-thread session controller**
+- [x] **Step 3: Implement the main-thread session controller**
 
 Create `public/analysis-session.js` with:
 
@@ -781,7 +781,7 @@ export class TraceAnalysisSession {
 }
 ```
 
-- [ ] **Step 4: Make the dataset worker retain exact data and answer range requests**
+- [x] **Step 4: Make the dataset worker retain exact data and answer range requests**
 
 Change `public/dataset-worker.js` to retain `exactDataset` and
 `activeGeneration` after load:
@@ -865,7 +865,7 @@ Export `compactScopeForClient` from `public/client-dataset.js`; keep
 creates a session, waits for `ready`, then terminates it. Add generation fields
 to its existing fake-worker expectations in `test/app-integration.test.mjs`.
 
-- [ ] **Step 5: Run worker and existing integration tests**
+- [x] **Step 5: Run worker and existing integration tests**
 
 Run:
 
@@ -875,7 +875,7 @@ node --test test/analysis-session.test.mjs test/app-integration.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the persistent worker session**
+- [x] **Step 6: Commit the persistent worker session**
 
 ```bash
 git add public/analysis-session.js public/dataset-worker.js public/client-dataset.js public/app.js test/analysis-session.test.mjs test/app-integration.test.mjs
