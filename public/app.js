@@ -60,6 +60,59 @@ export function traceLabel(trace) {
   );
 }
 
+export function traceSourceUrl(trace, { hosted = false } = {}) {
+  if (hosted) {
+    const relativePath = stringValue(trace?.relativePath);
+    const segments = relativePath?.split("/") ?? [];
+    if (
+      segments.length === 0 ||
+      segments.some(
+        (segment) => segment === "" || segment === "." || segment === "..",
+      )
+    ) {
+      throw new TypeError("Hosted traces require a safe relativePath.");
+    }
+    return `/traces/showcase/${segments.map(encodeURIComponent).join("/")}`;
+  }
+  const id = stringValue(trace?.id);
+  if (!id) {
+    throw new TypeError("Server traces require a non-empty ID.");
+  }
+  return `/api/traces/${encodeURIComponent(id)}`;
+}
+
+function registryRequestError(response) {
+  const error = new Error(
+    `Registry request failed with HTTP ${response?.status ?? "unknown"}`,
+  );
+  error.status = response?.status;
+  return error;
+}
+
+export async function loadTraceRegistry(fetchImpl) {
+  if (typeof fetchImpl !== "function") {
+    throw new TypeError("Trace registry loading requires fetch.");
+  }
+  const response = await fetchImpl("/api/traces");
+  if (response?.ok) {
+    return {
+      hosted: false,
+      registry: await response.json(),
+    };
+  }
+  if (response?.status !== 404) {
+    throw registryRequestError(response);
+  }
+  const hostedResponse = await fetchImpl("/hosted-traces.json");
+  if (!hostedResponse?.ok) {
+    throw registryRequestError(hostedResponse);
+  }
+  return {
+    hosted: true,
+    registry: await hostedResponse.json(),
+  };
+}
+
 export function chooseWindowIndex(windows, requestedIndex) {
   if (!Array.isArray(windows) || windows.length === 0) {
     return null;
@@ -981,6 +1034,7 @@ export async function bootstrap({
   const initialUrl = new URL(windowObject.location.href);
   const state = {
     traces: [],
+    registryHosted: false,
     evidenceByCacheKey: new Map(),
     currentTraceId: null,
     currentTrace: null,
@@ -2069,7 +2123,7 @@ export async function bootstrap({
       state.analysisSession = session;
       updateRangeModeControls();
       const loaded = await session.load(
-        `/api/traces/${encodeURIComponent(id)}`,
+        traceSourceUrl(trace, { hosted: state.registryHosted }),
       );
       if (
         !coordinator.isCurrent(token) ||
@@ -2192,15 +2246,8 @@ export async function bootstrap({
     }
     const refreshToken = registrySelection.beginRefresh(state.traces);
     try {
-      const response = await fetchImpl("/api/traces");
-      if (!response?.ok) {
-        const error = new Error(
-          `Registry request failed with HTTP ${response?.status ?? "unknown"}`,
-        );
-        error.status = response?.status;
-        throw error;
-      }
-      const registry = await response.json();
+      const loadedRegistry = await loadTraceRegistry(fetchImpl);
+      const { registry } = loadedRegistry;
       if (!registrySelection.isCurrentRefresh(refreshToken) || state.destroyed) {
         return;
       }
@@ -2208,6 +2255,7 @@ export async function bootstrap({
       const commit = registrySelection.commitRefresh(refreshToken, traces);
       if (!commit.current) return;
       const activeTraceKey = traceCacheKey(state.currentTrace);
+      state.registryHosted = loadedRegistry.hosted;
       state.traces = traces;
       elements.directory.textContent =
         stringValue(registry?.rootLabel) ?? "configured trace directory";

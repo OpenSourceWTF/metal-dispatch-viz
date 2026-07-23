@@ -11,7 +11,7 @@ test("package contract locks the minimal Node/Express runtime", async () => {
   assert.equal(packageJson.type, "module");
   assert.deepEqual(packageJson.engines, { node: ">=18" });
   assert.deepEqual(packageJson.scripts, {
-    build: "node --check server.mjs && node --check server/app.mjs",
+    build: "node scripts/build_hosted.mjs",
     start: "node server.mjs",
     test: "node --test",
   });

@@ -7,7 +7,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "node --check server.mjs && node --check server/app.mjs",
+    "build": "node scripts/build_hosted.mjs",
     "start": "node server.mjs",
     "test": "node --test"
   },

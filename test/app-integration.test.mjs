@@ -9,6 +9,7 @@ import {
   evidenceBadges,
   handleTraceRailKey,
   kernelRowsForScope,
+  loadTraceRegistry,
   parseRangeSelection,
   progressState,
   RangeRequestAuthority,
@@ -18,6 +19,7 @@ import {
   samplingDisclosure,
   traceCacheKey,
   traceRailState,
+  traceSourceUrl,
   waitRowsForScope,
 } from "../public/app.js";
 import { compactDatasetForClient } from "../public/client-dataset.js";
@@ -32,6 +34,66 @@ function deferred() {
   });
   return { promise, reject, resolve };
 }
+
+test("registry loading falls back to the generated hosted manifest", async () => {
+  const requests = [];
+  const hostedRegistry = {
+    schemaVersion: 1,
+    rootLabel: "Hosted showcase",
+    traces: [{
+      id: "abc123",
+      relativePath: "nested/capture one.jsonl",
+    }],
+    warnings: [],
+  };
+  const loaded = await loadTraceRegistry(async (url) => {
+    requests.push(url);
+    if (url === "/api/traces") {
+      return { ok: false, status: 404 };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return hostedRegistry;
+      },
+    };
+  });
+
+  assert.deepEqual(requests, ["/api/traces", "/hosted-traces.json"]);
+  assert.equal(loaded.registry, hostedRegistry);
+  assert.equal(loaded.hosted, true);
+  assert.equal(
+    traceSourceUrl(loaded.registry.traces[0], { hosted: loaded.hosted }),
+    "/traces/showcase/nested/capture%20one.jsonl",
+  );
+});
+
+test("server registry remains authoritative and ignores metadata source URLs", async () => {
+  const registry = {
+    traces: [{
+      id: "abc123",
+      relativePath: "capture.jsonl",
+      sourceUrl: "https://example.invalid/untrusted.jsonl",
+    }],
+  };
+  const loaded = await loadTraceRegistry(async (url) => {
+    assert.equal(url, "/api/traces");
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return registry;
+      },
+    };
+  });
+
+  assert.equal(loaded.hosted, false);
+  assert.equal(
+    traceSourceUrl(loaded.registry.traces[0], { hosted: loaded.hosted }),
+    "/api/traces/abc123",
+  );
+});
 
 const BOOTSTRAP_IDS = [
   "directory-identity",
