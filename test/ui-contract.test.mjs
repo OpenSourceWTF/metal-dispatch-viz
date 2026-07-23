@@ -620,6 +620,11 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
   assert.match(source, /rangeAuthority\.isCurrent/);
   assert.match(
     source,
+    /refreshRendererPalette\(\);\s*renderer\.requestRender\(\);\s*rangeNavigator\.requestRender\(\);/,
+    "theme changes repaint both timeline and overview canvases",
+  );
+  assert.match(
+    source,
     /function showEmpty\(\)[\s\S]*?renderEmptyProvenance\(\);[\s\S]*?No trace files found/,
     "an empty refresh cannot retain provenance from a removed trace",
   );

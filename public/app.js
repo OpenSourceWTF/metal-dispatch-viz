@@ -2162,6 +2162,7 @@ export async function bootstrap({
     }
     refreshRendererPalette();
     renderer.requestRender();
+    rangeNavigator.requestRender();
     announce(`${next === "light" ? "Light" : "Dark"} theme enabled.`);
   });
   elements.windowSelect.addEventListener("change", () => {
