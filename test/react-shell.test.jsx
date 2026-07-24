@@ -60,6 +60,20 @@ const BOOTSTRAP_IDS = [
   "range-status",
   "range-omissions",
   "analysis-tables",
+  "analysis-table-tabs",
+  "kernel-tab",
+  "wait-tab",
+  "kernel-panel",
+  "wait-panel",
+  "kernel-sort-kernel",
+  "kernel-sort-count",
+  "kernel-sort-setbytes-calls",
+  "kernel-sort-setbytes-bytes",
+  "kernel-sort-buffer-binds",
+  "wait-sort-bucket",
+  "wait-sort-count",
+  "wait-sort-duration",
+  "wait-sort-evidence",
   "utility-backdrop",
   "field-manual-drawer",
   "field-manual-close",
@@ -225,6 +239,29 @@ describe("ProfilerApp shell", () => {
     expect(container.textContent).toMatch(/Nothing is uploaded/i);
     expect(container.textContent).toMatch(/Prompt \+ data/i);
     expect(container.textContent).toMatch(/Structured data/i);
+  });
+
+  it("renders wide analysis tables as sortable accessible tabs", async () => {
+    const bootstrapController = vi.fn(async () => ({ destroy() {} }));
+    await act(async () => {
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
+    });
+
+    const tabs = container.querySelectorAll('[role="tab"]');
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(tabs[1].getAttribute("aria-selected")).toBe("false");
+    expect(container.querySelector("#kernel-panel").getAttribute("role"))
+      .toBe("tabpanel");
+    expect(container.querySelector("#wait-panel").hidden).toBe(true);
+
+    const sortButtons = container.querySelectorAll(".table-sort-button");
+    expect(sortButtons).toHaveLength(9);
+    for (const button of sortButtons) {
+      expect(button.tagName).toBe("BUTTON");
+      expect(button.type).toBe("button");
+      expect(button.getAttribute("aria-label")).toMatch(/^Sort /);
+    }
   });
 
   it("starts the injected controller after mount and destroys it once on unmount", async () => {

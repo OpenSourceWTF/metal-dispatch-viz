@@ -159,6 +159,8 @@ content-hashed JavaScript, CSS, and worker bundles.
   changing the current zoom.
 - Select a command buffer, dispatch, density bin, or wait to populate the
   linked inspector.
+- Switch between the Kernel families and Wait taxonomy tabs below the timeline.
+  Every column heading sorts its table ascending or descending.
 - Refresh rescans the folder while preserving the current opaque trace ID when
   it still exists. Theme follows the saved preference, then the system
   preference.

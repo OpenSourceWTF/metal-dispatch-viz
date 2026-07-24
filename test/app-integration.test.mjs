@@ -18,6 +18,7 @@ import {
   RegistrySelectionGuard,
   renderTraceRail,
   samplingDisclosure,
+  sortTableRows,
   traceCacheKey,
   traceRailState,
   traceSourceUrl,
@@ -222,6 +223,20 @@ const BOOTSTRAP_IDS = [
   "range-status",
   "range-omissions",
   "analysis-tables",
+  "analysis-table-tabs",
+  "kernel-tab",
+  "wait-tab",
+  "kernel-panel",
+  "wait-panel",
+  "kernel-sort-kernel",
+  "kernel-sort-count",
+  "kernel-sort-setbytes-calls",
+  "kernel-sort-setbytes-bytes",
+  "kernel-sort-buffer-binds",
+  "wait-sort-bucket",
+  "wait-sort-count",
+  "wait-sort-duration",
+  "wait-sort-evidence",
   "utility-backdrop",
   "field-manual-drawer",
   "field-manual-close",
@@ -469,6 +484,8 @@ function bootstrapDocument() {
   for (const id of BOOTSTRAP_IDS) {
     const tagName =
       id.includes("button") ||
+          id.endsWith("-tab") ||
+          id.includes("-sort-") ||
           id.startsWith("range-mode") ||
           [
             "field-manual-close",
@@ -921,6 +938,45 @@ test("bootstrap destroy is idempotent and pagehide delegates to the same cleanup
 
   app.destroy();
   assert.equal(harness.listenerCount("pagehide"), 0);
+});
+
+test("analysis table tabs switch panels and sort toggles retain table state", async () => {
+  const launch = bootstrapLaunch();
+  launch.kernelCensus = [
+    { kernel: "beta", count: 2, setBytesCalls: 0, setBytesTotalBytes: 0, bufferBinds: 0 },
+    { kernel: "alpha", count: 5, setBytesCalls: 0, setBytesTotalBytes: 0, bufferBinds: 0 },
+  ];
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+      modifiedTime: "2026-07-23T00:00:00.000Z",
+    }],
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+  });
+  const app = await harness.bootPromise;
+  const kernelPanel = harness.documentObject.getElementById("kernel-panel");
+  const waitPanel = harness.documentObject.getElementById("wait-panel");
+
+  harness.documentObject.getElementById("wait-tab").click();
+  assert.equal(kernelPanel.hidden, true);
+  assert.equal(waitPanel.hidden, false);
+  assert.equal(app.state.tableTab, "wait");
+
+  const sort = harness.documentObject.getElementById("kernel-sort-count");
+  sort.click();
+  assert.deepEqual(app.state.tableSort.kernel, {
+    key: "count",
+    direction: "ascending",
+  });
+  sort.click();
+  assert.deepEqual(app.state.tableSort.kernel, {
+    key: "count",
+    direction: "descending",
+  });
 });
 
 function analyzedScope({
@@ -1794,6 +1850,27 @@ test("run search matches registry metadata case-insensitively and keeps registry
   assert.deepEqual(filterTraces(traces, "   ").map(({ id }) => id), ["a", "b", "c"]);
 });
 
+test("table sorting handles text and numeric columns without mutating source rows", () => {
+  const rows = [
+    { kernel: "zeta", count: 2, waitNs: 10 },
+    { kernel: "Alpha", count: 10, waitNs: 5 },
+    { kernel: "beta", count: 2, waitNs: 20 },
+  ];
+  assert.deepEqual(
+    sortTableRows(rows, "kernel", "ascending").map(({ kernel }) => kernel),
+    ["Alpha", "beta", "zeta"],
+  );
+  assert.deepEqual(
+    sortTableRows(rows, "count", "descending").map(({ kernel }) => kernel),
+    ["Alpha", "zeta", "beta"],
+  );
+  assert.deepEqual(
+    sortTableRows(rows, "waitNs", "ascending").map(({ kernel }) => kernel),
+    ["Alpha", "zeta", "beta"],
+  );
+  assert.deepEqual(rows.map(({ kernel }) => kernel), ["zeta", "Alpha", "beta"]);
+});
+
 test("dataset construction uses an asynchronous worker boundary for large inputs", async () => {
   const instrumentation = [];
   let timerFired = false;
@@ -2360,8 +2437,8 @@ test("worker and documentation contracts are external, module-safe, and use the 
   assert.match(appSource, /renderProgress\(progress,\s*trace\.size\)/);
   assert.match(appSource, /renderTraceRail\(\{/);
   assert.match(appSource, /handleTraceRailKey\(\{/);
-  assert.match(appSource, /const rows = kernelRowsForScope\(scope\)/);
-  assert.match(appSource, /const rows = waitRowsForScope\(scope\)/);
+  assert.match(appSource, /const sourceRows = kernelRowsForScope\(scope\)/);
+  assert.match(appSource, /const sourceRows = waitRowsForScope\(scope\)/);
   assert.doesNotMatch(appSource, /aggregateKernelRows\(scope\?\.dispatches\)/);
   assert.doesNotMatch(appSource, /aggregateWaitRows\(scope\?\.waits\)/);
   assert.match(

@@ -37,6 +37,23 @@ function DefinitionTrigger({ term, label }) {
   );
 }
 
+function SortableHeader({ id, label, term }) {
+  return (
+    <th scope="col" aria-sort="none">
+      <button
+        id={id}
+        className="table-sort-button"
+        type="button"
+        aria-label={`Sort ${label}`}
+      >
+        <span>{label}</span>
+        <span className="sort-indicator" aria-hidden="true">↕</span>
+      </button>
+      {term ? <DefinitionTrigger term={term} label={label} /> : null}
+    </th>
+  );
+}
+
 function initialMetric(
   label,
   term,
@@ -519,9 +536,38 @@ export function ProfilerApp({
               </figure>
 
               <div id="analysis-tables" className="tables-grid">
+                <div
+                  id="analysis-table-tabs"
+                  className="analysis-table-tabs"
+                  role="tablist"
+                  aria-label="Analysis tables"
+                >
+                  <button
+                    id="kernel-tab"
+                    type="button"
+                    role="tab"
+                    aria-selected="true"
+                    aria-controls="kernel-panel"
+                    tabIndex="0"
+                  >
+                    Kernel families
+                  </button>
+                  <button
+                    id="wait-tab"
+                    type="button"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="wait-panel"
+                    tabIndex="-1"
+                  >
+                    Wait taxonomy
+                  </button>
+                </div>
                 <section
+                  id="kernel-panel"
                   className="data-section"
-                  aria-labelledby="kernel-heading"
+                  role="tabpanel"
+                  aria-labelledby="kernel-tab"
                 >
                   <div className="section-heading">
                     <div>
@@ -550,29 +596,11 @@ export function ProfilerApp({
                       </caption>
                       <thead>
                         <tr>
-                          <th scope="col">Kernel family</th>
-                          <th scope="col">Dispatches</th>
-                          <th scope="col">
-                            setBytes calls{" "}
-                            <DefinitionTrigger
-                              term="setbytes-call"
-                              label="setBytes call"
-                            />
-                          </th>
-                          <th scope="col">
-                            setBytes bytes{" "}
-                            <DefinitionTrigger
-                              term="setbytes-bytes"
-                              label="setBytes bytes"
-                            />
-                          </th>
-                          <th scope="col">
-                            Buffer binds{" "}
-                            <DefinitionTrigger
-                              term="buffer-bind"
-                              label="Buffer bind"
-                            />
-                          </th>
+                          <SortableHeader id="kernel-sort-kernel" label="Kernel family" />
+                          <SortableHeader id="kernel-sort-count" label="Dispatches" />
+                          <SortableHeader id="kernel-sort-setbytes-calls" label="setBytes calls" term="setbytes-call" />
+                          <SortableHeader id="kernel-sort-setbytes-bytes" label="setBytes bytes" term="setbytes-bytes" />
+                          <SortableHeader id="kernel-sort-buffer-binds" label="Buffer binds" term="buffer-bind" />
                         </tr>
                       </thead>
                       <tbody id="kernel-table-body">
@@ -589,8 +617,11 @@ export function ProfilerApp({
                 </section>
 
                 <section
+                  id="wait-panel"
                   className="data-section"
-                  aria-labelledby="wait-heading"
+                  role="tabpanel"
+                  aria-labelledby="wait-tab"
+                  hidden
                 >
                   <div className="section-heading">
                     <div>
@@ -617,10 +648,10 @@ export function ProfilerApp({
                       <caption>Wait causes, counts, and measured duration</caption>
                       <thead>
                         <tr>
-                          <th scope="col">Wait cause</th>
-                          <th scope="col">Events</th>
-                          <th scope="col">Duration</th>
-                          <th scope="col">Evidence</th>
+                          <SortableHeader id="wait-sort-bucket" label="Wait cause" />
+                          <SortableHeader id="wait-sort-count" label="Events" />
+                          <SortableHeader id="wait-sort-duration" label="Duration" />
+                          <SortableHeader id="wait-sort-evidence" label="Evidence" />
                         </tr>
                       </thead>
                       <tbody id="wait-table-body">
@@ -763,6 +794,10 @@ export function ProfilerApp({
               <li>
                 Select a command buffer, dispatch, density bin, or wait to
                 inspect linked evidence.
+              </li>
+              <li>
+                Switch between Kernel families and Wait taxonomy tabs; activate
+                any column heading to sort ascending or descending.
               </li>
               <li>
                 Use Export for AI when available to package only the visible
