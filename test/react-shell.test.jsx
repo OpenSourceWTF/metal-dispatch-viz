@@ -193,7 +193,9 @@ describe("ProfilerApp shell", () => {
 
     await act(async () => {
       root.render(<ProfilerApp bootstrapController={bootstrapController} />);
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await vi.waitFor(() => {
+      expect(runSelector).toBeDefined();
     });
     await act(async () => {
       runSelector.render({
