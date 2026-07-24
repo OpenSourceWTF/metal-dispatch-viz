@@ -160,6 +160,29 @@ describe("ProfilerApp shell", () => {
     );
   });
 
+  it("links to the public visualizer and profiler source repositories", async () => {
+    const bootstrapController = vi.fn(async () => ({ destroy() {} }));
+
+    await act(async () => {
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
+    });
+
+    const sourceNav = container.querySelector(
+      'nav[aria-label="Source repositories"]',
+    );
+    expect(sourceNav).not.toBeNull();
+    const links = [...sourceNav.querySelectorAll("a")];
+    expect(links.map(({ href }) => href)).toEqual([
+      "https://github.com/OpenSourceWTF/metal-dispatch-viz",
+      "https://github.com/OpenSourceWTF/mlx-profiler",
+    ]);
+    for (const link of links) {
+      expect(link.target).toBe("_blank");
+      expect(link.rel).toBe("noopener noreferrer");
+      expect(link.getAttribute("aria-label")).toMatch(/opens in a new tab/i);
+    }
+  });
+
   it("opens the shadcn command menu, searches runs, and selects one", async () => {
     let runSelector;
     const bootstrapController = vi.fn(async (options) => {

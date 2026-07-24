@@ -14,6 +14,7 @@
   --decision-cap: #ffc857;
   --dependency: #b49cff;
   --selection: #f5fbff;
+  --focus: var(--selection);
   --success: #65d6a6;
   --danger: #ff756d;
   --trace-rail-height: 76px;
@@ -1394,6 +1395,47 @@ tbody th {
   color: var(--text);
 }
 
+.disclosure-meta {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.source-repositories {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-family: var(--font-mono);
+}
+
+.source-repositories > span {
+  color: var(--secondary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.source-repository-link {
+  color: var(--gpu);
+  text-decoration-color: color-mix(in srgb, currentColor 42%, transparent);
+  text-underline-offset: 3px;
+}
+
+.source-repository-link:hover {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}
+
+.source-repository-link:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
 .field-manual-sheet,
 .ai-export-sheet {
   position: fixed;
@@ -1903,6 +1945,12 @@ tbody th {
   }
 
   .disclosure {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .disclosure-meta {
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;

@@ -437,6 +437,14 @@ test("visual system uses measured tokens, effective sizing, and clipped-safe foc
   )[0];
   assert.equal(runSearchFocus.get("outline"), "0");
 
+  const sourceLinks = requireDeclarationRule(rules, ".source-repositories")[0];
+  assert.equal(sourceLinks.get("flex-wrap"), "wrap");
+  const sourceLinkFocus = requireDeclarationRule(
+    rules,
+    ".source-repository-link:focus-visible",
+  )[0];
+  assert.match(sourceLinkFocus.get("outline") ?? "", /var\(--focus\)/);
+
   const loadingState = requireDeclarationRule(rules, ".loading-state")[0];
   assert.equal(loadingState.get("position"), "absolute");
   const loadingScan = requireDeclarationRule(
