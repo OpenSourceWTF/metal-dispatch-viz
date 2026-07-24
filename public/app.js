@@ -1,26 +1,17 @@
 import { formatBytes, formatDuration } from "./data.js";
 import { TraceAnalysisSession } from "./analysis-session.js";
 import { RangeNavigator } from "./range-navigator.js";
-import {
-  SelectionCoordinator,
-  TraceCache,
-} from "./trace-loader.js";
+import { SelectionCoordinator, TraceCache } from "./trace-loader.js";
 import { clampViewport, TimelineRenderer } from "./timeline.js";
 import {
   buildVisibleTimelineExport,
   exportFilename,
   formatAiPrompt,
 } from "./ai-export.js";
-import {
-  glossaryEntry,
-  searchGlossary,
-} from "./glossary.js";
+import { glossaryEntry, searchGlossary } from "./glossary.js";
 import { huggingFaceRepoUrl } from "./run-identity.js";
 
-const NON_ADDITIVE_WAITS = new Set([
-  "sched_backpressure",
-  "sched_worker_wait",
-]);
+const NON_ADDITIVE_WAITS = new Set(["sched_backpressure", "sched_worker_wait"]);
 
 const TERM_IDS_BY_LABEL = Object.freeze({
   "wall span": "wall-span",
@@ -102,9 +93,10 @@ export function timelineScrollerPixelWindow(scroller, canvas) {
   const contentWidth = Number.isFinite(scroller?.scrollWidth)
     ? scroller.scrollWidth
     : 0;
-  const canvasWidth = Number.isFinite(canvas?.clientWidth) && canvas.clientWidth > 0
-    ? canvas.clientWidth
-    : canvas?.getBoundingClientRect?.().width ?? 0;
+  const canvasWidth =
+    Number.isFinite(canvas?.clientWidth) && canvas.clientWidth > 0
+      ? canvas.clientWidth
+      : (canvas?.getBoundingClientRect?.().width ?? 0);
   const scale =
     contentWidth > 0 && Number.isFinite(canvasWidth) && canvasWidth > 0
       ? canvasWidth / contentWidth
@@ -260,7 +252,7 @@ export function setHelpDrawerState({
     const target =
       previousOpener?.isConnected === false
         ? previousFallback
-        : previousOpener ?? previousFallback;
+        : (previousOpener ?? previousFallback);
     target?.focus?.({ preventScroll: true });
   }
 }
@@ -280,10 +272,7 @@ export function cycleHelpDrawerFocus(event, drawer) {
   const activeElement = drawer.ownerDocument?.activeElement;
   const first = focusable[0];
   const last = focusable.at(-1);
-  if (
-    drawer.contains?.(activeElement) &&
-    !focusable.includes(activeElement)
-  ) {
+  if (drawer.contains?.(activeElement) && !focusable.includes(activeElement)) {
     event.preventDefault?.();
     (event.shiftKey ? last : first).focus?.({ preventScroll: true });
     return true;
@@ -345,7 +334,7 @@ export function setPinnedDefinitionState({
     const target =
       previousTrigger?.isConnected === false
         ? previousFallback
-        : previousTrigger ?? previousFallback;
+        : (previousTrigger ?? previousFallback);
     target?.focus?.({ preventScroll: true });
   }
 }
@@ -392,10 +381,7 @@ function browserRequestUrl(path, baseUrl) {
     : new URL(path, baseUrl).href;
 }
 
-export function traceSourceUrl(
-  trace,
-  { hosted = false, baseUrl } = {},
-) {
+export function traceSourceUrl(trace, { hosted = false, baseUrl } = {}) {
   if (hosted) {
     const relativePath = stringValue(trace?.relativePath);
     const segments = relativePath?.split("/") ?? [];
@@ -434,8 +420,7 @@ export async function loadTraceRegistry(fetchImpl, { baseUrl } = {}) {
   const response = await fetchImpl(browserRequestUrl("api/traces", baseUrl));
   if (response?.ok) {
     return {
-      hosted:
-        response.headers?.get?.("x-metal-dispatch-registry") === "hosted",
+      hosted: response.headers?.get?.("x-metal-dispatch-registry") === "hosted",
       registry: await response.json(),
     };
   }
@@ -526,7 +511,9 @@ export function rangeSelectionUrl(input, { mode, bounds, range }) {
 
 export function parseRangeSelection(input, bounds) {
   if (!validRangeBounds(bounds)) {
-    throw new TypeError("Launch bounds must have positive safe-integer duration.");
+    throw new TypeError(
+      "Launch bounds must have positive safe-integer duration.",
+    );
   }
   const url = new URL(input, "http://localhost/");
   const mode = url.searchParams.get("range");
@@ -561,9 +548,7 @@ export class RangeRequestAuthority {
 
   begin(launchIndex) {
     if (!Number.isSafeInteger(launchIndex) || launchIndex < 0) {
-      throw new TypeError(
-        "launchIndex must be a non-negative safe integer.",
-      );
+      throw new TypeError("launchIndex must be a non-negative safe integer.");
     }
     return Object.freeze({
       generation: (this.generation += 1),
@@ -587,58 +572,60 @@ export class RangeRequestAuthority {
 
 export function metricRows(datasetOrWindow) {
   const summary = datasetOrWindow?.summary ?? {};
-  return Object.freeze([
-    {
-      label: "Wall span",
-      value: formatDuration(summary.wallSpanNs),
-      evidence: "measured endpoints",
-    },
-    {
-      label: "Exposed host",
-      value: formatDuration(summary.exposedHostNs),
-      evidence: "interval-derived",
-    },
-    {
-      label: "Hidden host",
-      value: formatDuration(summary.hiddenHostNs),
-      evidence: "interval-derived",
-    },
-    {
-      label: "GPU busy",
-      value: formatDuration(summary.gpuBusyNs),
-      evidence: "interval-derived union",
-    },
-    {
-      label: "GPU work",
-      value: formatDuration(summary.gpuWorkNs),
-      evidence: "measured intervals",
-    },
-    {
-      label: "Decision drain",
-      value: formatDuration(summary.decisionWaitNs),
-      evidence: "measured waits",
-    },
-    {
-      label: "Cap wait",
-      value: formatDuration(summary.capWaitNs),
-      evidence: "measured waits",
-    },
-    {
-      label: "Dependency wait",
-      value: formatDuration(summary.dependencyWaitNs),
-      evidence: "measured waits",
-    },
-    {
-      label: "Command buffers",
-      value: String(finiteOrZero(summary.cbsTotal)),
-      evidence: "record count",
-    },
-    {
-      label: "Dispatches",
-      value: String(finiteOrZero(summary.opsTotal)),
-      evidence: "record count",
-    },
-  ].map(Object.freeze));
+  return Object.freeze(
+    [
+      {
+        label: "Wall span",
+        value: formatDuration(summary.wallSpanNs),
+        evidence: "measured endpoints",
+      },
+      {
+        label: "Exposed host",
+        value: formatDuration(summary.exposedHostNs),
+        evidence: "interval-derived",
+      },
+      {
+        label: "Hidden host",
+        value: formatDuration(summary.hiddenHostNs),
+        evidence: "interval-derived",
+      },
+      {
+        label: "GPU busy",
+        value: formatDuration(summary.gpuBusyNs),
+        evidence: "interval-derived union",
+      },
+      {
+        label: "GPU work",
+        value: formatDuration(summary.gpuWorkNs),
+        evidence: "measured intervals",
+      },
+      {
+        label: "Decision drain",
+        value: formatDuration(summary.decisionWaitNs),
+        evidence: "measured waits",
+      },
+      {
+        label: "Cap wait",
+        value: formatDuration(summary.capWaitNs),
+        evidence: "measured waits",
+      },
+      {
+        label: "Dependency wait",
+        value: formatDuration(summary.dependencyWaitNs),
+        evidence: "measured waits",
+      },
+      {
+        label: "Command buffers",
+        value: String(finiteOrZero(summary.cbsTotal)),
+        evidence: "record count",
+      },
+      {
+        label: "Dispatches",
+        value: String(finiteOrZero(summary.opsTotal)),
+        evidence: "record count",
+      },
+    ].map(Object.freeze),
+  );
 }
 
 export function aggregateKernelRows(dispatches) {
@@ -730,6 +717,74 @@ export function sortTableRows(rows, key, direction = "ascending") {
     .map(({ row }) => row);
 }
 
+export function tableNeedsHorizontalScroll(scroller) {
+  return Boolean(
+    scroller &&
+    Number.isFinite(scroller.scrollWidth) &&
+    Number.isFinite(scroller.clientWidth) &&
+    scroller.scrollWidth > scroller.clientWidth,
+  );
+}
+
+export function initialTimelineViewport(scope, bounds) {
+  if (!validRangeBounds(bounds)) return bounds;
+  const dispatchCommandBuffers = new Set(
+    (Array.isArray(scope?.dispatches) ? scope.dispatches : [])
+      .map((dispatch) => dispatch?.commandBufferIndex)
+      .filter(Number.isFinite),
+  );
+  const activityPoints = [];
+  for (const commandBuffer of Array.isArray(scope?.commandBuffers)
+    ? scope.commandBuffers
+    : []) {
+    if (!dispatchCommandBuffers.has(commandBuffer?.commandBufferIndex))
+      continue;
+    for (const value of [
+      commandBuffer.encodeStartNs,
+      commandBuffer.encodeEndNs,
+      commandBuffer.gpuStartNs,
+      commandBuffer.gpuEndNs,
+    ]) {
+      if (Number.isFinite(value)) activityPoints.push(value);
+    }
+  }
+  const commandActivityStart =
+    activityPoints.length > 0 ? Math.min(...activityPoints) : null;
+  const commandActivityEnd =
+    activityPoints.length > 0 ? Math.max(...activityPoints) : null;
+  const commandActivitySpan =
+    commandActivityStart === null || commandActivityEnd === null
+      ? 0
+      : commandActivityEnd - commandActivityStart;
+  const completionWaitProximity = Math.max(
+    1_000_000,
+    commandActivitySpan * 0.1,
+  );
+  for (const wait of Array.isArray(scope?.waits) ? scope.waits : []) {
+    if (!Number.isFinite(wait?.atNs)) continue;
+    const distantCompletionMarker =
+      wait?.bucket === "cb_wait_until_completed" &&
+      commandActivityEnd !== null &&
+      wait.atNs > commandActivityEnd + completionWaitProximity;
+    if (!distantCompletionMarker) activityPoints.push(wait.atNs);
+  }
+  if (activityPoints.length < 2) return bounds;
+  const activityStart = Math.min(...activityPoints);
+  const activityEnd = Math.max(...activityPoints);
+  if (activityEnd <= activityStart) return bounds;
+  const fullSpan = bounds.endNs - bounds.startNs;
+  const activitySpan = activityEnd - activityStart;
+  if (activitySpan / fullSpan >= 0.9) return bounds;
+  const padding = Math.round(activitySpan * 0.03);
+  return clampViewport(
+    {
+      startNs: Math.max(bounds.startNs, activityStart - padding),
+      endNs: Math.min(bounds.endNs, activityEnd + padding),
+    },
+    bounds,
+  );
+}
+
 export function samplingDisclosure(scope) {
   const sampling = scope?.renderSampling;
   if (sampling?.active !== true) return null;
@@ -756,7 +811,9 @@ function sourceEvidenceLabel(trace) {
 export function evidenceBadges(dataset, trace) {
   const health = dataset?.health ?? {};
   const completeness =
-    health.sourceCompleteness ?? dataset?.sourceCompleteness ?? "missing-summary";
+    health.sourceCompleteness ??
+    dataset?.sourceCompleteness ??
+    "missing-summary";
   const badges = [];
   const add = (label) => badges.push({ label, valid: false });
   const sourceLabel = sourceEvidenceLabel(trace);
@@ -850,7 +907,11 @@ export class RegistrySelectionGuard {
 
   commitRefresh(token, nextTraces) {
     if (token?.generation !== this.#generation) {
-      return { current: false, selectionChanged: false, selectedId: this.#selectedId };
+      return {
+        current: false,
+        selectionChanged: false,
+        selectedId: this.#selectedId,
+      };
     }
     const selectionChanged = token.revision !== this.#revision;
     const basisId = selectionChanged ? this.#selectedId : token.selectedId;
@@ -1020,8 +1081,7 @@ export function progressState(
       : null;
   const estimateBytes = responseTotal ?? fallback;
   const done = progress?.done === true;
-  const overflow =
-    estimateBytes !== null && sourceBytes > estimateBytes;
+  const overflow = estimateBytes !== null && sourceBytes > estimateBytes;
   let max;
   if (done) {
     max = Math.max(1, sourceBytes);
@@ -1075,7 +1135,13 @@ function appendTextElement(documentObject, parent, tagName, text, className) {
 }
 
 function termIdForLabel(label) {
-  return TERM_IDS_BY_LABEL[String(label ?? "").trim().toLowerCase()] ?? null;
+  return (
+    TERM_IDS_BY_LABEL[
+      String(label ?? "")
+        .trim()
+        .toLowerCase()
+    ] ?? null
+  );
 }
 
 function appendTermTrigger(documentObject, parent, termId, label) {
@@ -1181,7 +1247,13 @@ export function createHelpController({
   documentObject,
   windowObject,
   elements,
+  drawerAdapter = null,
+  externalDefinitions = false,
 }) {
+  const externalDrawer =
+    drawerAdapter && typeof drawerAdapter.render === "function"
+      ? drawerAdapter
+      : null;
   const state = {
     drawerOpen: false,
     opener: null,
@@ -1198,6 +1270,7 @@ export function createHelpController({
   ].filter(Boolean);
 
   function closeTooltip() {
+    if (externalDefinitions) return;
     const trigger = state.tooltipTrigger;
     trigger?.setAttribute?.("aria-expanded", "false");
     trigger?.removeAttribute?.("aria-describedby");
@@ -1207,6 +1280,7 @@ export function createHelpController({
   }
 
   function showTooltip(trigger) {
+    if (externalDefinitions) return false;
     const termId = trigger?.dataset?.term;
     const entry = glossaryEntry(termId);
     if (!entry) return false;
@@ -1239,6 +1313,7 @@ export function createHelpController({
   }
 
   function showPinnedDefinition(trigger) {
+    if (externalDefinitions) return false;
     const termId = trigger?.dataset?.term;
     const entry = glossaryEntry(termId);
     if (!entry) return false;
@@ -1274,6 +1349,7 @@ export function createHelpController({
   }
 
   function closePinnedDefinition({ restoreFocus = true } = {}) {
+    if (externalDefinitions) return;
     if (!state.tooltipPinned) return;
     state.tooltipPinned = false;
     state.pinnedTermId = null;
@@ -1291,8 +1367,7 @@ export function createHelpController({
       container: elements.manualGlossaryList,
       query,
     });
-    elements.manualSearchStatus.textContent =
-      `${matches.length} ${matches.length === 1 ? "definition" : "definitions"}`;
+    elements.manualSearchStatus.textContent = `${matches.length} ${matches.length === 1 ? "definition" : "definitions"}`;
     return matches;
   }
 
@@ -1309,30 +1384,46 @@ export function createHelpController({
       : null;
     const focusTarget = termTarget ?? elements.manualQuickStart;
     state.drawerOpen = true;
-    setHelpDrawerState({
-      drawer: elements.manualDrawer,
-      backdrop: elements.utilityBackdrop,
-      background,
-      open: true,
-      opener,
-      focusTarget,
-      focusFallback: elements.manualButton,
-      state,
-    });
+    if (externalDrawer) {
+      state.opener = opener;
+      externalDrawer.render({
+        open: true,
+        onOpenChange: (open) => {
+          if (!open) closeManual();
+        },
+      });
+    } else {
+      setHelpDrawerState({
+        drawer: elements.manualDrawer,
+        backdrop: elements.utilityBackdrop,
+        background,
+        open: true,
+        opener,
+        focusTarget,
+        focusFallback: elements.manualButton,
+        state,
+      });
+    }
     focusTarget.scrollIntoView?.({ block: "start" });
   }
 
   function closeManual({ restoreFocus = true } = {}) {
     if (!state.drawerOpen) return;
     state.drawerOpen = false;
-    setHelpDrawerState({
-      drawer: elements.manualDrawer,
-      backdrop: elements.utilityBackdrop,
-      background,
-      open: false,
-      restoreFocus,
-      state,
-    });
+    if (externalDrawer) {
+      externalDrawer.render({ open: false, onOpenChange: () => {} });
+      if (restoreFocus) state.opener?.focus?.({ preventScroll: true });
+      state.opener = null;
+    } else {
+      setHelpDrawerState({
+        drawer: elements.manualDrawer,
+        backdrop: elements.utilityBackdrop,
+        background,
+        open: false,
+        restoreFocus,
+        state,
+      });
+    }
   }
 
   function termTriggerFrom(target) {
@@ -1366,11 +1457,7 @@ export function createHelpController({
   };
   const onFocusIn = (event) => {
     if (state.drawerOpen) {
-      guardHelpDrawerFocus(
-        event,
-        elements.manualDrawer,
-        elements.manualClose,
-      );
+      guardHelpDrawerFocus(event, elements.manualDrawer, elements.manualClose);
       return;
     }
     const trigger = termTriggerFrom(event.target);
@@ -1444,19 +1531,31 @@ export function createHelpController({
     openManual(opener, termId);
   };
   const onPopoverClose = () => closePinnedDefinition();
+  const onOpenManualDefinition = (event) => {
+    openManual(elements.manualButton, event?.detail?.term ?? null);
+  };
 
   renderGlossary();
   elements.manualButton.addEventListener("click", onManualOpen);
   elements.manualClose.addEventListener("click", onManualClose);
-  elements.utilityBackdrop.addEventListener("click", onBackdropClick);
+  if (!externalDrawer) {
+    elements.utilityBackdrop.addEventListener("click", onBackdropClick);
+  }
   elements.manualSearch.addEventListener("input", onSearch);
-  elements.definitionPopoverManual.addEventListener("click", onPopoverManual);
-  elements.definitionPopoverClose.addEventListener("click", onPopoverClose);
-  documentObject.addEventListener("mouseover", onPointerOver);
-  documentObject.addEventListener("mouseout", onPointerOut);
+  if (externalDefinitions) {
+    documentObject.addEventListener(
+      "mdv:open-manual-definition",
+      onOpenManualDefinition,
+    );
+  } else {
+    elements.definitionPopoverManual.addEventListener("click", onPopoverManual);
+    elements.definitionPopoverClose.addEventListener("click", onPopoverClose);
+    documentObject.addEventListener("mouseover", onPointerOver);
+    documentObject.addEventListener("mouseout", onPointerOut);
+    documentObject.addEventListener("focusout", onFocusOut);
+    documentObject.addEventListener("click", onDocumentClick);
+  }
   documentObject.addEventListener("focusin", onFocusIn);
-  documentObject.addEventListener("focusout", onFocusOut);
-  documentObject.addEventListener("click", onDocumentClick);
   documentObject.addEventListener("keydown", onKeyDown);
 
   return {
@@ -1468,21 +1567,35 @@ export function createHelpController({
     showTooltip,
     state,
     setBeforeOpenDrawer(callback) {
-      state.beforeOpenDrawer =
-        typeof callback === "function" ? callback : null;
+      state.beforeOpenDrawer = typeof callback === "function" ? callback : null;
     },
     destroy() {
       elements.manualButton.removeEventListener("click", onManualOpen);
       elements.manualClose.removeEventListener("click", onManualClose);
-      elements.utilityBackdrop.removeEventListener("click", onBackdropClick);
+      if (!externalDrawer) {
+        elements.utilityBackdrop.removeEventListener("click", onBackdropClick);
+      }
       elements.manualSearch.removeEventListener("input", onSearch);
-      elements.definitionPopoverManual.removeEventListener("click", onPopoverManual);
-      elements.definitionPopoverClose.removeEventListener("click", onPopoverClose);
-      documentObject.removeEventListener("mouseover", onPointerOver);
-      documentObject.removeEventListener("mouseout", onPointerOut);
+      if (externalDefinitions) {
+        documentObject.removeEventListener(
+          "mdv:open-manual-definition",
+          onOpenManualDefinition,
+        );
+      } else {
+        elements.definitionPopoverManual.removeEventListener(
+          "click",
+          onPopoverManual,
+        );
+        elements.definitionPopoverClose.removeEventListener(
+          "click",
+          onPopoverClose,
+        );
+        documentObject.removeEventListener("mouseover", onPointerOver);
+        documentObject.removeEventListener("mouseout", onPointerOut);
+        documentObject.removeEventListener("focusout", onFocusOut);
+        documentObject.removeEventListener("click", onDocumentClick);
+      }
       documentObject.removeEventListener("focusin", onFocusIn);
-      documentObject.removeEventListener("focusout", onFocusOut);
-      documentObject.removeEventListener("click", onDocumentClick);
       documentObject.removeEventListener("keydown", onKeyDown);
     },
   };
@@ -1495,8 +1608,19 @@ export function createAiExportController({
   renderer,
   getContext,
   closeOtherDrawer = () => {},
+  drawerAdapter = null,
+  formatSelector = null,
   now = () => new Date(),
 }) {
+  const externalDrawer =
+    drawerAdapter && typeof drawerAdapter.render === "function"
+      ? drawerAdapter
+      : null;
+  const externalFormatSelector =
+    formatSelector && typeof formatSelector.render === "function"
+      ? formatSelector
+      : null;
+  let selectedFormat = "markdown";
   const state = {
     drawerOpen: false,
     opener: null,
@@ -1524,7 +1648,7 @@ export function createAiExportController({
     if (!state.payload) return false;
     const formatted = formatVisibleTimelineExport(
       state.payload,
-      elements.exportFormat.value,
+      externalFormatSelector ? selectedFormat : elements.exportFormat.value,
     );
     state.text = formatted.text;
     state.extension = formatted.extension;
@@ -1575,14 +1699,20 @@ export function createAiExportController({
   function closeDrawer({ restoreFocus = true } = {}) {
     if (!state.drawerOpen) return;
     state.drawerOpen = false;
-    setHelpDrawerState({
-      drawer: elements.exportDrawer,
-      backdrop: elements.utilityBackdrop,
-      background,
-      open: false,
-      restoreFocus,
-      state,
-    });
+    if (externalDrawer) {
+      externalDrawer.render({ open: false, onOpenChange: () => {} });
+      if (restoreFocus) state.opener?.focus?.({ preventScroll: true });
+      state.opener = null;
+    } else {
+      setHelpDrawerState({
+        drawer: elements.exportDrawer,
+        backdrop: elements.utilityBackdrop,
+        background,
+        open: false,
+        restoreFocus,
+        state,
+      });
+    }
   }
 
   function openDrawer() {
@@ -1594,16 +1724,26 @@ export function createAiExportController({
     if (!capture()) return false;
     elements.exportStatus.textContent = "";
     state.drawerOpen = true;
-    setHelpDrawerState({
-      drawer: elements.exportDrawer,
-      backdrop: elements.utilityBackdrop,
-      background,
-      open: true,
-      opener: elements.exportButton,
-      focusTarget: elements.exportFormat,
-      focusFallback: elements.exportButton,
-      state,
-    });
+    if (externalDrawer) {
+      state.opener = elements.exportButton;
+      externalDrawer.render({
+        open: true,
+        onOpenChange: (open) => {
+          if (!open) closeDrawer();
+        },
+      });
+    } else {
+      setHelpDrawerState({
+        drawer: elements.exportDrawer,
+        backdrop: elements.utilityBackdrop,
+        background,
+        open: true,
+        opener: elements.exportButton,
+        focusTarget: elements.exportFormat,
+        focusFallback: elements.exportButton,
+        state,
+      });
+    }
     return true;
   }
 
@@ -1612,14 +1752,15 @@ export function createAiExportController({
   const onBackdrop = () => closeDrawer();
   const onRefresh = () => {
     if (capture()) {
-      elements.exportStatus.textContent =
-        "Visible range snapshot refreshed.";
+      elements.exportStatus.textContent = "Visible range snapshot refreshed.";
     }
   };
   const onFormat = () => {
     if (renderContent()) {
       elements.exportStatus.textContent =
-        elements.exportFormat.value === "json"
+        (externalFormatSelector
+          ? selectedFormat
+          : elements.exportFormat.value) === "json"
           ? "Structured JSON preview ready."
           : "Prompt and data preview ready.";
     }
@@ -1654,8 +1795,7 @@ export function createAiExportController({
         mimeType: state.mimeType,
         urlObject: windowObject.URL,
       });
-      elements.exportStatus.textContent =
-        `Downloaded local .${state.extension} export.`;
+      elements.exportStatus.textContent = `Downloaded local .${state.extension} export.`;
     } catch {
       elements.exportStatus.textContent =
         "Download failed. Select the read-only preview and save it manually.";
@@ -1677,10 +1817,22 @@ export function createAiExportController({
   elements.exportButton.addEventListener("click", onOpen);
   elements.exportClose.addEventListener("click", onClose);
   elements.exportRefresh.addEventListener("click", onRefresh);
-  elements.exportFormat.addEventListener("change", onFormat);
+  if (externalFormatSelector) {
+    externalFormatSelector.render({
+      value: selectedFormat,
+      onSelect: (value) => {
+        selectedFormat = value === "json" ? "json" : "markdown";
+        onFormat();
+      },
+    });
+  } else {
+    elements.exportFormat.addEventListener("change", onFormat);
+  }
   elements.copyExport.addEventListener("click", onCopy);
   elements.downloadExport.addEventListener("click", onDownload);
-  elements.utilityBackdrop.addEventListener("click", onBackdrop);
+  if (!externalDrawer) {
+    elements.utilityBackdrop.addEventListener("click", onBackdrop);
+  }
   documentObject.addEventListener("focusin", onFocusIn);
   documentObject.addEventListener("keydown", onKeyDown);
 
@@ -1699,10 +1851,14 @@ export function createAiExportController({
       elements.exportButton.removeEventListener("click", onOpen);
       elements.exportClose.removeEventListener("click", onClose);
       elements.exportRefresh.removeEventListener("click", onRefresh);
-      elements.exportFormat.removeEventListener("change", onFormat);
+      if (!externalFormatSelector) {
+        elements.exportFormat.removeEventListener("change", onFormat);
+      }
       elements.copyExport.removeEventListener("click", onCopy);
       elements.downloadExport.removeEventListener("click", onDownload);
-      elements.utilityBackdrop.removeEventListener("click", onBackdrop);
+      if (!externalDrawer) {
+        elements.utilityBackdrop.removeEventListener("click", onBackdrop);
+      }
       documentObject.removeEventListener("focusin", onFocusIn);
       documentObject.removeEventListener("keydown", onKeyDown);
     },
@@ -1776,7 +1932,11 @@ export function traceRailState(trace, dataset) {
 
 export function filterTraces(traces, query) {
   const safeTraces = Array.isArray(traces) ? traces : [];
-  const tokens = String(query ?? "").trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const tokens = String(query ?? "")
+    .trim()
+    .toLocaleLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
   if (tokens.length === 0) return [...safeTraces];
   return safeTraces.filter((trace) => {
     const haystack = [
@@ -1795,13 +1955,12 @@ export function filterTraces(traces, query) {
       trace?.capture,
       trace?.capture_label,
       trace?.capture_mode,
-    ].filter(Boolean).join(" ").toLocaleLowerCase();
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase();
     return tokens.every((token) => haystack.includes(token));
   });
-}
-
-function traceOptionDomId(traceId) {
-  return `trace-option-${encodeURIComponent(String(traceId)).replaceAll("%", "_")}`;
 }
 
 export function renderTraceRail({
@@ -1809,7 +1968,6 @@ export function renderTraceRail({
   track,
   traces,
   selectedId,
-  activeId = null,
   evidenceByCacheKey,
   onSelect,
   emptyMessage = "No .jsonl or .ndjson traces in this directory.",
@@ -1839,14 +1997,11 @@ export function renderTraceRail({
     const railState = traceRailState(trace, dataset);
     const button = documentObject.createElement("button");
     button.type = "button";
-    button.id = traceOptionDomId(trace.id);
     button.className = "trace-toggle";
-    button.tabIndex = -1;
     button.setAttribute("role", "option");
     button.setAttribute("aria-selected", String(trace.id === selectedId));
     button.setAttribute("aria-pressed", String(trace.id === selectedId));
     button.setAttribute("data-trace-id", trace.id);
-    button.setAttribute("data-active", String(trace.id === activeId));
     button.setAttribute(
       "aria-label",
       `${traceLabel(trace)}. Model ${railState.model}. Mode ${railState.mode}. ` +
@@ -1984,7 +2139,9 @@ function errorDescription(error) {
   if (error instanceof TypeError) {
     return "The registry or trace response could not be read.";
   }
-  return error instanceof Error ? error.message : "The trace could not be read.";
+  return error instanceof Error
+    ? error.message
+    : "The trace could not be read.";
 }
 
 export async function bootstrap({
@@ -1996,6 +2153,15 @@ export async function bootstrap({
   windowObject = documentObject?.defaultView ?? globalThis.window,
   RendererClass = TimelineRenderer,
   RangeNavigatorClass = RangeNavigator,
+  exportFormatSelector = null,
+  exportSheet = null,
+  helpSheet = null,
+  launchSelector = null,
+  progressIndicator = null,
+  rangeModeSelector = null,
+  reactDefinitions = false,
+  runSelector = null,
+  tableTabs = null,
   signal,
 } = {}) {
   if (!documentObject || !windowObject) {
@@ -2029,19 +2195,62 @@ export async function bootstrap({
     if (!element) throw new Error(`Missing required UI hook #${id}`);
     return element;
   };
+  const externalRunSelector =
+    runSelector && typeof runSelector.render === "function"
+      ? runSelector
+      : null;
+  const externalLaunchSelector =
+    launchSelector && typeof launchSelector.render === "function"
+      ? launchSelector
+      : null;
+  const externalProgressIndicator =
+    progressIndicator && typeof progressIndicator.render === "function"
+      ? progressIndicator
+      : null;
+  const externalTableTabs =
+    tableTabs && typeof tableTabs.render === "function" ? tableTabs : null;
+  const externalHelpSheet =
+    helpSheet && typeof helpSheet.render === "function" ? helpSheet : null;
+  const externalExportSheet =
+    exportSheet && typeof exportSheet.render === "function"
+      ? exportSheet
+      : null;
+  const externalRangeModeSelector =
+    rangeModeSelector && typeof rangeModeSelector.render === "function"
+      ? rangeModeSelector
+      : null;
+  const externalExportFormatSelector =
+    exportFormatSelector && typeof exportFormatSelector.render === "function"
+      ? exportFormatSelector
+      : null;
   const elements = {
     directory: byId("directory-identity"),
     refresh: byId("refresh-button"),
     theme: byId("theme-toggle"),
     rail: byId("trace-rail"),
-    traceSearch: byId("trace-search"),
-    track: byId("trace-track"),
+    traceSelectorButton: externalRunSelector
+      ? documentObject.getElementById("trace-selector-button")
+      : byId("trace-selector-button"),
+    traceSelectorLabel: externalRunSelector
+      ? documentObject.getElementById("trace-selector-label")
+      : byId("trace-selector-label"),
+    traceMenu: externalRunSelector
+      ? documentObject.getElementById("trace-menu")
+      : byId("trace-menu"),
+    traceSearch: externalRunSelector
+      ? documentObject.getElementById("trace-search")
+      : byId("trace-search"),
+    track: externalRunSelector
+      ? documentObject.getElementById("trace-track")
+      : byId("trace-track"),
     selectedTraceSummary: byId("selected-trace-summary"),
     provenance: byId("provenance-strip"),
     health: byId("health-strip"),
     status: byId("trace-status"),
     windowControl: byId("window-control"),
-    windowSelect: byId("window-select"),
+    windowSelect: externalLaunchSelector
+      ? documentObject.getElementById("window-select")
+      : byId("window-select"),
     metricScopeLabel: byId("metric-scope-label"),
     metrics: byId("metric-grid"),
     canvas: byId("timeline"),
@@ -2051,7 +2260,9 @@ export async function bootstrap({
     samplingNote: byId("timeline-sampling-note"),
     loading: byId("loading-state"),
     loadingFilename: byId("loading-filename"),
-    progress: byId("loading-progress"),
+    progress: externalProgressIndicator
+      ? documentObject.getElementById("loading-progress")
+      : byId("loading-progress"),
     progressReadout: byId("loading-readout"),
     empty: byId("empty-state"),
     error: byId("error-state"),
@@ -2097,33 +2308,62 @@ export async function bootstrap({
       ["waitNs", byId("wait-sort-duration")],
       ["evidence", byId("wait-sort-evidence")],
     ],
+    kernelTableScroller: byId("kernel-table-scroller"),
+    kernelScrollHint: byId("kernel-scroll-hint"),
+    waitTableScroller: byId("wait-table-scroller"),
+    waitScrollHint: byId("wait-scroll-hint"),
     manualButton: byId("field-manual-button"),
-    utilityBackdrop: byId("utility-backdrop"),
+    utilityBackdrop:
+      externalHelpSheet || externalExportSheet
+        ? documentObject.getElementById("utility-backdrop")
+        : byId("utility-backdrop"),
     manualDrawer: byId("field-manual-drawer"),
     manualClose: byId("field-manual-close"),
     manualSearch: byId("manual-search"),
     manualSearchStatus: byId("manual-search-status"),
     manualQuickStart: byId("manual-quick-start"),
     manualGlossaryList: byId("manual-glossary-list"),
-    definitionTooltip: byId("definition-tooltip"),
-    definitionTitle: byId("definition-tooltip-title"),
-    definitionBody: byId("definition-tooltip-body"),
-    definitionEvidence: byId("definition-tooltip-evidence"),
-    definitionMethod: byId("definition-tooltip-method"),
-    definitionLimitation: byId("definition-tooltip-limitation"),
-    definitionPopover: byId("definition-popover"),
-    definitionPopoverTitle: byId("definition-popover-title"),
-    definitionPopoverBody: byId("definition-popover-body"),
-    definitionPopoverEvidence: byId("definition-popover-evidence"),
-    definitionPopoverMethod: byId("definition-popover-method"),
-    definitionPopoverLimitation: byId("definition-popover-limitation"),
-    definitionPopoverClose: byId("definition-popover-close"),
-    definitionPopoverManual: byId("definition-popover-manual"),
+    definitionTooltip: reactDefinitions ? null : byId("definition-tooltip"),
+    definitionTitle: reactDefinitions ? null : byId("definition-tooltip-title"),
+    definitionBody: reactDefinitions ? null : byId("definition-tooltip-body"),
+    definitionEvidence: reactDefinitions
+      ? null
+      : byId("definition-tooltip-evidence"),
+    definitionMethod: reactDefinitions
+      ? null
+      : byId("definition-tooltip-method"),
+    definitionLimitation: reactDefinitions
+      ? null
+      : byId("definition-tooltip-limitation"),
+    definitionPopover: reactDefinitions ? null : byId("definition-popover"),
+    definitionPopoverTitle: reactDefinitions
+      ? null
+      : byId("definition-popover-title"),
+    definitionPopoverBody: reactDefinitions
+      ? null
+      : byId("definition-popover-body"),
+    definitionPopoverEvidence: reactDefinitions
+      ? null
+      : byId("definition-popover-evidence"),
+    definitionPopoverMethod: reactDefinitions
+      ? null
+      : byId("definition-popover-method"),
+    definitionPopoverLimitation: reactDefinitions
+      ? null
+      : byId("definition-popover-limitation"),
+    definitionPopoverClose: reactDefinitions
+      ? null
+      : byId("definition-popover-close"),
+    definitionPopoverManual: reactDefinitions
+      ? null
+      : byId("definition-popover-manual"),
     exportButton: byId("ai-export-button"),
     exportDrawer: byId("ai-export-drawer"),
     exportClose: byId("ai-export-close"),
     exportRefresh: byId("ai-export-refresh"),
-    exportFormat: byId("ai-export-format"),
+    exportFormat: externalExportFormatSelector
+      ? documentObject.getElementById("ai-export-format")
+      : byId("ai-export-format"),
     exportScope: byId("ai-export-scope"),
     exportPreview: byId("ai-export-preview"),
     copyExport: byId("copy-export"),
@@ -2167,13 +2407,10 @@ export async function bootstrap({
       wait: { key: null, direction: "ascending" },
     },
   };
-  const runSearch = {
-    open: false,
-    query: "",
-    activeId: null,
-  };
   const helpController = createHelpController({
     documentObject,
+    drawerAdapter: externalHelpSheet,
+    externalDefinitions: reactDefinitions,
     windowObject,
     elements,
   });
@@ -2231,6 +2468,8 @@ export async function bootstrap({
   });
   const exportController = createAiExportController({
     documentObject,
+    drawerAdapter: externalExportSheet,
+    formatSelector: externalExportFormatSelector,
     windowObject,
     elements,
     renderer,
@@ -2286,11 +2525,7 @@ export async function bootstrap({
   }
 
   function updateUrl(traceId, windowIndex, rangeState = null) {
-    let url = selectionUrl(
-      windowObject.location.href,
-      traceId,
-      windowIndex,
-    );
+    let url = selectionUrl(windowObject.location.href, traceId, windowIndex);
     if (rangeState) {
       url = rangeSelectionUrl(url, rangeState);
     } else {
@@ -2343,20 +2578,34 @@ export async function bootstrap({
 
   function updateRangeModeControls() {
     const analyzeAvailable = analysisAvailable();
-    elements.rangeModeView.setAttribute(
-      "aria-pressed",
-      String(state.rangeMode === "view"),
-    );
-    elements.rangeModeAnalyze.setAttribute(
-      "aria-pressed",
-      String(state.rangeMode === "analyze"),
-    );
-    elements.rangeModeAnalyze.disabled = !analyzeAvailable;
-    elements.rangeModeAnalyze.textContent = analyzeAvailable
+    const analyzeLabel = analyzeAvailable
       ? "Analyze"
       : state.analysisReady || state.analysisError
         ? "Analyze unavailable"
         : "Preparing exact analysis";
+    if (externalRangeModeSelector) {
+      externalRangeModeSelector.render({
+        value: state.rangeMode,
+        analyzeDisabled: !analyzeAvailable,
+        analyzeLabel,
+        onSelect: (value) => {
+          state.pendingRangeInput = null;
+          if (value === "analyze") switchToAnalyze();
+          else switchToView();
+        },
+      });
+    } else {
+      elements.rangeModeView.setAttribute(
+        "aria-pressed",
+        String(state.rangeMode === "view"),
+      );
+      elements.rangeModeAnalyze.setAttribute(
+        "aria-pressed",
+        String(state.rangeMode === "analyze"),
+      );
+      elements.rangeModeAnalyze.disabled = !analyzeAvailable;
+      elements.rangeModeAnalyze.textContent = analyzeLabel;
+    }
     elements.metricScopeLabel.textContent =
       state.rangeMode === "analyze" ? "Selected range" : "Launch totals";
   }
@@ -2376,12 +2625,9 @@ export async function bootstrap({
       }
       return;
     }
-    elements.rangeStartReadout.textContent =
-      `Start ${formatDuration(range.startNs - bounds.startNs)}`;
-    elements.rangeEndReadout.textContent =
-      `End ${formatDuration(range.endNs - bounds.startNs)}`;
-    elements.rangeDurationReadout.textContent =
-      `Duration ${formatDuration(range.endNs - range.startNs)}`;
+    elements.rangeStartReadout.textContent = `Start ${formatDuration(range.startNs - bounds.startNs)}`;
+    elements.rangeEndReadout.textContent = `End ${formatDuration(range.endNs - bounds.startNs)}`;
+    elements.rangeDurationReadout.textContent = `Duration ${formatDuration(range.endNs - range.startNs)}`;
     if (updateStatus) {
       elements.rangeStatus.textContent = state.rangePending
         ? `Analyzing ${formatDuration(range.startNs - bounds.startNs)} – ` +
@@ -2450,10 +2696,11 @@ export async function bootstrap({
     {
       preserveInspector = false,
       preservePointerDrag = false,
+      viewport: requestedViewport = null,
     } = {},
   ) {
     const bounds = selectedLaunchBounds();
-    const viewport = state.selectedRange ?? bounds;
+    const viewport = requestedViewport ?? state.selectedRange ?? bounds;
     const pinned = preserveInspector ? state.inspectorPayload : null;
     const interactionIdentity =
       typeof state.currentTraceId === "string" &&
@@ -2596,10 +2843,7 @@ export async function bootstrap({
     scheduleRangeAnalysis(state.selectedRange, committed);
   }
 
-  function handleTimelineViewport(
-    viewport,
-    { committed = false } = {},
-  ) {
+  function handleTimelineViewport(viewport, { committed = false } = {}) {
     const bounds = selectedLaunchBounds();
     if (!bounds) return;
     state.pendingRangeInput = null;
@@ -2623,174 +2867,105 @@ export async function bootstrap({
     }
   }
 
-  function selectedRunLabel() {
-    const trace = state.traces.find(
-      (item) => item?.id === state.currentTraceId,
-    );
-    return trace ? traceLabel(trace) : "";
-  }
-
-  function visibleRunSearchTraces() {
-    return filterTraces(
-      state.traces,
-      runSearch.open ? runSearch.query : "",
-    );
-  }
-
-  function synchronizeRunSearchActive(visibleTraces) {
-    if (!runSearch.open || visibleTraces.length === 0) {
-      runSearch.activeId = null;
-      return;
+  function closeTraceMenu({ restoreFocus = false } = {}) {
+    elements.traceMenu.hidden = true;
+    elements.traceSelectorButton.setAttribute("aria-expanded", "false");
+    if (restoreFocus) {
+      elements.traceSelectorButton.focus?.({ preventScroll: true });
     }
-    if (visibleTraces.some((trace) => trace?.id === runSearch.activeId)) {
-      return;
-    }
-    const selectedVisible = visibleTraces.find(
-      (trace) => trace?.id === state.currentTraceId,
-    );
-    runSearch.activeId = selectedVisible?.id ?? visibleTraces[0]?.id ?? null;
   }
 
-  function renderRegistry({ scrollActive = false } = {}) {
+  function openTraceMenu() {
+    if (elements.traceSelectorButton.disabled) return;
+    elements.traceMenu.hidden = false;
+    elements.traceSelectorButton.setAttribute("aria-expanded", "true");
+    elements.traceSearch.value = "";
+    renderRegistry();
+    elements.traceSearch.focus?.({ preventScroll: true });
+  }
+
+  function renderRegistry() {
     elements.rail.setAttribute("aria-busy", "false");
     const selectedTrace = state.traces.find(
       (trace) => trace?.id === state.currentTraceId,
     );
-    if (state.traces.length === 0) {
-      runSearch.open = false;
-      runSearch.query = "";
-      runSearch.activeId = null;
-    }
-    if (!runSearch.open) {
-      elements.traceSearch.value = selectedTrace
-        ? traceLabel(selectedTrace)
-        : "";
-    }
-    elements.track.hidden = !runSearch.open;
-    const visibleTraces = visibleRunSearchTraces();
-    synchronizeRunSearchActive(visibleTraces);
-    elements.traceSearch.disabled = state.traces.length === 0;
-    elements.traceSearch.setAttribute(
-      "aria-expanded",
-      String(runSearch.open),
-    );
-    if (runSearch.activeId === null) {
-      elements.traceSearch.removeAttribute("aria-activedescendant");
+    const selectRun = (id) => {
+      if (state.traces.some((item) => item?.id === id)) {
+        void selectTrace(id, {
+          requestedWindow: 0,
+          recordSelection: true,
+        });
+      }
+    };
+    if (externalRunSelector) {
+      externalRunSelector.render({
+        runs: state.traces,
+        selectedId: state.currentTraceId,
+        onSelect: selectRun,
+      });
     } else {
-      elements.traceSearch.setAttribute(
-        "aria-activedescendant",
-        traceOptionDomId(runSearch.activeId),
+      const visibleTraces = filterTraces(
+        state.traces,
+        elements.traceSearch.value,
       );
-    }
-    const buttons = renderTraceRail({
-      documentObject,
-      track: elements.track,
-      traces: visibleTraces,
-      selectedId: state.currentTraceId,
-      activeId: runSearch.activeId,
-      evidenceByCacheKey: state.evidenceByCacheKey,
-      emptyMessage:
-        state.traces.length === 0
-          ? "No .jsonl or .ndjson traces in this directory."
-          : "No runs match this search.",
-      onSelect(id) {
-        commitRunSearch(id);
-      },
-    });
-    if (scrollActive && runSearch.activeId !== null) {
-      buttons
-        .find((button) =>
-          button.getAttribute("data-trace-id") === runSearch.activeId)
-        ?.scrollIntoView?.({ block: "nearest" });
+      elements.traceSelectorButton.disabled = state.traces.length === 0;
+      renderTraceRail({
+        documentObject,
+        track: elements.track,
+        traces: visibleTraces,
+        selectedId: state.currentTraceId,
+        evidenceByCacheKey: state.evidenceByCacheKey,
+        emptyMessage:
+          state.traces.length === 0
+            ? "No .jsonl or .ndjson traces in this directory."
+            : "No runs match this search.",
+        onSelect(id) {
+          const trace = state.traces.find((item) => item?.id === id);
+          elements.traceSelectorLabel.textContent = trace
+            ? traceLabel(trace)
+            : "Choose a run";
+          closeTraceMenu();
+          selectRun(id);
+        },
+      });
     }
     if (selectedTrace) {
+      if (!externalRunSelector) {
+        elements.traceSelectorLabel.textContent = traceLabel(selectedTrace);
+      }
       const railState = traceRailState(
         selectedTrace,
         state.evidenceByCacheKey.get(traceCacheKey(selectedTrace)),
       );
-      elements.selectedTraceSummary.textContent =
-        `${railState.model} · ${railState.mode} · ${railState.evidence}`;
+      elements.selectedTraceSummary.textContent = `${railState.model} · ${railState.mode} · ${railState.evidence}`;
     } else {
+      if (!externalRunSelector) {
+        elements.traceSelectorLabel.textContent =
+          state.traces.length === 0 ? "No runs available" : "Choose a run";
+      }
       elements.selectedTraceSummary.textContent =
         state.traces.length === 0 ? "No runs available" : "Choose a run";
     }
   }
 
-  function openRunSearch() {
-    if (state.traces.length === 0 || state.destroyed) return;
-    if (!runSearch.open) {
-      runSearch.open = true;
-      runSearch.query = "";
-      runSearch.activeId = state.currentTraceId;
-      renderRegistry();
-    }
-    elements.traceSearch.select?.();
-  }
-
-  function closeRunSearch({ restoreLabel = true } = {}) {
-    if (!runSearch.open && !restoreLabel) return;
-    runSearch.open = false;
-    runSearch.query = "";
-    runSearch.activeId = null;
-    if (restoreLabel) {
-      elements.traceSearch.value = selectedRunLabel();
-    }
-    renderRegistry();
-  }
-
-  function setRunSearchQuery(query) {
-    if (state.traces.length === 0 || state.destroyed) return;
-    runSearch.open = true;
-    runSearch.query = String(query ?? "");
-    renderRegistry();
-  }
-
-  function moveRunSearchActive(direction) {
-    if (!runSearch.open) openRunSearch();
-    const visibleTraces = visibleRunSearchTraces();
-    if (visibleTraces.length === 0) {
-      runSearch.activeId = null;
-      renderRegistry();
-      return;
-    }
-    const activeIndex = visibleTraces.findIndex(
-      (trace) => trace?.id === runSearch.activeId,
-    );
-    const fallbackIndex = direction < 0 ? visibleTraces.length - 1 : 0;
-    const nextIndex =
-      activeIndex < 0
-        ? fallbackIndex
-        : (activeIndex + direction + visibleTraces.length) %
-          visibleTraces.length;
-    runSearch.activeId = visibleTraces[nextIndex].id;
-    renderRegistry({ scrollActive: true });
-  }
-
-  function commitRunSearch(id = runSearch.activeId) {
-    const trace = state.traces.find((item) => item?.id === id);
-    if (!trace || state.destroyed) return;
-    runSearch.open = false;
-    runSearch.query = "";
-    runSearch.activeId = null;
-    elements.track.hidden = true;
-    elements.traceSearch.value = traceLabel(trace);
-    elements.traceSearch.setAttribute("aria-expanded", "false");
-    elements.traceSearch.removeAttribute("aria-activedescendant");
-    void selectTrace(id, {
-      requestedWindow: 0,
-      recordSelection: true,
-    });
-  }
-
   function renderProgress(progress, fallbackTotalBytes) {
     const display = progressState(progress, {
       fallbackTotalBytes,
-      previousMax: elements.progress.max,
+      previousMax: externalProgressIndicator
+        ? undefined
+        : elements.progress.max,
     });
-    elements.progress.max = display.max;
-    elements.progress.value = display.value;
-    elements.progress.textContent =
-      `${Math.round((display.value / display.max) * 100)}%`;
+    const percent = Math.round((display.value / display.max) * 100);
+    if (externalProgressIndicator) {
+      externalProgressIndicator.render({
+        value: percent,
+        text: `${percent}%`,
+      });
+    } else {
+      elements.progress.max = display.max;
+      elements.progress.value = display.value;
+      elements.progress.textContent = `${percent}%`;
+    }
     elements.progressReadout.textContent = display.readout;
   }
 
@@ -2834,7 +3009,6 @@ export async function bootstrap({
     if (href) {
       const link = documentObject.createElement("a");
       link.className = "provenance-link";
-      link.href = href;
       link.setAttribute("href", href);
       link.setAttribute("target", "_blank");
       link.setAttribute("rel", "noopener noreferrer");
@@ -3009,8 +3183,11 @@ export async function bootstrap({
       button.parentElement?.setAttribute("aria-sort", direction);
       const indicator = button.querySelector?.(".sort-indicator");
       if (indicator) {
-        indicator.textContent =
-          !active ? "↕" : sort.direction === "ascending" ? "↑" : "↓";
+        indicator.textContent = !active
+          ? "↕"
+          : sort.direction === "ascending"
+            ? "↑"
+            : "↓";
       }
     }
   }
@@ -3032,6 +3209,7 @@ export async function bootstrap({
         appendTableCell(row, "td", "—");
       }
       elements.kernelBody.append(row);
+      updateTableScrollHints();
       return;
     }
     for (const item of rows) {
@@ -3043,6 +3221,7 @@ export async function bootstrap({
       appendTableCell(row, "td", item.bufferBinds);
       elements.kernelBody.append(row);
     }
+    updateTableScrollHints();
   }
 
   function renderWaitTable(scope) {
@@ -3065,6 +3244,7 @@ export async function bootstrap({
         appendTableCell(row, "td", "—");
       }
       elements.waitBody.append(row);
+      updateTableScrollHints();
       return;
     }
     for (const item of rows) {
@@ -3078,11 +3258,7 @@ export async function bootstrap({
       );
       appendTableCell(row, "td", item.count);
       appendTableCell(row, "td", formatDuration(item.waitNs));
-      const evidenceCell = appendTableCell(
-        row,
-        "td",
-        item.evidence,
-      );
+      const evidenceCell = appendTableCell(row, "td", item.evidence);
       appendTermTrigger(
         documentObject,
         evidenceCell,
@@ -3091,6 +3267,16 @@ export async function bootstrap({
       );
       elements.waitBody.append(row);
     }
+    updateTableScrollHints();
+  }
+
+  function updateTableScrollHints() {
+    elements.kernelScrollHint.hidden = !tableNeedsHorizontalScroll(
+      elements.kernelTableScroller,
+    );
+    elements.waitScrollHint.hidden = !tableNeedsHorizontalScroll(
+      elements.waitTableScroller,
+    );
   }
 
   function renderTablePlaceholder(body, columnCount, message) {
@@ -3108,12 +3294,7 @@ export async function bootstrap({
     const row = documentObject.createElement("div");
     const term = appendTextElement(documentObject, row, "dt", label);
     term.setAttribute("data-provenance", provenance);
-    appendTermTrigger(
-      documentObject,
-      term,
-      termIdForLabel(label),
-      label,
-    );
+    appendTermTrigger(documentObject, term, termIdForLabel(label), label);
     const description = documentObject.createElement("dd");
     description.textContent = String(value);
     const tag = appendTextElement(
@@ -3140,9 +3321,9 @@ export async function bootstrap({
         ? item?.commandBufferIndex
         : item?.commandBufferIndex;
     return Number.isFinite(index)
-      ? state.activeScope?.commandBuffers?.find(
+      ? (state.activeScope?.commandBuffers?.find(
           (commandBuffer) => commandBuffer.commandBufferIndex === index,
-        ) ?? null
+        ) ?? null)
       : null;
   }
 
@@ -3178,16 +3359,12 @@ export async function bootstrap({
     }
     const commandBuffer = linkedCommandBuffer(payload);
     if (commandBuffer) {
-      const dispatchCount = state.activeScope?.dispatches?.filter(
-        (dispatch) =>
-          dispatch.commandBufferIndex === commandBuffer.commandBufferIndex,
-      ).length ?? 0;
-      inspectorValue(
-        readout,
-        "linked dispatches",
-        dispatchCount,
-        "derived",
-      );
+      const dispatchCount =
+        state.activeScope?.dispatches?.filter(
+          (dispatch) =>
+            dispatch.commandBufferIndex === commandBuffer.commandBufferIndex,
+        ).length ?? 0;
+      inspectorValue(readout, "linked dispatches", dispatchCount, "derived");
       if (
         Number.isFinite(commandBuffer.encodeStartNs) &&
         Number.isFinite(commandBuffer.encodeEndNs)
@@ -3260,8 +3437,17 @@ export async function bootstrap({
     state.inspectorPayload = null;
     exportController.setAvailable(false);
     elements.windowControl.hidden = true;
-    elements.windowSelect.disabled = true;
-    elements.windowSelect.replaceChildren();
+    if (externalLaunchSelector) {
+      externalLaunchSelector.render({
+        options: [],
+        value: null,
+        disabled: true,
+        onSelect: () => {},
+      });
+    } else {
+      elements.windowSelect.disabled = true;
+      elements.windowSelect.replaceChildren();
+    }
     elements.rangeNavigator.hidden = true;
     rangeNavigator.setDisabled(true);
     elements.rangeOmissions.hidden = true;
@@ -3272,11 +3458,7 @@ export async function bootstrap({
     renderMetrics(null, true);
     elements.kernelState.textContent = "Awaiting rows";
     elements.waitState.textContent = "Awaiting rows";
-    renderTablePlaceholder(
-      elements.kernelBody,
-      5,
-      "Waiting for dispatch rows",
-    );
+    renderTablePlaceholder(elements.kernelBody, 5, "Waiting for dispatch rows");
     renderTablePlaceholder(elements.waitBody, 4, "Waiting for wait rows");
     renderInspector(null);
     renderer.setDataset({});
@@ -3302,28 +3484,50 @@ export async function bootstrap({
     state.confirmedRange = null;
     state.rangeMode = "view";
 
-    elements.windowSelect.replaceChildren();
     const windows = dataset.launchWindows ?? [];
-    windows.forEach((window, index) => {
-      const option = documentObject.createElement("option");
-      option.value = String(index);
-      option.textContent =
-        `Launch ${index + 1} · ${formatDuration(window.summary?.wallSpanNs)}`;
-      option.selected = index === selectedIndex;
-      elements.windowSelect.append(option);
-    });
+    const options = windows.map((window, index) => ({
+      value: String(index),
+      label: `Launch ${index + 1} · ${formatDuration(window.summary?.wallSpanNs)}`,
+    }));
+    if (externalLaunchSelector) {
+      externalLaunchSelector.render({
+        options,
+        value: String(selectedIndex),
+        disabled: windows.length <= 1,
+        onSelect: (value) => {
+          state.pendingRangeInput = null;
+          renderSelectedWindow(Number.parseInt(value, 10));
+        },
+      });
+    } else {
+      elements.windowSelect.replaceChildren();
+      options.forEach((optionData, index) => {
+        const option = documentObject.createElement("option");
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        option.selected = index === selectedIndex;
+        elements.windowSelect.append(option);
+      });
+      elements.windowSelect.disabled = windows.length <= 1;
+    }
     elements.windowControl.hidden = windows.length <= 1;
-    elements.windowSelect.disabled = windows.length <= 1;
 
     const bounds = selectedLaunchBounds();
     const overview = scope?.overview;
+    const rangeUrl = new URL(requestedRangeInput ?? "http://localhost/");
+    const hasExplicitRange =
+      rangeUrl.searchParams.has("range") &&
+      rangeUrl.searchParams.has("from") &&
+      rangeUrl.searchParams.has("to");
     let requestedMode = "view";
     if (bounds && overview) {
       const selection = parseRangeSelection(
         requestedRangeInput ?? "http://localhost/",
         bounds,
       );
-      state.selectedRange = selection.range;
+      state.selectedRange = hasExplicitRange
+        ? selection.range
+        : initialTimelineViewport(scope, bounds);
       requestedMode = selection.mode;
       elements.rangeNavigator.hidden = false;
       rangeNavigator.setDisabled(false);
@@ -3342,9 +3546,7 @@ export async function bootstrap({
     renderScopeEvidence(scope);
     renderCanvasScope(scope);
     updateRangeReadouts();
-    exportController.setAvailable(
-      selectedLaunchExportContext(state) !== null,
-    );
+    exportController.setAvailable(selectedLaunchExportContext(state) !== null);
     elements.plotFrame.classList.remove("is-loading");
     elements.timelinePlaceholder.hidden = true;
     setHidden(elements.loading, true);
@@ -3366,8 +3568,7 @@ export async function bootstrap({
       requestedMode === "analyze" &&
       scope?.rangeAnalysis?.available === false
     ) {
-      elements.rangeStatus.textContent =
-        `Analyze unavailable: ${scope.rangeAnalysis.reason ?? "missing timing data"}`;
+      elements.rangeStatus.textContent = `Analyze unavailable: ${scope.rangeAnalysis.reason ?? "missing timing data"}`;
     }
   }
 
@@ -3405,10 +3606,8 @@ export async function bootstrap({
     if (
       recordSelection &&
       id === state.currentTraceId &&
-      (
-        state.currentDataset ||
-        (state.analysisSession && state.analysisError === null)
-      )
+      (state.currentDataset ||
+        (state.analysisSession && state.analysisError === null))
     ) {
       return;
     }
@@ -3474,8 +3673,7 @@ export async function bootstrap({
                 errorMessage: `Exact analysis failed: ${errorDescription(error)}`,
               });
             } else if (state.currentDataset) {
-              elements.rangeStatus.textContent =
-                `Exact analysis unavailable: ${errorDescription(error)}`;
+              elements.rangeStatus.textContent = `Exact analysis unavailable: ${errorDescription(error)}`;
             }
           });
         },
@@ -3509,11 +3707,7 @@ export async function bootstrap({
       }
       const currentBounds = selectedLaunchBounds();
       let restoredRangeInput = state.pendingRangeInput;
-      if (
-        restoredRangeInput === null &&
-        currentBounds &&
-        state.selectedRange
-      ) {
+      if (restoredRangeInput === null && currentBounds && state.selectedRange) {
         restoredRangeInput = rangeSelectionUrl(windowObject.location.href, {
           mode: state.rangeMode,
           bounds: currentBounds,
@@ -3540,10 +3734,7 @@ export async function bootstrap({
               state.selectedRange = selection.range;
               rangeNavigator.setRange(selection.range);
               renderer.setViewport(selection.range, { notify: false });
-              if (
-                selection.mode === "analyze" &&
-                analysisAvailable()
-              ) {
+              if (selection.mode === "analyze" && analysisAvailable()) {
                 state.rangeMode = "analyze";
               }
             }
@@ -3589,8 +3780,7 @@ export async function bootstrap({
         return;
       }
       if ((cached || preserveCurrentView) && state.currentDataset) {
-        const unavailableMessage =
-          `Exact analysis unavailable: ${errorDescription(error)}`;
+        const unavailableMessage = `Exact analysis unavailable: ${errorDescription(error)}`;
         if (state.rangeMode === "analyze") {
           switchToView({ errorMessage: unavailableMessage });
         } else {
@@ -3603,7 +3793,9 @@ export async function bootstrap({
       }
       publishIfCurrent(coordinator, token, () => {
         showError(
-          error?.name === "AbortError" ? "Loading aborted" : "Trace unavailable",
+          error?.name === "AbortError"
+            ? "Loading aborted"
+            : "Trace unavailable",
           errorDescription(error),
         );
       });
@@ -3625,7 +3817,10 @@ export async function bootstrap({
         baseUrl: requestBaseUrl,
       });
       const { registry } = loadedRegistry;
-      if (!registrySelection.isCurrentRefresh(refreshToken) || state.destroyed) {
+      if (
+        !registrySelection.isCurrentRefresh(refreshToken) ||
+        state.destroyed
+      ) {
         return;
       }
       const traces = Array.isArray(registry?.traces) ? registry.traces : [];
@@ -3671,8 +3866,8 @@ export async function bootstrap({
           requestedWindow !== null && nextId === requestedId
             ? requestedWindow
             : nextId === refreshToken.selectedId
-            ? state.currentWindowIndex ?? 0
-            : 0,
+              ? (state.currentWindowIndex ?? 0)
+              : 0,
         requestedRangeInput:
           requestedRangeInput !== null && nextId === requestedId
             ? requestedRangeInput
@@ -3680,7 +3875,10 @@ export async function bootstrap({
         recordSelection: false,
       });
     } catch (error) {
-      if (!registrySelection.isCurrentRefresh(refreshToken) || state.destroyed) {
+      if (
+        !registrySelection.isCurrentRefresh(refreshToken) ||
+        state.destroyed
+      ) {
         return;
       }
       showError("Registry unavailable", errorDescription(error));
@@ -3726,7 +3924,10 @@ export async function bootstrap({
   const handleFit = () => {
     const bounds = selectedLaunchBounds();
     if (!bounds) return;
-    const range = renderer.fit(bounds, false);
+    const range = renderer.fit(
+      initialTimelineViewport(state.launchScope, bounds),
+      false,
+    );
     rangeNavigator.setRange(range);
     handleNavigatorRange(range, true);
   };
@@ -3736,66 +3937,56 @@ export async function bootstrap({
   const handleZoomOut = () => {
     renderer.handleKeyDown({ key: "-", preventDefault() {} });
   };
-  const handleRunSearchFocus = () => {
-    openRunSearch();
-  };
-  const handleRunSearchPointerDown = (event) => {
-    if (runSearch.open || elements.traceSearch.disabled) return;
-    event.preventDefault?.();
-    elements.traceSearch.focus?.({ preventScroll: true });
-    openRunSearch();
-  };
-  const handleRunSearchInput = () => {
-    setRunSearchQuery(elements.traceSearch.value);
-  };
-  const handleRunSearchKeydown = (event) => {
-    switch (event.key) {
-      case "ArrowDown":
-      case "ArrowUp":
-        event.preventDefault?.();
-        moveRunSearchActive(event.key === "ArrowDown" ? 1 : -1);
-        break;
-      case "Enter":
-        if (runSearch.open && runSearch.activeId !== null) {
-          event.preventDefault?.();
-          commitRunSearch();
-        }
-        break;
-      case "Escape":
-        if (runSearch.open) {
-          event.preventDefault?.();
-          closeRunSearch();
-        }
-        break;
-      case "Tab":
-        if (runSearch.open) closeRunSearch();
-        break;
-      default:
-        break;
-    }
-  };
-  const handleRunSearchOutsidePointer = (event) => {
-    if (
-      !runSearch.open ||
-      event.target === elements.traceSearch ||
-      elements.track.contains?.(event.target)
-    ) {
+  const handleRailKeydown = (event) => {
+    if (event.key === "Escape" && !elements.traceMenu.hidden) {
+      closeTraceMenu({ restoreFocus: true });
+      event.preventDefault?.();
       return;
     }
-    closeRunSearch();
+    handleTraceRailKey({
+      documentObject,
+      track: elements.track,
+      event,
+    });
   };
+  const handleTraceSelector = () => {
+    if (elements.traceMenu.hidden) {
+      openTraceMenu();
+    } else {
+      closeTraceMenu({ restoreFocus: true });
+    }
+  };
+  const handleTraceSearch = () => {
+    renderRegistry();
+  };
+  const handleOutsideTraceMenu = (event) => {
+    if (elements.traceMenu.hidden || elements.rail.contains?.(event.target)) {
+      return;
+    }
+    closeTraceMenu();
+  };
+  const handleTableResize = () => updateTableScrollHints();
   const selectTableTab = (tab, { focus = false } = {}) => {
     const kernelActive = tab !== "wait";
     state.tableTab = kernelActive ? "kernel" : "wait";
-    elements.kernelTab.setAttribute("aria-selected", String(kernelActive));
-    elements.waitTab.setAttribute("aria-selected", String(!kernelActive));
-    elements.kernelTab.tabIndex = kernelActive ? 0 : -1;
-    elements.waitTab.tabIndex = kernelActive ? -1 : 0;
-    elements.kernelPanel.hidden = !kernelActive;
-    elements.waitPanel.hidden = kernelActive;
+    if (externalTableTabs) {
+      externalTableTabs.render({
+        value: state.tableTab,
+        onSelect: (value) => selectTableTab(value),
+      });
+    } else {
+      elements.kernelTab.setAttribute("aria-selected", String(kernelActive));
+      elements.waitTab.setAttribute("aria-selected", String(!kernelActive));
+      elements.kernelTab.tabIndex = kernelActive ? 0 : -1;
+      elements.waitTab.tabIndex = kernelActive ? -1 : 0;
+      elements.kernelPanel.hidden = !kernelActive;
+      elements.waitPanel.hidden = kernelActive;
+    }
+    updateTableScrollHints();
     if (focus) {
-      (kernelActive ? elements.kernelTab : elements.waitTab)
-        .focus?.({ preventScroll: true });
+      (kernelActive ? elements.kernelTab : elements.waitTab).focus?.({
+        preventScroll: true,
+      });
     }
   };
   const handleKernelTab = () => selectTableTab("kernel");
@@ -3830,24 +4021,29 @@ export async function bootstrap({
 
   elements.refresh.addEventListener("click", handleRefresh);
   elements.theme.addEventListener("click", handleTheme);
-  elements.windowSelect.addEventListener("change", handleWindowChange);
-  elements.rangeModeView.addEventListener("click", handleRangeModeView);
-  elements.rangeModeAnalyze.addEventListener("click", handleRangeModeAnalyze);
+  if (!externalLaunchSelector) {
+    elements.windowSelect.addEventListener("change", handleWindowChange);
+  }
+  if (!externalRangeModeSelector) {
+    elements.rangeModeView.addEventListener("click", handleRangeModeView);
+    elements.rangeModeAnalyze.addEventListener("click", handleRangeModeAnalyze);
+  }
   elements.clearSelection.addEventListener("click", handleClearSelection);
   elements.fit.addEventListener("click", handleFit);
   elements.zoomIn.addEventListener("click", handleZoomIn);
   elements.zoomOut.addEventListener("click", handleZoomOut);
-  elements.traceSearch.addEventListener("focus", handleRunSearchFocus);
-  elements.traceSearch.addEventListener(
-    "pointerdown",
-    handleRunSearchPointerDown,
-  );
-  elements.traceSearch.addEventListener("input", handleRunSearchInput);
-  elements.traceSearch.addEventListener("keydown", handleRunSearchKeydown);
-  documentObject.addEventListener("pointerdown", handleRunSearchOutsidePointer);
-  elements.kernelTab.addEventListener("click", handleKernelTab);
-  elements.waitTab.addEventListener("click", handleWaitTab);
-  elements.tableTabs.addEventListener("keydown", handleTableTabKeydown);
+  if (!externalRunSelector) {
+    elements.rail.addEventListener("keydown", handleRailKeydown);
+    elements.traceSelectorButton.addEventListener("click", handleTraceSelector);
+    elements.traceSearch.addEventListener("input", handleTraceSearch);
+    documentObject.addEventListener("pointerdown", handleOutsideTraceMenu);
+  }
+  windowObject.addEventListener("resize", handleTableResize);
+  if (!externalTableTabs) {
+    elements.kernelTab.addEventListener("click", handleKernelTab);
+    elements.waitTab.addEventListener("click", handleWaitTab);
+    elements.tableTabs.addEventListener("keydown", handleTableTabKeydown);
+  }
   installSortListeners("kernel", elements.kernelSortButtons, renderKernelTable);
   installSortListeners("wait", elements.waitSortButtons, renderWaitTable);
   selectTableTab("kernel");
@@ -3875,12 +4071,19 @@ export async function bootstrap({
     renderer.destroy();
     elements.refresh.removeEventListener?.("click", handleRefresh);
     elements.theme.removeEventListener?.("click", handleTheme);
-    elements.windowSelect.removeEventListener?.("change", handleWindowChange);
-    elements.rangeModeView.removeEventListener?.("click", handleRangeModeView);
-    elements.rangeModeAnalyze.removeEventListener?.(
-      "click",
-      handleRangeModeAnalyze,
-    );
+    if (!externalLaunchSelector) {
+      elements.windowSelect.removeEventListener?.("change", handleWindowChange);
+    }
+    if (!externalRangeModeSelector) {
+      elements.rangeModeView.removeEventListener?.(
+        "click",
+        handleRangeModeView,
+      );
+      elements.rangeModeAnalyze.removeEventListener?.(
+        "click",
+        handleRangeModeAnalyze,
+      );
+    }
     elements.clearSelection.removeEventListener?.(
       "click",
       handleClearSelection,
@@ -3888,29 +4091,27 @@ export async function bootstrap({
     elements.fit.removeEventListener?.("click", handleFit);
     elements.zoomIn.removeEventListener?.("click", handleZoomIn);
     elements.zoomOut.removeEventListener?.("click", handleZoomOut);
-    elements.traceSearch.removeEventListener?.(
-      "focus",
-      handleRunSearchFocus,
-    );
-    elements.traceSearch.removeEventListener?.(
-      "pointerdown",
-      handleRunSearchPointerDown,
-    );
-    elements.traceSearch.removeEventListener?.(
-      "input",
-      handleRunSearchInput,
-    );
-    elements.traceSearch.removeEventListener?.(
-      "keydown",
-      handleRunSearchKeydown,
-    );
-    documentObject.removeEventListener?.(
-      "pointerdown",
-      handleRunSearchOutsidePointer,
-    );
-    elements.kernelTab.removeEventListener?.("click", handleKernelTab);
-    elements.waitTab.removeEventListener?.("click", handleWaitTab);
-    elements.tableTabs.removeEventListener?.("keydown", handleTableTabKeydown);
+    if (!externalRunSelector) {
+      elements.rail.removeEventListener?.("keydown", handleRailKeydown);
+      elements.traceSelectorButton.removeEventListener?.(
+        "click",
+        handleTraceSelector,
+      );
+      elements.traceSearch.removeEventListener?.("input", handleTraceSearch);
+      documentObject.removeEventListener?.(
+        "pointerdown",
+        handleOutsideTraceMenu,
+      );
+    }
+    windowObject.removeEventListener?.("resize", handleTableResize);
+    if (!externalTableTabs) {
+      elements.kernelTab.removeEventListener?.("click", handleKernelTab);
+      elements.waitTab.removeEventListener?.("click", handleWaitTab);
+      elements.tableTabs.removeEventListener?.(
+        "keydown",
+        handleTableTabKeydown,
+      );
+    }
     for (const [button, listener] of sortListeners) {
       button.removeEventListener?.("click", listener);
     }

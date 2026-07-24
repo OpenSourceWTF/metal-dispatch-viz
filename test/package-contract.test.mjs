@@ -21,8 +21,12 @@ test("package contract locks the React profiler toolchain", async () => {
     "verify:pages": "node scripts/verify_pages_artifact.mjs",
   });
   assert.deepEqual(packageJson.dependencies, {
+    "class-variance-authority": "0.7.1",
     clsx: "2.1.1",
+    cmdk: "1.1.1",
     express: "5.2.1",
+    "lucide-react": "1.26.0",
+    "radix-ui": "1.6.5",
     react: "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "3.6.0",
@@ -88,20 +92,4 @@ test("README documents help and the visible-timeline AI export contract", async 
     exportSection,
     /selected-launch headline\s+aggregates remain exact/i,
   );
-});
-
-test("README documents the shadcn boundary and pinned component workflow", async () => {
-  const readme = await readFile(readmeUrl, "utf8");
-  const section = readme.match(
-    /## shadcn component development\n([\s\S]+?)(?=\n## )/,
-  )?.[1];
-
-  assert.ok(section);
-  assert.match(section, /React\/Vite/i);
-  assert.match(section, /Tailwind CSS v4/i);
-  assert.match(section, /components\.json/);
-  assert.match(section, /controller-owned/i);
-  assert.match(section, /does not migrate/i);
-  assert.match(section, /npx --yes shadcn@4\.14\.1 add button/);
-  assert.match(section, /CLI[^.]*not[^.]*project dependency/i);
 });

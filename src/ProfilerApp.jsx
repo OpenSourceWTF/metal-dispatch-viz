@@ -1,8 +1,55 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import datasetWorkerUrl from "../public/dataset-worker.js?worker&url";
 import { TraceAnalysisSession } from "../public/analysis-session.js";
 import { bootstrap } from "../public/app.js";
+import { glossaryEntry } from "../public/glossary.js";
+import { RunCombobox } from "./components/RunCombobox.jsx";
+import { Badge } from "./components/ui/badge.jsx";
+import { Button } from "./components/ui/button.jsx";
+import { Input } from "./components/ui/input.jsx";
+import { Progress } from "./components/ui/progress.jsx";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./components/ui/popover.jsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./components/ui/select.jsx";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "./components/ui/sheet.jsx";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "./components/ui/table.jsx";
+import { Textarea } from "./components/ui/textarea.jsx";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "./components/ui/tabs.jsx";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./components/ui/tooltip.jsx";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group.jsx";
 
 export function resolveWorkerUrl(workerUrl, baseUrl) {
   const source =
@@ -23,52 +70,82 @@ export function createAnalysisSession(options) {
 }
 
 function DefinitionTrigger({ term, label }) {
+  const entry = glossaryEntry(term);
+  const detail =
+    entry?.definition ?? `No definition is available for ${label}.`;
+  const openInManual = () => {
+    document.dispatchEvent(
+      new CustomEvent("mdv:open-manual-definition", {
+        detail: { term },
+      }),
+    );
+  };
+
   return (
-    <button
-      className="term-trigger"
-      type="button"
-      data-term={term}
-      aria-label={`Define ${label}`}
-      aria-controls="definition-tooltip"
-      aria-expanded="false"
-    >
-      ⓘ
-    </button>
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              className="term-trigger"
+              type="button"
+              data-term={term}
+              aria-label={`Define ${label}`}
+            >
+              ⓘ
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent className="definition-help-tooltip">
+          <strong>{entry?.label ?? label}</strong>
+          <span>{detail}</span>
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent
+        className="definition-help-popover"
+        aria-label={`${entry?.label ?? label} definition`}
+      >
+        <div className="definition-help-heading">
+          <strong>{entry?.label ?? label}</strong>
+          {entry?.evidence ? <span>{entry.evidence}</span> : null}
+        </div>
+        <p>{detail}</p>
+        {entry?.method ? <p>Method: {entry.method}</p> : null}
+        {entry?.limitation ? <p>Limit: {entry.limitation}</p> : null}
+        <Button type="button" onClick={openInManual}>
+          Open in Field manual
+        </Button>
+      </PopoverContent>
+    </Popover>
   );
 }
 
 function SortableHeader({ id, label, term }) {
   return (
-    <th scope="col" aria-sort="none">
-      <button
+    <TableHead scope="col" aria-sort="none">
+      <Button
         id={id}
         className="table-sort-button"
         type="button"
         aria-label={`Sort ${label}`}
       >
         <span>{label}</span>
-        <span className="sort-indicator" aria-hidden="true">↕</span>
-      </button>
+        <span className="sort-indicator" aria-hidden="true">
+          ↕
+        </span>
+      </Button>
       {term ? <DefinitionTrigger term={term} label={label} /> : null}
-    </th>
+    </TableHead>
   );
 }
 
-function initialMetric(
-  label,
-  term,
-  className = "metric",
-  unit = true,
-) {
+function initialMetric(label, term, className = "metric", unit = true) {
   return (
     <div className={className}>
       <dt>
         {label} <DefinitionTrigger term={term} label={label} />
       </dt>
-      <dd>
-        —
-        {unit ? <span className="unit"> ms</span> : null}
-      </dd>
+      <dd>—{unit ? <span className="unit"> ms</span> : null}</dd>
     </div>
   );
 }
@@ -77,39 +154,187 @@ export function ProfilerApp({
   bootstrapController = bootstrap,
   analysisSessionFactory = createAnalysisSession,
 }) {
+  const [runSelectorState, setRunSelectorState] = useState({
+    runs: [],
+    selectedId: null,
+  });
+  const runSelectionHandler = useRef(() => {});
+  const runSelector = useMemo(
+    () => ({
+      render({ runs, selectedId, onSelect }) {
+        runSelectionHandler.current =
+          typeof onSelect === "function" ? onSelect : () => {};
+        setRunSelectorState({ runs, selectedId });
+      },
+    }),
+    [],
+  );
+  const [launchSelectorState, setLaunchSelectorState] = useState({
+    options: [],
+    value: null,
+    disabled: true,
+  });
+  const launchSelectionHandler = useRef(() => {});
+  const launchSelector = useMemo(
+    () => ({
+      render({ options = [], value = null, disabled = true, onSelect }) {
+        launchSelectionHandler.current =
+          typeof onSelect === "function" ? onSelect : () => {};
+        setLaunchSelectorState({ options, value, disabled });
+      },
+    }),
+    [],
+  );
+  const [loadingProgress, setLoadingProgress] = useState({
+    value: 0,
+    text: "0%",
+  });
+  const progressIndicator = useMemo(
+    () => ({
+      render(next) {
+        setLoadingProgress(next);
+      },
+    }),
+    [],
+  );
+  const [tableTab, setTableTab] = useState("kernel");
+  const tableTabSelectionHandler = useRef(() => {});
+  const tableTabs = useMemo(
+    () => ({
+      render({ value = "kernel", onSelect }) {
+        tableTabSelectionHandler.current =
+          typeof onSelect === "function" ? onSelect : () => {};
+        setTableTab(value);
+      },
+    }),
+    [],
+  );
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpOpenChangeHandler = useRef(() => {});
+  const helpSheet = useMemo(
+    () => ({
+      render({ open, onOpenChange }) {
+        helpOpenChangeHandler.current =
+          typeof onOpenChange === "function" ? onOpenChange : () => {};
+        setHelpOpen(Boolean(open));
+      },
+    }),
+    [],
+  );
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportOpenChangeHandler = useRef(() => {});
+  const exportSheet = useMemo(
+    () => ({
+      render({ open, onOpenChange }) {
+        exportOpenChangeHandler.current =
+          typeof onOpenChange === "function" ? onOpenChange : () => {};
+        setExportOpen(Boolean(open));
+      },
+    }),
+    [],
+  );
+  const [exportFormatValue, setExportFormatValue] = useState("markdown");
+  const exportFormatSelectionHandler = useRef(() => {});
+  const exportFormatSelector = useMemo(
+    () => ({
+      render({ value = "markdown", onSelect }) {
+        exportFormatSelectionHandler.current =
+          typeof onSelect === "function" ? onSelect : () => {};
+        setExportFormatValue(value);
+      },
+    }),
+    [],
+  );
+  const [rangeModeState, setRangeModeState] = useState({
+    value: "view",
+    analyzeDisabled: true,
+    analyzeLabel: "Preparing exact analysis",
+  });
+  const rangeModeSelectionHandler = useRef(() => {});
+  const rangeModeSelector = useMemo(
+    () => ({
+      render({ value, analyzeDisabled, analyzeLabel, onSelect }) {
+        rangeModeSelectionHandler.current =
+          typeof onSelect === "function" ? onSelect : () => {};
+        setRangeModeState({ value, analyzeDisabled, analyzeLabel });
+      },
+    }),
+    [],
+  );
+
+  useEffect(() => {
+    const background = [
+      document.querySelector(".site-header"),
+      document.querySelector("main"),
+    ].filter(Boolean);
+    const modalOpen = helpOpen || exportOpen;
+    for (const element of background) element.inert = modalOpen;
+    return () => {
+      for (const element of background) element.inert = false;
+    };
+  }, [exportOpen, helpOpen]);
+
   useEffect(() => {
     const controllerAbort = new AbortController();
     let active = true;
+    const startTimer = setTimeout(() => {
+      if (!active) return;
 
-    void Promise.resolve(
-      bootstrapController({
-        analysisSessionFactory,
-        signal: controllerAbort.signal,
-      }),
-    ).then(
-      () => {},
-      (error) => {
-        if (!active) return;
-        const status = document.getElementById("trace-status");
-        if (status) {
-          const message =
-            error instanceof Error ? error.message : "The workbench could not start.";
-          status.textContent = `Workbench failed to start: ${message}`;
-        }
-      },
-    );
+      void Promise.resolve(
+        bootstrapController({
+          analysisSessionFactory,
+          exportSheet,
+          exportFormatSelector,
+          helpSheet,
+          launchSelector,
+          progressIndicator,
+          reactDefinitions: true,
+          rangeModeSelector,
+          runSelector,
+          tableTabs,
+          signal: controllerAbort.signal,
+        }),
+      ).then(
+        () => {},
+        (error) => {
+          if (!active) return;
+          const status = document.getElementById("trace-status");
+          if (status) {
+            const message =
+              error instanceof Error
+                ? error.message
+                : "The workbench could not start.";
+            status.textContent = `Workbench failed to start: ${message}`;
+          }
+        },
+      );
+    }, 0);
 
     return () => {
       active = false;
+      clearTimeout(startTimer);
       controllerAbort.abort();
     };
-  }, [analysisSessionFactory, bootstrapController]);
+  }, [
+    analysisSessionFactory,
+    bootstrapController,
+    exportSheet,
+    exportFormatSelector,
+    helpSheet,
+    launchSelector,
+    progressIndicator,
+    rangeModeSelector,
+    runSelector,
+    tableTabs,
+  ]);
 
   return (
-    <>
+    <TooltipProvider>
       <header className="site-header">
         <div className="identity-lockup">
-          <p className="wordmark" aria-hidden="true">MDV</p>
+          <p className="wordmark" aria-hidden="true">
+            MDV
+          </p>
           <div>
             <h1>Metal Dispatch Workbench</h1>
             <p className="directory-line">
@@ -119,15 +344,15 @@ export function ProfilerApp({
           </div>
         </div>
         <div className="header-actions" aria-label="Workbench controls">
-          <button
+          <Button
             id="field-manual-button"
             type="button"
             aria-haspopup="dialog"
             aria-controls="field-manual-drawer"
           >
             Field manual
-          </button>
-          <button
+          </Button>
+          <Button
             id="refresh-button"
             type="button"
             aria-label="Refresh trace directory"
@@ -135,8 +360,8 @@ export function ProfilerApp({
             disabled
           >
             Refresh
-          </button>
-          <button
+          </Button>
+          <Button
             id="theme-toggle"
             type="button"
             aria-label="Switch color theme"
@@ -145,7 +370,7 @@ export function ProfilerApp({
             disabled
           >
             Theme
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -158,28 +383,11 @@ export function ProfilerApp({
             aria-label="Run selector"
             aria-busy="true"
           >
-            <div className="trace-combobox">
-              <label htmlFor="trace-search">Run</label>
-              <input
-                id="trace-search"
-                type="search"
-                role="combobox"
-                aria-autocomplete="list"
-                aria-controls="trace-track"
-                aria-expanded="false"
-                placeholder="Search runs…"
-                autoComplete="off"
-                disabled
-              />
-              <div
-                id="trace-track"
-                className="trace-track"
-                role="listbox"
-                hidden
-              >
-                <p className="trace-rail-empty">Scanning directory…</p>
-              </div>
-            </div>
+            <RunCombobox
+              runs={runSelectorState.runs}
+              selectedId={runSelectorState.selectedId}
+              onSelect={(id) => runSelectionHandler.current(id)}
+            />
             <output
               id="selected-trace-summary"
               className="selected-trace-summary"
@@ -200,16 +408,23 @@ export function ProfilerApp({
               <span className="provenance-item">
                 <b>File</b> waiting for registry
               </span>
-              <span className="provenance-item"><b>Model</b> —</span>
-              <span className="provenance-item"><b>Quantization</b> —</span>
-              <span className="provenance-item"><b>Mode</b> —</span>
+              <span className="provenance-item">
+                <b>Model</b> —
+              </span>
+              <span className="provenance-item">
+                <b>Quantization</b> —
+              </span>
+              <span className="provenance-item">
+                <b>Mode</b> —
+              </span>
               <span id="evidence-badges" className="evidence-badges">
-                <span
+                <Badge
                   id="evidence-badge"
                   className="evidence-badge evidence-badge-invalid"
+                  variant="destructive"
                 >
                   Invalid or legacy evidence
-                </span>
+                </Badge>
               </span>
             </div>
             <div id="health-strip" className="health-strip">
@@ -222,16 +437,30 @@ export function ProfilerApp({
               >
                 Reading the trace registry…
               </div>
-              <label
-                id="window-control"
-                className="window-control"
-                htmlFor="window-select"
-              >
-                Launch
-                <select id="window-select" disabled defaultValue="waiting">
-                  <option value="waiting">Waiting for launch windows</option>
-                </select>
-              </label>
+              <div id="window-control" className="window-control">
+                <span id="window-select-label">Launch</span>
+                <Select
+                  value={launchSelectorState.value ?? undefined}
+                  onValueChange={(value) =>
+                    launchSelectionHandler.current(value)
+                  }
+                  disabled={launchSelectorState.disabled}
+                >
+                  <SelectTrigger
+                    id="window-select"
+                    aria-labelledby="window-select-label"
+                  >
+                    <SelectValue placeholder="Waiting for launch windows" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {launchSelectorState.options.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </section>
 
@@ -242,14 +471,35 @@ export function ProfilerApp({
             </div>
             <dl id="metric-grid" className="metric-grid" aria-busy="true">
               {initialMetric("Wall span", "wall-span", "metric metric-primary")}
-              {initialMetric("Exposed host", "exposed-host", "metric metric-exposed")}
-              {initialMetric("Hidden host", "hidden-host", "metric metric-hidden")}
+              {initialMetric(
+                "Exposed host",
+                "exposed-host",
+                "metric metric-exposed",
+              )}
+              {initialMetric(
+                "Hidden host",
+                "hidden-host",
+                "metric metric-hidden",
+              )}
               {initialMetric("GPU busy", "gpu-busy", "metric metric-gpu")}
               {initialMetric("GPU work", "gpu-work", "metric metric-gpu")}
-              {initialMetric("Decision drain", "decision-drain", "metric metric-decision")}
+              {initialMetric(
+                "Decision drain",
+                "decision-drain",
+                "metric metric-decision",
+              )}
               {initialMetric("Cap wait", "cap-wait", "metric metric-cap")}
-              {initialMetric("Dependency", "dependency-wait", "metric metric-dependency")}
-              {initialMetric("Command buffers", "command-buffer", "metric", false)}
+              {initialMetric(
+                "Dependency",
+                "dependency-wait",
+                "metric metric-dependency",
+              )}
+              {initialMetric(
+                "Command buffers",
+                "command-buffer",
+                "metric",
+                false,
+              )}
               {initialMetric("Dispatches", "dispatch", "metric", false)}
             </dl>
           </section>
@@ -269,7 +519,7 @@ export function ProfilerApp({
                     className="timeline-actions"
                     aria-label="Timeline view controls"
                   >
-                    <button
+                    <Button
                       id="ai-export-button"
                       className="ai-export-button"
                       type="button"
@@ -278,29 +528,29 @@ export function ProfilerApp({
                       disabled
                     >
                       Export for AI
-                    </button>
+                    </Button>
                     <output id="timeline-scale" className="timeline-scale">
                       Fit · — ns/px
                     </output>
-                    <button
+                    <Button
                       id="zoom-out"
                       type="button"
                       aria-label="Zoom timeline out"
                       disabled
                     >
                       −
-                    </button>
-                    <button id="fit-timeline" type="button" disabled>
+                    </Button>
+                    <Button id="fit-timeline" type="button" disabled>
                       Fit
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       id="zoom-in"
                       type="button"
                       aria-label="Zoom timeline in"
                       disabled
                     >
                       +
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -322,7 +572,10 @@ export function ProfilerApp({
                   </span>
                   <span>
                     Waits{" "}
-                    <DefinitionTrigger term="wait-taxonomy" label="Wait taxonomy" />
+                    <DefinitionTrigger
+                      term="wait-taxonomy"
+                      label="Wait taxonomy"
+                    />
                   </span>
                   <span>
                     Dispatch order{" "}
@@ -358,20 +611,32 @@ export function ProfilerApp({
                         data-ready-control
                       >
                         Your browser does not support canvas. The selected trace
-                        metrics, kernel census, and wait taxonomy remain available
-                        in the tables below.
+                        metrics, kernel census, and wait taxonomy remain
+                        available in the tables below.
                       </canvas>
                       <div
                         id="timeline-placeholder"
                         className="timeline-placeholder"
                         aria-hidden="true"
                       >
-                        <div className="placeholder-lane lane-ruler"><span>Ruler</span></div>
-                        <div className="placeholder-lane lane-host"><span>Host encode</span></div>
-                        <div className="placeholder-lane lane-gpu"><span>GPU execute</span></div>
-                        <div className="placeholder-lane lane-waits"><span>Waits</span></div>
-                        <div className="placeholder-lane lane-dispatch"><span>Dispatch order</span></div>
-                        <div className="placeholder-lane lane-footer"><span>Footer</span></div>
+                        <div className="placeholder-lane lane-ruler">
+                          <span>Ruler</span>
+                        </div>
+                        <div className="placeholder-lane lane-host">
+                          <span>Host encode</span>
+                        </div>
+                        <div className="placeholder-lane lane-gpu">
+                          <span>GPU execute</span>
+                        </div>
+                        <div className="placeholder-lane lane-waits">
+                          <span>Waits</span>
+                        </div>
+                        <div className="placeholder-lane lane-dispatch">
+                          <span>Dispatch order</span>
+                        </div>
+                        <div className="placeholder-lane lane-footer">
+                          <span>Footer</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -380,6 +645,11 @@ export function ProfilerApp({
                     className="state-region loading-state"
                     aria-label="Trace loading progress"
                   >
+                    <div className="timeline-loading-visual" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
                     <div>
                       <strong>Preparing timeline</strong>
                       <span id="loading-filename">
@@ -387,15 +657,21 @@ export function ProfilerApp({
                       </span>
                     </div>
                     <div className="progress-readout">
-                      <label
+                      <span
+                        id="loading-progress-label"
                         className="visually-hidden"
-                        htmlFor="loading-progress"
                       >
                         Trace read progress
-                      </label>
-                      <progress id="loading-progress" value="0" max="1">
-                        0%
-                      </progress>
+                      </span>
+                      <Progress
+                        id="loading-progress"
+                        value={loadingProgress.value}
+                        aria-labelledby="loading-progress-label"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        aria-valuenow={loadingProgress.value}
+                        aria-valuetext={loadingProgress.text}
+                      />
                       <p id="loading-readout" className="mono">
                         0 bytes read · 0 rows parsed
                       </p>
@@ -414,29 +690,31 @@ export function ProfilerApp({
                       <p className="eyebrow">Time window</p>
                       <h3 id="range-heading">Launch overview</h3>
                     </div>
-                    <div
+                    <ToggleGroup
                       className="range-mode"
-                      role="group"
+                      type="single"
+                      value={rangeModeState.value}
+                      onValueChange={(value) => {
+                        if (value) rangeModeSelectionHandler.current(value);
+                      }}
                       aria-label="Time window behavior"
                     >
-                      <button
+                      <ToggleGroupItem
                         id="range-mode-view"
                         className="range-mode-button"
-                        type="button"
-                        aria-pressed="true"
+                        value="view"
                       >
                         View
-                      </button>
-                      <button
+                      </ToggleGroupItem>
+                      <ToggleGroupItem
                         id="range-mode-analyze"
                         className="range-mode-button"
-                        type="button"
-                        aria-pressed="false"
-                        disabled
+                        value="analyze"
+                        disabled={rangeModeState.analyzeDisabled}
                       >
-                        Preparing exact analysis
-                      </button>
-                    </div>
+                        {rangeModeState.analyzeLabel}
+                      </ToggleGroupItem>
+                    </ToggleGroup>
                   </div>
                   <div className="range-overview-frame">
                     <canvas
@@ -471,10 +749,7 @@ export function ProfilerApp({
                       />
                     </div>
                   </div>
-                  <p
-                    id="range-overview-summary"
-                    className="visually-hidden"
-                  >
+                  <p id="range-overview-summary" className="visually-hidden">
                     The overview is a navigation summary, not
                     measurement-resolution events.
                   </p>
@@ -494,8 +769,9 @@ export function ProfilerApp({
                   />
                 </section>
                 <p id="timeline-description" className="timeline-description">
-                  Six coupled lanes show the ruler, host encoding, GPU execution,
-                  waits, dispatch order, and scale. Dispatch marks use{" "}
+                  Six coupled lanes show the ruler, host encoding, GPU
+                  execution, waits, dispatch order, and scale. Dispatch marks
+                  use{" "}
                   <span className="term-label">
                     ordered placement{" "}
                     <DefinitionTrigger
@@ -503,9 +779,10 @@ export function ProfilerApp({
                       label="Ordered placement"
                     />
                   </span>{" "}
-                  within each command buffer; they are not measured per-operation
-                  timestamps. With the canvas focused, [ and ] move to the previous
-                  and next mark; Enter pins the active mark.
+                  within each command buffer; they are not measured
+                  per-operation timestamps. With the canvas focused, [ and ]
+                  move to the previous and next mark; Enter pins the active
+                  mark.
                 </p>
                 <p
                   id="timeline-sampling-note"
@@ -535,137 +812,179 @@ export function ProfilerApp({
                 </section>
               </figure>
 
-              <div id="analysis-tables" className="tables-grid">
-                <div
-                  id="analysis-table-tabs"
-                  className="analysis-table-tabs"
-                  role="tablist"
-                  aria-label="Analysis tables"
-                >
-                  <button
-                    id="kernel-tab"
-                    type="button"
-                    role="tab"
-                    aria-selected="true"
-                    aria-controls="kernel-panel"
-                    tabIndex="0"
-                  >
+              <Tabs
+                id="analysis-tables"
+                className="tables-grid"
+                value={tableTab}
+                onValueChange={(value) =>
+                  tableTabSelectionHandler.current(value)
+                }
+              >
+                <TabsList id="analysis-table-tabs" aria-label="Analysis tables">
+                  <TabsTrigger id="kernel-tab" value="kernel">
                     Kernel families
-                  </button>
-                  <button
-                    id="wait-tab"
-                    type="button"
-                    role="tab"
-                    aria-selected="false"
-                    aria-controls="wait-panel"
-                    tabIndex="-1"
-                  >
+                  </TabsTrigger>
+                  <TabsTrigger id="wait-tab" value="wait">
                     Wait taxonomy
-                  </button>
-                </div>
-                <section
-                  id="kernel-panel"
-                  className="data-section"
-                  role="tabpanel"
-                  aria-labelledby="kernel-tab"
-                >
-                  <div className="section-heading">
-                    <div>
-                      <p className="eyebrow">Dispatch census</p>
-                      <h2 id="kernel-heading">
-                        Kernel families{" "}
-                        <DefinitionTrigger
-                          term="kernel-family"
-                          label="Kernel family"
-                        />
-                      </h2>
-                    </div>
-                    <span id="kernel-table-state" className="table-state">
-                      Awaiting rows
-                    </span>
-                  </div>
-                  <div
-                    className="table-scroller"
-                    tabIndex="0"
-                    role="region"
-                    aria-label="Scrollable kernel census"
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent asChild forceMount value="kernel">
+                  <section
+                    id="kernel-panel"
+                    className="data-section"
+                    aria-labelledby="kernel-tab"
+                    hidden={tableTab !== "kernel"}
                   >
-                    <table id="kernel-table">
-                      <caption>
-                        Kernel dispatch counts, setBytes activity, and buffer binds
-                      </caption>
-                      <thead>
-                        <tr>
-                          <SortableHeader id="kernel-sort-kernel" label="Kernel family" />
-                          <SortableHeader id="kernel-sort-count" label="Dispatches" />
-                          <SortableHeader id="kernel-sort-setbytes-calls" label="setBytes calls" term="setbytes-call" />
-                          <SortableHeader id="kernel-sort-setbytes-bytes" label="setBytes bytes" term="setbytes-bytes" />
-                          <SortableHeader id="kernel-sort-buffer-binds" label="Buffer binds" term="buffer-bind" />
-                        </tr>
-                      </thead>
-                      <tbody id="kernel-table-body">
-                        <tr className="placeholder-row">
-                          <th scope="row">No parsed kernels</th>
-                          <td>—</td>
-                          <td>—</td>
-                          <td>—</td>
-                          <td>—</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
+                    <div className="section-heading">
+                      <div>
+                        <p className="eyebrow">Dispatch census</p>
+                        <h2 id="kernel-heading">
+                          Kernel families{" "}
+                          <DefinitionTrigger
+                            term="kernel-family"
+                            label="Kernel family"
+                          />
+                        </h2>
+                      </div>
+                      <span id="kernel-table-state" className="table-state">
+                        Awaiting rows
+                      </span>
+                    </div>
+                    <div
+                      id="kernel-table-scroller"
+                      className="table-scroller"
+                      tabIndex="0"
+                      role="region"
+                      aria-label="Scrollable kernel census"
+                    >
+                      <p
+                        id="kernel-scroll-hint"
+                        className="table-scroll-hint"
+                        role="note"
+                        hidden
+                      >
+                        Scroll horizontally for more columns →
+                      </p>
+                      <Table id="kernel-table">
+                        <TableCaption>
+                          Kernel dispatch counts, setBytes activity, and buffer
+                          binds
+                        </TableCaption>
+                        <TableHeader>
+                          <TableRow>
+                            <SortableHeader
+                              id="kernel-sort-kernel"
+                              label="Kernel family"
+                            />
+                            <SortableHeader
+                              id="kernel-sort-count"
+                              label="Dispatches"
+                            />
+                            <SortableHeader
+                              id="kernel-sort-setbytes-calls"
+                              label="setBytes calls"
+                              term="setbytes-call"
+                            />
+                            <SortableHeader
+                              id="kernel-sort-setbytes-bytes"
+                              label="setBytes bytes"
+                              term="setbytes-bytes"
+                            />
+                            <SortableHeader
+                              id="kernel-sort-buffer-binds"
+                              label="Buffer binds"
+                              term="buffer-bind"
+                            />
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody id="kernel-table-body">
+                          <TableRow className="placeholder-row">
+                            <TableHead scope="row">No parsed kernels</TableHead>
+                            <TableCell>—</TableCell>
+                            <TableCell>—</TableCell>
+                            <TableCell>—</TableCell>
+                            <TableCell>—</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </section>
+                </TabsContent>
 
-                <section
-                  id="wait-panel"
-                  className="data-section"
-                  role="tabpanel"
-                  aria-labelledby="wait-tab"
-                  hidden
-                >
-                  <div className="section-heading">
-                    <div>
-                      <p className="eyebrow">Synchronization cost</p>
-                      <h2 id="wait-heading">
-                        Wait taxonomy{" "}
-                        <DefinitionTrigger
-                          term="wait-taxonomy"
-                          label="Wait taxonomy"
-                        />
-                      </h2>
-                    </div>
-                    <span id="wait-table-state" className="table-state">
-                      Awaiting rows
-                    </span>
-                  </div>
-                  <div
-                    className="table-scroller"
-                    tabIndex="0"
-                    role="region"
-                    aria-label="Scrollable wait taxonomy"
+                <TabsContent asChild forceMount value="wait">
+                  <section
+                    id="wait-panel"
+                    className="data-section"
+                    aria-labelledby="wait-tab"
+                    hidden={tableTab !== "wait"}
                   >
-                    <table id="wait-table">
-                      <caption>Wait causes, counts, and measured duration</caption>
-                      <thead>
-                        <tr>
-                          <SortableHeader id="wait-sort-bucket" label="Wait cause" />
-                          <SortableHeader id="wait-sort-count" label="Events" />
-                          <SortableHeader id="wait-sort-duration" label="Duration" />
-                          <SortableHeader id="wait-sort-evidence" label="Evidence" />
-                        </tr>
-                      </thead>
-                      <tbody id="wait-table-body">
-                        <tr className="placeholder-row">
-                          <th scope="row">No parsed waits</th>
-                          <td>—</td>
-                          <td>—</td>
-                          <td>—</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
+                    <div className="section-heading">
+                      <div>
+                        <p className="eyebrow">Synchronization cost</p>
+                        <h2 id="wait-heading">
+                          Wait taxonomy{" "}
+                          <DefinitionTrigger
+                            term="wait-taxonomy"
+                            label="Wait taxonomy"
+                          />
+                        </h2>
+                      </div>
+                      <span id="wait-table-state" className="table-state">
+                        Awaiting rows
+                      </span>
+                    </div>
+                    <div
+                      id="wait-table-scroller"
+                      className="table-scroller"
+                      tabIndex="0"
+                      role="region"
+                      aria-label="Scrollable wait taxonomy"
+                    >
+                      <p
+                        id="wait-scroll-hint"
+                        className="table-scroll-hint"
+                        role="note"
+                        hidden
+                      >
+                        Scroll horizontally for more columns →
+                      </p>
+                      <Table id="wait-table">
+                        <TableCaption>
+                          Wait causes, counts, and measured duration
+                        </TableCaption>
+                        <TableHeader>
+                          <TableRow>
+                            <SortableHeader
+                              id="wait-sort-bucket"
+                              label="Wait cause"
+                            />
+                            <SortableHeader
+                              id="wait-sort-count"
+                              label="Events"
+                            />
+                            <SortableHeader
+                              id="wait-sort-duration"
+                              label="Duration"
+                            />
+                            <SortableHeader
+                              id="wait-sort-evidence"
+                              label="Evidence"
+                            />
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody id="wait-table-body">
+                          <TableRow className="placeholder-row">
+                            <TableHead scope="row">No parsed waits</TableHead>
+                            <TableCell>—</TableCell>
+                            <TableCell>—</TableCell>
+                            <TableCell>—</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </section>
+                </TabsContent>
+              </Tabs>
             </div>
 
             <aside
@@ -678,14 +997,14 @@ export function ProfilerApp({
                   <p className="eyebrow">Pinned detail</p>
                   <h2 id="inspector-heading">Inspector</h2>
                 </div>
-                <button id="clear-selection" type="button" disabled>
+                <Button id="clear-selection" type="button" disabled>
                   Clear
-                </button>
+                </Button>
               </div>
               <div id="inspector-body">
                 <p className="inspector-empty">
-                  Select a command buffer or dispatch to connect host, GPU, wait,
-                  and kernel evidence.
+                  Select a command buffer or dispatch to connect host, GPU,
+                  wait, and kernel evidence.
                 </p>
                 <dl className="inspector-readout">
                   <div>
@@ -731,298 +1050,279 @@ export function ProfilerApp({
         </div>
       </main>
 
-      <div id="utility-backdrop" className="utility-backdrop" hidden />
-
-      <div
-        id="field-manual-drawer"
-        className="utility-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="field-manual-heading"
-        aria-hidden="true"
-        hidden
+      <Sheet
+        modal={false}
+        open={helpOpen}
+        onOpenChange={(open) => helpOpenChangeHandler.current(open)}
       >
-        <div className="utility-drawer-header">
-          <div>
-            <p className="eyebrow">Reference / local</p>
-            <h2 id="field-manual-heading">Field manual</h2>
-          </div>
-          <button
-            id="field-manual-close"
-            type="button"
-            aria-label="Close Field manual"
-          >
-            Close
-          </button>
-        </div>
-        <div className="manual-search-control">
-          <label htmlFor="manual-search">Search glossary</label>
-          <input
-            id="manual-search"
-            type="search"
-            autoComplete="off"
-            placeholder="Term, method, or limitation"
-          />
-          <output
-            id="manual-search-status"
-            className="manual-search-status"
-            aria-live="polite"
-          />
-        </div>
-        <div id="manual-content" className="manual-content" tabIndex="-1">
-          <section
-            id="manual-quick-start"
-            className="manual-section"
-            tabIndex="-1"
-            aria-labelledby="manual-quick-start-heading"
-          >
-            <p className="manual-index">01 / OPERATE</p>
-            <h3 id="manual-quick-start-heading">Quick start</h3>
-            <ol>
-              <li>
-                Search runs from the top dropdown, select a match, then choose
-                a launch when more than one is present.
-              </li>
-              <li>
-                In View, drag the range band or either handle. On the main
-                timeline, drag to zoom and Shift-drag to pan.
-              </li>
-              <li>
-                Switch to Analyze when you need exact metrics and tables for the
-                selected range instead of launch totals.
-              </li>
-              <li>
-                Select a command buffer, dispatch, density bin, or wait to
-                inspect linked evidence.
-              </li>
-              <li>
-                Switch between Kernel families and Wait taxonomy tabs; activate
-                any column heading to sort ascending or descending.
-              </li>
-              <li>
-                Use Export for AI when available to package only the visible
-                range; help never sends trace data anywhere.
-              </li>
-            </ol>
-          </section>
-          <section
-            className="manual-section"
-            aria-labelledby="manual-timeline-heading"
-          >
-            <p className="manual-index">02 / READ</p>
-            <h3 id="manual-timeline-heading">Read the timeline</h3>
-            <p>
-              The ruler anchors the visible time range. Host encode and GPU
-              execute lanes show measured command-buffer intervals. Wait marks
-              show producer-reported synchronization. Dispatch marks preserve
-              sequence through ordered placement; density mode groups those
-              placements when individual marks would be too dense.
-            </p>
-          </section>
-          <section
-            className="manual-section"
-            aria-labelledby="manual-measurements-heading"
-          >
-            <p className="manual-index">03 / MEASURE</p>
-            <h3 id="manual-measurements-heading">Measurements</h3>
-            <p>
-              Headline metrics pair a value with its evidence basis. Measured
-              endpoints, interval-derived unions and intersections, recorded
-              waits, and counts answer different questions and must not be
-              added together by default.
-            </p>
-          </section>
-          <section
-            className="manual-section manual-glossary"
-            aria-labelledby="manual-glossary-heading"
-          >
-            <p className="manual-index">04 / DEFINE</p>
-            <h3 id="manual-glossary-heading">Glossary</h3>
-            <div
-              id="manual-glossary-list"
-              className="manual-glossary-list"
-            />
-          </section>
-          <section
-            className="manual-section"
-            aria-labelledby="manual-evidence-heading"
-          >
-            <p className="manual-index">05 / LIMITS</p>
-            <h3 id="manual-evidence-heading">Evidence limits</h3>
-            <ul>
-              <li>
-                Canvas sampling changes visible marks, never the exact headline
-                metrics or tables.
-              </li>
-              <li>
-                Malformed, unsupported, dropped, or legacy rows remain disclosed
-                and can limit completeness.
-              </li>
-              <li>
-                Ordered dispatch placement is not a measured per-operation
-                timestamp or duration.
-              </li>
-              <li>
-                Scheduler detail is non-additive, and wait totals do not
-                establish a critical path.
-              </li>
-              <li>
-                Schema v1 does not record tensor producer or consumer
-                identities, so it cannot prove tensor dependency paths.
-              </li>
-            </ul>
-          </section>
-          <section
-            className="manual-section"
-            aria-labelledby="manual-keyboard-heading"
-          >
-            <p className="manual-index">06 / KEYS</p>
-            <h3 id="manual-keyboard-heading">Keyboard controls</h3>
-            <dl className="shortcut-grid">
-              <div><dt>Run results</dt><dd>↑ / ↓ / Enter</dd></div>
-              <div><dt>Range handles</dt><dd>Arrow keys</dd></div>
-              <div><dt>Range zoom</dt><dd>Drag</dd></div>
-              <div><dt>Pan</dt><dd>Shift-drag</dd></div>
-              <div><dt>Zoom</dt><dd>+ / −</dd></div>
-              <div><dt>Reset range</dt><dd>Fit</dd></div>
-              <div><dt>Marks</dt><dd>[ / ]</dd></div>
-              <div><dt>Pin mark</dt><dd>Enter</dd></div>
-              <div><dt>Dismiss help</dt><dd>Escape</dd></div>
-            </dl>
-          </section>
-        </div>
-      </div>
-
-      <div
-        id="ai-export-drawer"
-        className="utility-drawer ai-export-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="ai-export-heading"
-        aria-hidden="true"
-        hidden
-      >
-        <div className="utility-drawer-header">
-          <div>
-            <p className="eyebrow">Visible evidence / local</p>
-            <h2 id="ai-export-heading">Export for AI</h2>
-          </div>
-          <button
-            id="ai-export-close"
-            type="button"
-            aria-label="Close AI export"
-          >
-            Close
-          </button>
-        </div>
-        <div className="ai-export-controls">
-          <label htmlFor="ai-export-format">Format</label>
-          <select id="ai-export-format" defaultValue="markdown">
-            <option value="markdown">Prompt + data (.md)</option>
-            <option value="json">Structured data (.json)</option>
-          </select>
-          <button id="ai-export-refresh" type="button">
-            Refresh snapshot
-          </button>
-        </div>
-        <section
-          className="ai-export-scope"
-          aria-labelledby="ai-export-scope-heading"
+        <SheetContent
+          id="field-manual-drawer"
+          className="field-manual-sheet"
+          aria-labelledby="field-manual-heading"
+          aria-modal="true"
+          forceMount
+          showCloseButton={false}
         >
-          <p id="ai-export-scope-heading" className="manual-index">
-            EXPORT SCOPE
-          </p>
-          <output id="ai-export-scope">No visible range captured.</output>
-          <p className="local-only-notice">
-            Generated locally from the selected launch and visible timeline
-            range. Nothing is uploaded and no model is called.
-          </p>
-        </section>
-        <div className="ai-export-preview-wrap">
-          <label htmlFor="ai-export-preview">Read-only export preview</label>
-          <textarea
-            id="ai-export-preview"
-            readOnly
-            spellCheck="false"
-          />
-        </div>
-        <div className="ai-export-actions">
-          <button id="copy-export" type="button">Copy export</button>
-          <button id="download-export" type="button">Download</button>
-        </div>
-        <output
-          id="ai-export-status"
-          className="ai-export-status"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        />
-      </div>
+          <SheetHeader className="field-manual-sheet-header">
+            <div>
+              <p className="eyebrow">Reference / local</p>
+              <SheetTitle id="field-manual-heading">Field manual</SheetTitle>
+            </div>
+            <Button
+              id="field-manual-close"
+              type="button"
+              aria-label="Close Field manual"
+            >
+              Close
+            </Button>
+          </SheetHeader>
+          <div className="manual-search-control">
+            <label htmlFor="manual-search">Search glossary</label>
+            <Input
+              id="manual-search"
+              type="search"
+              autoComplete="off"
+              placeholder="Term, method, or limitation"
+            />
+            <output
+              id="manual-search-status"
+              className="manual-search-status"
+              aria-live="polite"
+            />
+          </div>
+          <div id="manual-content" className="manual-content" tabIndex="-1">
+            <section
+              id="manual-quick-start"
+              className="manual-section"
+              tabIndex="-1"
+              aria-labelledby="manual-quick-start-heading"
+            >
+              <p className="manual-index">01 / OPERATE</p>
+              <h3 id="manual-quick-start-heading">Quick start</h3>
+              <ol>
+                <li>
+                  Search runs from the top dropdown, select a match, then choose
+                  a launch when more than one is present.
+                </li>
+                <li>
+                  In View, drag the range band or either handle. On the main
+                  timeline, drag to zoom and Shift-drag to pan.
+                </li>
+                <li>
+                  Switch to Analyze when you need exact metrics and tables for
+                  the selected range instead of launch totals.
+                </li>
+                <li>
+                  Select a command buffer, dispatch, density bin, or wait to
+                  inspect linked evidence.
+                </li>
+                <li>
+                  Switch between Kernel families and Wait taxonomy tabs;
+                  activate any column heading to sort ascending or descending.
+                </li>
+                <li>
+                  Use Export for AI when available to package only the visible
+                  range; help never sends trace data anywhere.
+                </li>
+              </ol>
+            </section>
+            <section
+              className="manual-section"
+              aria-labelledby="manual-timeline-heading"
+            >
+              <p className="manual-index">02 / READ</p>
+              <h3 id="manual-timeline-heading">Read the timeline</h3>
+              <p>
+                The ruler anchors the visible time range. Host encode and GPU
+                execute lanes show measured command-buffer intervals. Wait marks
+                show producer-reported synchronization. Dispatch marks preserve
+                sequence through ordered placement; density mode groups those
+                placements when individual marks would be too dense.
+              </p>
+            </section>
+            <section
+              className="manual-section"
+              aria-labelledby="manual-measurements-heading"
+            >
+              <p className="manual-index">03 / MEASURE</p>
+              <h3 id="manual-measurements-heading">Measurements</h3>
+              <p>
+                Headline metrics pair a value with its evidence basis. Measured
+                endpoints, interval-derived unions and intersections, recorded
+                waits, and counts answer different questions and must not be
+                added together by default.
+              </p>
+            </section>
+            <section
+              className="manual-section manual-glossary"
+              aria-labelledby="manual-glossary-heading"
+            >
+              <p className="manual-index">04 / DEFINE</p>
+              <h3 id="manual-glossary-heading">Glossary</h3>
+              <div id="manual-glossary-list" className="manual-glossary-list" />
+            </section>
+            <section
+              className="manual-section"
+              aria-labelledby="manual-evidence-heading"
+            >
+              <p className="manual-index">05 / LIMITS</p>
+              <h3 id="manual-evidence-heading">Evidence limits</h3>
+              <ul>
+                <li>
+                  Canvas sampling changes visible marks, never the exact
+                  headline metrics or tables.
+                </li>
+                <li>
+                  Malformed, unsupported, dropped, or legacy rows remain
+                  disclosed and can limit completeness.
+                </li>
+                <li>
+                  Ordered dispatch placement is not a measured per-operation
+                  timestamp or duration.
+                </li>
+                <li>
+                  Scheduler detail is non-additive, and wait totals do not
+                  establish a critical path.
+                </li>
+                <li>
+                  Schema v1 does not record tensor producer or consumer
+                  identities, so it cannot prove tensor dependency paths.
+                </li>
+              </ul>
+            </section>
+            <section
+              className="manual-section"
+              aria-labelledby="manual-keyboard-heading"
+            >
+              <p className="manual-index">06 / KEYS</p>
+              <h3 id="manual-keyboard-heading">Keyboard controls</h3>
+              <dl className="shortcut-grid">
+                <div>
+                  <dt>Run results</dt>
+                  <dd>↑ / ↓ / Enter</dd>
+                </div>
+                <div>
+                  <dt>Range handles</dt>
+                  <dd>Arrow keys</dd>
+                </div>
+                <div>
+                  <dt>Range zoom</dt>
+                  <dd>Drag</dd>
+                </div>
+                <div>
+                  <dt>Pan</dt>
+                  <dd>Shift-drag</dd>
+                </div>
+                <div>
+                  <dt>Zoom</dt>
+                  <dd>+ / −</dd>
+                </div>
+                <div>
+                  <dt>Reset range</dt>
+                  <dd>Fit</dd>
+                </div>
+                <div>
+                  <dt>Marks</dt>
+                  <dd>[ / ]</dd>
+                </div>
+                <div>
+                  <dt>Pin mark</dt>
+                  <dd>Enter</dd>
+                </div>
+                <div>
+                  <dt>Dismiss help</dt>
+                  <dd>Escape</dd>
+                </div>
+              </dl>
+            </section>
+          </div>
+        </SheetContent>
+      </Sheet>
 
-      <div
-        id="definition-tooltip"
-        className="definition-tooltip"
-        role="tooltip"
-        aria-live="polite"
-        data-pinned="false"
-        hidden
+      <Sheet
+        modal={false}
+        open={exportOpen}
+        onOpenChange={(open) => exportOpenChangeHandler.current(open)}
       >
-        <div className="definition-tooltip-heading">
-          <strong id="definition-tooltip-title" />
-          <span
-            id="definition-tooltip-evidence"
-            className="evidence-tag"
-            hidden
+        <SheetContent
+          id="ai-export-drawer"
+          className="ai-export-sheet"
+          aria-labelledby="ai-export-heading"
+          aria-modal="true"
+          forceMount
+          showCloseButton={false}
+        >
+          <SheetHeader className="ai-export-sheet-header">
+            <div>
+              <p className="eyebrow">Visible evidence / local</p>
+              <SheetTitle id="ai-export-heading">Export for AI</SheetTitle>
+            </div>
+            <Button
+              id="ai-export-close"
+              type="button"
+              aria-label="Close AI export"
+            >
+              Close
+            </Button>
+          </SheetHeader>
+          <div className="ai-export-controls">
+            <span id="ai-export-format-label">Format</span>
+            <Select
+              value={exportFormatValue}
+              onValueChange={(value) => {
+                setExportFormatValue(value);
+                exportFormatSelectionHandler.current(value);
+              }}
+            >
+              <SelectTrigger
+                id="ai-export-format"
+                aria-labelledby="ai-export-format-label"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="markdown">Prompt + data (.md)</SelectItem>
+                <SelectItem value="json">Structured data (.json)</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button id="ai-export-refresh" type="button">
+              Refresh snapshot
+            </Button>
+          </div>
+          <section
+            className="ai-export-scope"
+            aria-labelledby="ai-export-scope-heading"
+          >
+            <p id="ai-export-scope-heading" className="manual-index">
+              EXPORT SCOPE
+            </p>
+            <output id="ai-export-scope">No visible range captured.</output>
+            <p className="local-only-notice">
+              Generated locally from the selected launch and visible timeline
+              range. Nothing is uploaded and no model is called.
+            </p>
+          </section>
+          <div className="ai-export-preview-wrap">
+            <label htmlFor="ai-export-preview">Read-only export preview</label>
+            <Textarea id="ai-export-preview" readOnly spellCheck="false" />
+          </div>
+          <div className="ai-export-actions">
+            <Button id="copy-export" type="button">
+              Copy export
+            </Button>
+            <Button id="download-export" type="button">
+              Download
+            </Button>
+          </div>
+          <output
+            id="ai-export-status"
+            className="ai-export-status"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
           />
-        </div>
-        <p id="definition-tooltip-body" />
-        <p
-          id="definition-tooltip-method"
-          className="definition-detail"
-          hidden
-        />
-        <p
-          id="definition-tooltip-limitation"
-          className="definition-limit"
-          hidden
-        />
-      </div>
-
-      <div
-        id="definition-popover"
-        className="definition-popover"
-        role="dialog"
-        aria-modal="false"
-        aria-labelledby="definition-popover-title"
-        aria-hidden="true"
-        hidden
-      >
-        <div className="definition-popover-heading">
-          <strong id="definition-popover-title" />
-          <span
-            id="definition-popover-evidence"
-            className="evidence-tag"
-            hidden
-          />
-        </div>
-        <p id="definition-popover-body" />
-        <p
-          id="definition-popover-method"
-          className="definition-detail"
-          hidden
-        />
-        <p
-          id="definition-popover-limitation"
-          className="definition-limit"
-          hidden
-        />
-        <div className="definition-popover-actions">
-          <button id="definition-popover-close" type="button">Close</button>
-          <button id="definition-popover-manual" type="button">
-            Open in Field manual
-          </button>
-        </div>
-      </div>
-    </>
+        </SheetContent>
+      </Sheet>
+    </TooltipProvider>
   );
 }

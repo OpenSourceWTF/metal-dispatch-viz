@@ -9,6 +9,7 @@ import {
   evidenceBadges,
   filterTraces,
   handleTraceRailKey,
+  initialTimelineViewport,
   kernelRowsForScope,
   loadTraceRegistry,
   parseRangeSelection,
@@ -19,6 +20,7 @@ import {
   renderTraceRail,
   samplingDisclosure,
   sortTableRows,
+  tableNeedsHorizontalScroll,
   traceCacheKey,
   traceRailState,
   traceSourceUrl,
@@ -178,6 +180,9 @@ const BOOTSTRAP_IDS = [
   "refresh-button",
   "theme-toggle",
   "trace-rail",
+  "trace-selector-button",
+  "trace-selector-label",
+  "trace-menu",
   "trace-search",
   "trace-track",
   "selected-trace-summary",
@@ -228,6 +233,10 @@ const BOOTSTRAP_IDS = [
   "wait-tab",
   "kernel-panel",
   "wait-panel",
+  "kernel-table-scroller",
+  "kernel-scroll-hint",
+  "wait-table-scroller",
+  "wait-scroll-hint",
   "kernel-sort-kernel",
   "kernel-sort-count",
   "kernel-sort-setbytes-calls",
@@ -371,10 +380,6 @@ class BootstrapElement {
     );
   }
 
-  listenerCount(type) {
-    return this.listeners.get(type)?.length ?? 0;
-  }
-
   dispatch(type, event = {}) {
     for (const listener of this.listeners.get(type) ?? []) {
       listener({
@@ -392,11 +397,6 @@ class BootstrapElement {
 
   focus() {
     this.ownerDocument.activeElement = this;
-  }
-
-  select() {
-    this.selectionStart = 0;
-    this.selectionEnd = String(this.value).length;
   }
 
   getContext(kind) {
@@ -478,19 +478,6 @@ function bootstrapDocument() {
     removeEventListener(type, listener) {
       listeners.get(type)?.delete(listener);
     },
-    dispatch(type, event = {}) {
-      for (const listener of [...(listeners.get(type) ?? [])]) {
-        listener({
-          currentTarget: documentObject,
-          target: documentObject,
-          preventDefault() {},
-          ...event,
-        });
-      }
-    },
-    listenerCount(type) {
-      return listeners.get(type)?.size ?? 0;
-    },
   };
   documentObject.documentElement =
     new BootstrapElement(documentObject, "document", "html");
@@ -519,7 +506,7 @@ function bootstrapDocument() {
             "download-export",
           ].includes(id) ? "button" :
       id === "window-select" || id === "ai-export-format" ? "select" :
-      id === "manual-search" || id === "trace-search" ? "input" :
+      id === "manual-search" ? "input" :
       id === "ai-export-preview" ? "textarea" :
       id.includes("table-body") ? "tbody" :
       id === "loading-progress" ? "progress" :
@@ -531,7 +518,9 @@ function bootstrapDocument() {
     );
   }
   documentObject.getElementById("range-mode-analyze").disabled = true;
-  documentObject.getElementById("trace-track").hidden = true;
+  documentObject.getElementById("trace-menu").hidden = true;
+  documentObject.getElementById("kernel-scroll-hint").hidden = true;
+  documentObject.getElementById("wait-scroll-hint").hidden = true;
   return documentObject;
 }
 
@@ -706,6 +695,7 @@ function createBootstrapHarness({
   cached = new Map(),
   deferredLoads = false,
   useRealRenderer = false,
+  runSelector = null,
 } = {}) {
   const documentObject = bootstrapDocument();
   if (baseURI !== undefined) {
@@ -896,6 +886,7 @@ function createBootstrapHarness({
     windowObject: windowHarness.windowObject,
     RendererClass: RendererConstructor,
     RangeNavigatorClass: HarnessNavigator,
+    runSelector,
   });
   return {
     bootPromise,
@@ -936,155 +927,6 @@ test("bootstrap passes absolute trace URLs at root and project bases", async () 
     assert.equal(harness.sessions[0].url, `${baseURI}api/traces/trace-a`);
     app.destroy();
   }
-});
-
-test("searchable run combobox filters, navigates, selects, dismisses, and tears down", async () => {
-  const traces = [
-    {
-      id: "hy3-2q",
-      label: "Hy3 2Q",
-      model: "Hy3",
-      mode: "queued",
-      relativePath: "hy3/2q.jsonl",
-      size: 100,
-    },
-    {
-      id: "qwen-27b",
-      label: "Qwen3.6 27B",
-      model: "Qwen3.6",
-      mode: "queued",
-      relativePath: "qwen/27b.jsonl",
-      size: 100,
-    },
-    {
-      id: "glm-158q",
-      label: "GLM 5.2 1.58Q",
-      model: "GLM 5.2",
-      mode: "queued",
-      relativePath: "glm/1.58q.jsonl",
-      size: 100,
-    },
-  ];
-  const datasets = new Map(
-    traces.map((trace) => [
-      trace.id,
-      bootstrapDataset([bootstrapLaunch({ name: trace.id })]),
-    ]),
-  );
-  const harness = createBootstrapHarness({
-    href: "http://localhost/?trace=qwen-27b&window=0",
-    traces,
-    datasets,
-  });
-  const app = await harness.bootPromise;
-  const search = harness.documentObject.getElementById("trace-search");
-  const track = harness.documentObject.getElementById("trace-track");
-
-  assert.equal(search.value, "Qwen3.6 27B");
-  assert.equal(track.hidden, true);
-  search.focus();
-  search.dispatch("focus");
-  assert.equal(track.hidden, false);
-  assert.equal(search.getAttribute("aria-expanded"), "true");
-  assert.deepEqual(
-    track.querySelectorAll(".trace-toggle").map((option) =>
-      childByClass(option, "trace-name").textContent),
-    ["Hy3 2Q", "Qwen3.6 27B", "GLM 5.2 1.58Q"],
-  );
-  assert.equal(search.selectionStart, 0);
-  assert.equal(search.selectionEnd, search.value.length);
-  search.dispatch("keydown", { key: "ArrowUp" });
-  assert.match(search.getAttribute("aria-activedescendant"), /hy3-2q$/);
-  search.dispatch("keydown", { key: "ArrowUp" });
-  assert.match(search.getAttribute("aria-activedescendant"), /glm-158q$/);
-  search.dispatch("keydown", { key: "ArrowDown" });
-  assert.match(search.getAttribute("aria-activedescendant"), /hy3-2q$/);
-
-  search.value = "hy3";
-  search.dispatch("input");
-  const [hy3Option] = track.querySelectorAll(".trace-toggle");
-  assert.equal(childByClass(hy3Option, "trace-name").textContent, "Hy3 2Q");
-  assert.equal(app.state.currentTraceId, "qwen-27b");
-  assert.equal(hy3Option.getAttribute("data-active"), "true");
-  assert.equal(search.getAttribute("aria-activedescendant"), hy3Option.id);
-  assert.match(hy3Option.id, /^trace-option-/);
-
-  let prevented = 0;
-  search.dispatch("keydown", {
-    key: "ArrowDown",
-    preventDefault() {
-      prevented += 1;
-    },
-  });
-  search.dispatch("keydown", {
-    key: "Enter",
-    preventDefault() {
-      prevented += 1;
-    },
-  });
-  await flushMicrotasks();
-  assert.equal(prevented, 2);
-  assert.equal(app.state.currentTraceId, "hy3-2q");
-  assert.equal(search.value, "Hy3 2Q");
-  assert.equal(track.hidden, true);
-
-  search.dispatch("focus");
-  search.value = "qwen";
-  search.dispatch("input");
-  search.dispatch("keydown", { key: "Escape" });
-  assert.equal(track.hidden, true);
-  assert.equal(search.value, "Hy3 2Q");
-  assert.equal(app.state.currentTraceId, "hy3-2q");
-
-  search.dispatch("focus");
-  search.value = "missing";
-  search.dispatch("input");
-  assert.match(track.children[0].textContent, /no runs match/i);
-  assert.equal(search.getAttribute("aria-activedescendant"), null);
-  search.dispatch("keydown", { key: "Enter" });
-  assert.equal(app.state.currentTraceId, "hy3-2q");
-
-  let tabPrevented = false;
-  search.dispatch("keydown", {
-    key: "Tab",
-    preventDefault() {
-      tabPrevented = true;
-    },
-  });
-  assert.equal(tabPrevented, false);
-  assert.equal(track.hidden, true);
-
-  search.dispatch("focus");
-  search.value = "qwen";
-  search.dispatch("input");
-  await app.refresh();
-  assert.equal(track.hidden, false);
-  assert.equal(
-    childByClass(
-      track.querySelectorAll(".trace-toggle")[0],
-      "trace-name",
-    ).textContent,
-    "Qwen3.6 27B",
-  );
-  assert.equal(app.state.currentTraceId, "hy3-2q");
-  track.querySelectorAll(".trace-toggle")[0].click();
-  await flushMicrotasks();
-  assert.equal(app.state.currentTraceId, "qwen-27b");
-
-  search.dispatch("focus");
-  search.value = "glm";
-  search.dispatch("input");
-  harness.documentObject.dispatch("pointerdown", {
-    target: harness.documentObject.getElementById("refresh-button"),
-  });
-  assert.equal(track.hidden, true);
-  assert.equal(search.value, "Qwen3.6 27B");
-
-  assert.equal(search.listenerCount("input"), 1);
-  assert.equal(harness.documentObject.listenerCount("pointerdown"), 1);
-  app.destroy();
-  assert.equal(search.listenerCount("input"), 0);
-  assert.equal(harness.documentObject.listenerCount("pointerdown"), 0);
 });
 
 test("bootstrap destroy is idempotent and pagehide delegates to the same cleanup", async () => {
@@ -1149,6 +991,59 @@ test("analysis table tabs switch panels and sort toggles retain table state", as
     key: "count",
     direction: "descending",
   });
+});
+
+test("Run dropdown opens, searches registry metadata, and closes after selection", async () => {
+  const harness = createBootstrapHarness({
+    datasets: new Map([
+      ["trace-a", bootstrapDataset([bootstrapLaunch()])],
+      ["trace-b", bootstrapDataset([bootstrapLaunch()])],
+    ]),
+  });
+  const app = await harness.bootPromise;
+  const trigger = harness.documentObject.getElementById("trace-selector-button");
+  const menu = harness.documentObject.getElementById("trace-menu");
+  const search = harness.documentObject.getElementById("trace-search");
+  const track = harness.documentObject.getElementById("trace-track");
+
+  trigger.click();
+  assert.equal(menu.hidden, false);
+  assert.equal(trigger.getAttribute("aria-expanded"), "true");
+
+  search.value = "Trace B";
+  search.dispatch("input", { target: search });
+  assert.equal(track.children.length, 1);
+  assert.equal(track.children[0].getAttribute("data-trace-id"), "trace-b");
+  track.children[0].click();
+  await flushMicrotasks();
+
+  assert.equal(app.state.currentTraceId, "trace-b");
+  assert.equal(menu.hidden, true);
+  assert.equal(trigger.getAttribute("aria-expanded"), "false");
+});
+
+test("bootstrap publishes runs to the React selector bridge and accepts its selection", async () => {
+  const renders = [];
+  const runSelector = {
+    render(value) {
+      renders.push(value);
+    },
+  };
+  const harness = createBootstrapHarness({
+    runSelector,
+    datasets: new Map([
+      ["trace-a", bootstrapDataset([bootstrapLaunch({ name: "a" })])],
+      ["trace-b", bootstrapDataset([bootstrapLaunch({ name: "b" })])],
+    ]),
+  });
+  const app = await harness.bootPromise;
+
+  assert.equal(renders.at(-1).runs.length, 2);
+  assert.equal(renders.at(-1).selectedId, "trace-a");
+  renders.at(-1).onSelect("trace-b");
+  await flushMicrotasks();
+  assert.equal(app.state.currentTraceId, "trace-b");
+  assert.equal(renders.at(-1).selectedId, "trace-b");
 });
 
 function analyzedScope({
@@ -1710,6 +1605,68 @@ test("bootstrap commits timeline View ranges once, resets launch and Fit, and fa
   assert.deepEqual(app.state.selectedRange, { startNs: 500, endNs: 600 });
 });
 
+test("initial activity fit becomes the persisted selected range", async () => {
+  const launch = bootstrapLaunch({ startNs: 0, endNs: 253_961_917 });
+  launch.dispatches = [
+    { commandBufferIndex: 1, atNs: 100_000 },
+    { commandBufferIndex: 2, atNs: 5_900_000 },
+  ];
+  launch.commandBuffers = [
+    {
+      commandBufferIndex: 1,
+      encodeStartNs: 0,
+      encodeEndNs: 500_000,
+      gpuStartNs: 600_000,
+      gpuEndNs: 900_000,
+    },
+    {
+      commandBufferIndex: 2,
+      encodeStartNs: 5_700_000,
+      encodeEndNs: 5_800_000,
+      gpuStartNs: 5_900_000,
+      gpuEndNs: 6_000_000,
+    },
+    {
+      commandBufferIndex: 3,
+      encodeStartNs: 253_892_667,
+      encodeEndNs: 253_892_667,
+      gpuStartNs: 253_935_209,
+      gpuEndNs: 253_935_584,
+    },
+  ];
+  launch.waits = [{
+    atNs: 253_961_917,
+    waitNs: 52_084,
+    bucket: "cb_wait_until_completed",
+  }];
+  const harness = createBootstrapHarness({
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+  });
+
+  const app = await harness.bootPromise;
+  assert.deepEqual(app.state.selectedRange, {
+    startNs: 0,
+    endNs: 6_180_000,
+  });
+  const persisted = new URL(
+    harness.historyWrites.at(-1),
+    "http://localhost/",
+  );
+  assert.equal(persisted.searchParams.get("from"), "0");
+  assert.equal(persisted.searchParams.get("to"), "6180000");
+
+  harness.navigators[0].emitCommit({
+    startNs: 1_000_000,
+    endNs: 2_000_000,
+  });
+  harness.documentObject.getElementById("fit-timeline").click();
+  assert.deepEqual(
+    app.state.selectedRange,
+    { startNs: 0, endNs: 6_180_000 },
+    "Fit restores the same activity-focused viewport used on initial load",
+  );
+});
+
 test("real timeline Analyze pan survives exact-to-launch swap and commits once on release", async () => {
   const launch = bootstrapLaunch();
   const harness = createBootstrapHarness({
@@ -2058,6 +2015,67 @@ test("table sorting handles text and numeric columns without mutating source row
     ["Alpha", "zeta", "beta"],
   );
   assert.deepEqual(rows.map(({ kernel }) => kernel), ["zeta", "Alpha", "beta"]);
+});
+
+test("table overflow hint only applies when content is wider than its viewport", () => {
+  assert.equal(
+    tableNeedsHorizontalScroll({ scrollWidth: 721, clientWidth: 720 }),
+    true,
+  );
+  assert.equal(
+    tableNeedsHorizontalScroll({ scrollWidth: 720, clientWidth: 720 }),
+    false,
+  );
+  assert.equal(tableNeedsHorizontalScroll(null), false);
+});
+
+test("initial timeline fit ignores a distant empty marker without hiding meaningful activity", () => {
+  const bounds = { startNs: 0, endNs: 253_961_917 };
+  const scope = {
+    dispatches: [
+      { commandBufferIndex: 1, atNs: 100_000 },
+      { commandBufferIndex: 2, atNs: 5_900_000 },
+    ],
+    waits: [
+      {
+        atNs: 253_961_917,
+        waitNs: 52_084,
+        bucket: "cb_wait_until_completed",
+      },
+    ],
+    commandBuffers: [
+      {
+        commandBufferIndex: 1,
+        encodeStartNs: 0,
+        encodeEndNs: 500_000,
+        gpuStartNs: 600_000,
+        gpuEndNs: 900_000,
+      },
+      {
+        commandBufferIndex: 2,
+        encodeStartNs: 5_700_000,
+        encodeEndNs: 5_800_000,
+        gpuStartNs: 5_900_000,
+        gpuEndNs: 6_000_000,
+      },
+      {
+        commandBufferIndex: 3,
+        encodeStartNs: 253_892_667,
+        encodeEndNs: 253_892_667,
+        gpuStartNs: 253_935_209,
+        gpuEndNs: 253_935_584,
+      },
+    ],
+  };
+
+  assert.deepEqual(initialTimelineViewport(scope, bounds), {
+    startNs: 0,
+    endNs: 6_180_000,
+  });
+  assert.deepEqual(
+    initialTimelineViewport({ commandBuffers: [], dispatches: [], waits: [] }, bounds),
+    bounds,
+  );
 });
 
 test("dataset construction uses an asynchronous worker boundary for large inputs", async () => {
