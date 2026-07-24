@@ -993,6 +993,12 @@ test("searchable run combobox filters, navigates, selects, dismisses, and tears 
   );
   assert.equal(search.selectionStart, 0);
   assert.equal(search.selectionEnd, search.value.length);
+  search.dispatch("keydown", { key: "ArrowUp" });
+  assert.match(search.getAttribute("aria-activedescendant"), /hy3-2q$/);
+  search.dispatch("keydown", { key: "ArrowUp" });
+  assert.match(search.getAttribute("aria-activedescendant"), /glm-158q$/);
+  search.dispatch("keydown", { key: "ArrowDown" });
+  assert.match(search.getAttribute("aria-activedescendant"), /hy3-2q$/);
 
   search.value = "hy3";
   search.dispatch("input");
@@ -1061,12 +1067,18 @@ test("searchable run combobox filters, navigates, selects, dismisses, and tears 
     "Qwen3.6 27B",
   );
   assert.equal(app.state.currentTraceId, "hy3-2q");
+  track.querySelectorAll(".trace-toggle")[0].click();
+  await flushMicrotasks();
+  assert.equal(app.state.currentTraceId, "qwen-27b");
 
+  search.dispatch("focus");
+  search.value = "glm";
+  search.dispatch("input");
   harness.documentObject.dispatch("pointerdown", {
     target: harness.documentObject.getElementById("refresh-button"),
   });
   assert.equal(track.hidden, true);
-  assert.equal(search.value, "Hy3 2Q");
+  assert.equal(search.value, "Qwen3.6 27B");
 
   assert.equal(search.listenerCount("input"), 1);
   assert.equal(harness.documentObject.listenerCount("pointerdown"), 1);

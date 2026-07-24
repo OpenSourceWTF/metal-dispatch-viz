@@ -55,6 +55,29 @@ npm start -- --trace-dir /path/to/trace-folder
 `http://127.0.0.1:4173/`. Without `--trace-dir`, Express reads
 `traces/showcase`.
 
+## shadcn component development
+
+The React/Vite client is configured for JavaScript shadcn/ui components with
+Tailwind CSS v4. `components.json` owns the component paths and aliases,
+`src/index.css` bridges shadcn semantic utilities to the existing profiler
+tokens, and `src/lib/utils.js` provides the conventional `cn()` helper.
+
+This compatibility layer does not migrate the current workbench. The trace
+selector, worker, timeline, and evidence state remain controller-owned, and the
+existing profiler stylesheet remains visually authoritative.
+
+The CLI is not installed as a project dependency. Its current MCP dependency
+chain includes a dev-only Hono release affected by
+[GHSA-frvp-7c67-39w9](https://github.com/advisories/GHSA-frvp-7c67-39w9).
+Use the reviewed CLI version explicitly when adding a component:
+
+```sh
+npx --yes shadcn@4.14.1 add button
+```
+
+Replace `button` with the component name, then review and test every generated
+file and dependency before committing it.
+
 ## Bundled showcase
 
 The default folder contains curated, referentially closed windows from five
@@ -148,8 +171,9 @@ content-hashed JavaScript, CSS, and worker bundles.
 ## Workbench controls
 
 - Search runs from the top Run dropdown by label, path, model, mode,
-  checkpoint, quantization, or capture metadata. Arrow keys move through
-  matches and Enter loads the highlighted run.
+  checkpoint, quantization, or capture metadata. Focus opens every run, typing
+  filters immediately, Arrow keys move through matches, Enter loads the active
+  run, and Escape dismisses the list without changing the loaded run.
 - Choose a launch when a file contains more than one launch window. The
   selector is hidden for a single launch.
 - Use the timeline buttons, mouse wheel, or keyboard: arrows pan,

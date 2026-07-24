@@ -113,17 +113,17 @@ JavaScript application:
   `@/lib/utils`, and `@/hooks` aliases.
 - `src/lib/utils.js` exports the conventional `cn()` helper using `clsx` and
   `tailwind-merge`.
-- `src/index.css` imports Tailwind and the shadcn Tailwind utilities, defines
-  shadcn semantic tokens in terms of the existing profiler tokens, and maps
-  dark variants to `[data-theme="dark"]`.
+- `src/index.css` imports Tailwind and the animation utilities, defines shadcn
+  semantic tokens in terms of the existing profiler tokens, and maps dark
+  variants to `[data-theme="dark"]`.
 - `src/main.jsx` imports the compatibility stylesheet before the existing
   profiler stylesheet so the profiler's current rules remain authoritative.
 
 The compatibility gate is:
 
-1. `npx shadcn info --json` resolves the project as React/Vite,
+1. `npx --yes shadcn@4.14.1 info --json` resolves the project as React/Vite,
    JavaScript, Tailwind v4, and the declared aliases.
-2. `npx shadcn add button --dry-run` resolves the target paths and
+2. `npx --yes shadcn@4.14.1 add button --dry-run` resolves the target paths and
    dependencies without modifying the worktree.
 3. The production bundle and existing Pages verifier still pass.
 
@@ -133,6 +133,12 @@ Only baseline shadcn compatibility dependencies are installed. Component-
 specific primitives are not added until a real component is selected in a
 future change. Every package is exact-version pinned and audited under the
 repository's existing dependency contract.
+
+The shadcn CLI itself remains a pinned `npx` tool rather than a project
+dependency. Version 4.14.1 currently pulls an MCP SDK whose Hono 1.x adapter is
+affected by GHSA-frvp-7c67-39w9 and has no compatible patched transitive
+release. The CLI is used only for explicit inspection and generation; the
+runtime and build remain audit-clean without it.
 
 ## Error handling
 
