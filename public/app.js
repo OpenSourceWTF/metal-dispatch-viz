@@ -706,6 +706,29 @@ export function waitRowsForScope(scope) {
     .sort((left, right) => lexicalCompare(left.bucket, right.bucket));
 }
 
+export function sortTableRows(rows, key, direction = "ascending") {
+  const multiplier = direction === "descending" ? -1 : 1;
+  return (Array.isArray(rows) ? rows : [])
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const leftValue = left.row?.[key];
+      const rightValue = right.row?.[key];
+      let comparison;
+      if (Number.isFinite(leftValue) || Number.isFinite(rightValue)) {
+        comparison = finiteOrZero(leftValue) - finiteOrZero(rightValue);
+      } else {
+        comparison = lexicalCompare(
+          String(leftValue ?? ""),
+          String(rightValue ?? ""),
+        );
+      }
+      return comparison === 0
+        ? left.index - right.index
+        : comparison * multiplier;
+    })
+    .map(({ row }) => row);
+}
+
 export function samplingDisclosure(scope) {
   const sampling = scope?.renderSampling;
   if (sampling?.active !== true) return null;
@@ -2028,6 +2051,24 @@ export async function bootstrap({
     rangeStatus: byId("range-status"),
     rangeOmissions: byId("range-omissions"),
     tables: byId("analysis-tables"),
+    tableTabs: byId("analysis-table-tabs"),
+    kernelTab: byId("kernel-tab"),
+    waitTab: byId("wait-tab"),
+    kernelPanel: byId("kernel-panel"),
+    waitPanel: byId("wait-panel"),
+    kernelSortButtons: [
+      ["kernel", byId("kernel-sort-kernel")],
+      ["count", byId("kernel-sort-count")],
+      ["setBytesCalls", byId("kernel-sort-setbytes-calls")],
+      ["setBytesTotalBytes", byId("kernel-sort-setbytes-bytes")],
+      ["bufferBinds", byId("kernel-sort-buffer-binds")],
+    ],
+    waitSortButtons: [
+      ["bucket", byId("wait-sort-bucket")],
+      ["count", byId("wait-sort-count")],
+      ["waitNs", byId("wait-sort-duration")],
+      ["evidence", byId("wait-sort-evidence")],
+    ],
     manualButton: byId("field-manual-button"),
     utilityBackdrop: byId("utility-backdrop"),
     manualDrawer: byId("field-manual-drawer"),
@@ -2092,6 +2133,11 @@ export async function bootstrap({
     pendingRangeInput: null,
     inspectorPayload: null,
     destroyed: false,
+    tableTab: "kernel",
+    tableSort: {
+      kernel: { key: null, direction: "ascending" },
+      wait: { key: null, direction: "ascending" },
+    },
   };
   const helpController = createHelpController({
     documentObject,
@@ -2791,9 +2837,36 @@ export async function bootstrap({
     return cell;
   }
 
+  function waitEvidenceText(item) {
+    return item.additive
+      ? `${item.waitClass} · measured`
+      : item.bucket === "sched_backpressure"
+        ? "scheduler mirror · non-additive"
+        : "worker idle · non-additive";
+  }
+
+  function updateSortHeaders(table, buttons) {
+    const sort = state.tableSort[table];
+    for (const [key, button] of buttons) {
+      const active = sort.key === key;
+      const direction = active ? sort.direction : "none";
+      button.parentElement?.setAttribute("aria-sort", direction);
+      const indicator = button.querySelector?.(".sort-indicator");
+      if (indicator) {
+        indicator.textContent =
+          !active ? "↕" : sort.direction === "ascending" ? "↑" : "↓";
+      }
+    }
+  }
+
   function renderKernelTable(scope) {
     elements.kernelBody.replaceChildren();
-    const rows = kernelRowsForScope(scope);
+    const sourceRows = kernelRowsForScope(scope);
+    const sort = state.tableSort.kernel;
+    const rows = sort.key
+      ? sortTableRows(sourceRows, sort.key, sort.direction)
+      : sourceRows;
+    updateSortHeaders("kernel", elements.kernelSortButtons);
     elements.kernelState.textContent = `${rows.length} kernels`;
     if (rows.length === 0) {
       const row = documentObject.createElement("tr");
@@ -2818,7 +2891,15 @@ export async function bootstrap({
 
   function renderWaitTable(scope) {
     elements.waitBody.replaceChildren();
-    const rows = waitRowsForScope(scope);
+    const sourceRows = waitRowsForScope(scope).map((item) => ({
+      ...item,
+      evidence: waitEvidenceText(item),
+    }));
+    const sort = state.tableSort.wait;
+    const rows = sort.key
+      ? sortTableRows(sourceRows, sort.key, sort.direction)
+      : sourceRows;
+    updateSortHeaders("wait", elements.waitSortButtons);
     elements.waitState.textContent = `${rows.length} buckets`;
     if (rows.length === 0) {
       const row = documentObject.createElement("tr");
@@ -2844,11 +2925,7 @@ export async function bootstrap({
       const evidenceCell = appendTableCell(
         row,
         "td",
-        item.additive
-          ? `${item.waitClass} · measured`
-          : item.bucket === "sched_backpressure"
-            ? "scheduler mirror · non-additive"
-            : "worker idle · non-additive",
+        item.evidence,
       );
       appendTermTrigger(
         documentObject,
@@ -3510,6 +3587,49 @@ export async function bootstrap({
       event,
     });
   };
+  const selectTableTab = (tab, { focus = false } = {}) => {
+    const kernelActive = tab !== "wait";
+    state.tableTab = kernelActive ? "kernel" : "wait";
+    elements.kernelTab.setAttribute("aria-selected", String(kernelActive));
+    elements.waitTab.setAttribute("aria-selected", String(!kernelActive));
+    elements.kernelTab.tabIndex = kernelActive ? 0 : -1;
+    elements.waitTab.tabIndex = kernelActive ? -1 : 0;
+    elements.kernelPanel.hidden = !kernelActive;
+    elements.waitPanel.hidden = kernelActive;
+    if (focus) {
+      (kernelActive ? elements.kernelTab : elements.waitTab)
+        .focus?.({ preventScroll: true });
+    }
+  };
+  const handleKernelTab = () => selectTableTab("kernel");
+  const handleWaitTab = () => selectTableTab("wait");
+  const handleTableTabKeydown = (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      return;
+    }
+    const next =
+      event.key === "ArrowLeft" || event.key === "Home" ? "kernel" : "wait";
+    selectTableTab(next, { focus: true });
+    event.preventDefault?.();
+  };
+  const sortListeners = [];
+  const installSortListeners = (table, buttons, render) => {
+    for (const [key, button] of buttons) {
+      const listener = () => {
+        const current = state.tableSort[table];
+        state.tableSort[table] = {
+          key,
+          direction:
+            current.key === key && current.direction === "ascending"
+              ? "descending"
+              : "ascending",
+        };
+        render(state.activeScope);
+      };
+      button.addEventListener("click", listener);
+      sortListeners.push([button, listener]);
+    }
+  };
 
   elements.refresh.addEventListener("click", handleRefresh);
   elements.theme.addEventListener("click", handleTheme);
@@ -3521,6 +3641,12 @@ export async function bootstrap({
   elements.zoomIn.addEventListener("click", handleZoomIn);
   elements.zoomOut.addEventListener("click", handleZoomOut);
   elements.rail.addEventListener("keydown", handleRailKeydown);
+  elements.kernelTab.addEventListener("click", handleKernelTab);
+  elements.waitTab.addEventListener("click", handleWaitTab);
+  elements.tableTabs.addEventListener("keydown", handleTableTabKeydown);
+  installSortListeners("kernel", elements.kernelSortButtons, renderKernelTable);
+  installSortListeners("wait", elements.waitSortButtons, renderWaitTable);
+  selectTableTab("kernel");
 
   for (const element of [
     elements.refresh,
@@ -3559,6 +3685,12 @@ export async function bootstrap({
     elements.zoomIn.removeEventListener?.("click", handleZoomIn);
     elements.zoomOut.removeEventListener?.("click", handleZoomOut);
     elements.rail.removeEventListener?.("keydown", handleRailKeydown);
+    elements.kernelTab.removeEventListener?.("click", handleKernelTab);
+    elements.waitTab.removeEventListener?.("click", handleWaitTab);
+    elements.tableTabs.removeEventListener?.("keydown", handleTableTabKeydown);
+    for (const [button, listener] of sortListeners) {
+      button.removeEventListener?.("click", listener);
+    }
     windowObject.removeEventListener?.("pagehide", pagehide);
     signal?.removeEventListener?.("abort", destroy);
   }
