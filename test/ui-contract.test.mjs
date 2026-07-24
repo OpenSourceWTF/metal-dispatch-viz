@@ -198,9 +198,16 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     "refresh-button",
     "theme-toggle",
     "trace-rail",
+    "trace-selector-button",
+    "trace-selector-label",
+    "trace-menu",
     "trace-search",
     "trace-track",
     "selected-trace-summary",
+    "kernel-table-scroller",
+    "kernel-scroll-hint",
+    "wait-table-scroller",
+    "wait-scroll-hint",
     "trace-status",
     "provenance-strip",
     "health-strip",
@@ -239,7 +246,9 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     assert.ok(byId.has(id), `#${id}`);
   }
 
-  assert.equal(byId.get("trace-search").attributes.get("role"), "combobox");
+  assert.equal(byId.get("trace-selector-button").attributes.get("aria-haspopup"), "listbox");
+  assert.equal(byId.get("trace-selector-button").attributes.get("aria-controls"), "trace-menu");
+  assert.equal(byId.get("trace-search").attributes.get("role"), "searchbox");
   assert.equal(byId.get("trace-search").attributes.get("aria-controls"), "trace-track");
   assert.equal(byId.get("trace-track").attributes.get("role"), "listbox");
 

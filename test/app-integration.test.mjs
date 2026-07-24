@@ -19,6 +19,7 @@ import {
   renderTraceRail,
   samplingDisclosure,
   sortTableRows,
+  tableNeedsHorizontalScroll,
   traceCacheKey,
   traceRailState,
   traceSourceUrl,
@@ -178,6 +179,9 @@ const BOOTSTRAP_IDS = [
   "refresh-button",
   "theme-toggle",
   "trace-rail",
+  "trace-selector-button",
+  "trace-selector-label",
+  "trace-menu",
   "trace-search",
   "trace-track",
   "selected-trace-summary",
@@ -228,6 +232,10 @@ const BOOTSTRAP_IDS = [
   "wait-tab",
   "kernel-panel",
   "wait-panel",
+  "kernel-table-scroller",
+  "kernel-scroll-hint",
+  "wait-table-scroller",
+  "wait-scroll-hint",
   "kernel-sort-kernel",
   "kernel-sort-count",
   "kernel-sort-setbytes-calls",
@@ -509,6 +517,9 @@ function bootstrapDocument() {
     );
   }
   documentObject.getElementById("range-mode-analyze").disabled = true;
+  documentObject.getElementById("trace-menu").hidden = true;
+  documentObject.getElementById("kernel-scroll-hint").hidden = true;
+  documentObject.getElementById("wait-scroll-hint").hidden = true;
   return documentObject;
 }
 
@@ -977,6 +988,35 @@ test("analysis table tabs switch panels and sort toggles retain table state", as
     key: "count",
     direction: "descending",
   });
+});
+
+test("Run dropdown opens, searches registry metadata, and closes after selection", async () => {
+  const harness = createBootstrapHarness({
+    datasets: new Map([
+      ["trace-a", bootstrapDataset([bootstrapLaunch()])],
+      ["trace-b", bootstrapDataset([bootstrapLaunch()])],
+    ]),
+  });
+  const app = await harness.bootPromise;
+  const trigger = harness.documentObject.getElementById("trace-selector-button");
+  const menu = harness.documentObject.getElementById("trace-menu");
+  const search = harness.documentObject.getElementById("trace-search");
+  const track = harness.documentObject.getElementById("trace-track");
+
+  trigger.click();
+  assert.equal(menu.hidden, false);
+  assert.equal(trigger.getAttribute("aria-expanded"), "true");
+
+  search.value = "Trace B";
+  search.dispatch("input", { target: search });
+  assert.equal(track.children.length, 1);
+  assert.equal(track.children[0].getAttribute("data-trace-id"), "trace-b");
+  track.children[0].click();
+  await flushMicrotasks();
+
+  assert.equal(app.state.currentTraceId, "trace-b");
+  assert.equal(menu.hidden, true);
+  assert.equal(trigger.getAttribute("aria-expanded"), "false");
 });
 
 function analyzedScope({
@@ -1869,6 +1909,18 @@ test("table sorting handles text and numeric columns without mutating source row
     ["Alpha", "zeta", "beta"],
   );
   assert.deepEqual(rows.map(({ kernel }) => kernel), ["zeta", "Alpha", "beta"]);
+});
+
+test("table overflow hint only applies when content is wider than its viewport", () => {
+  assert.equal(
+    tableNeedsHorizontalScroll({ scrollWidth: 721, clientWidth: 720 }),
+    true,
+  );
+  assert.equal(
+    tableNeedsHorizontalScroll({ scrollWidth: 720, clientWidth: 720 }),
+    false,
+  );
+  assert.equal(tableNeedsHorizontalScroll(null), false);
 });
 
 test("dataset construction uses an asynchronous worker boundary for large inputs", async () => {

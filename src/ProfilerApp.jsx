@@ -158,26 +158,37 @@ export function ProfilerApp({
             aria-label="Run selector"
             aria-busy="true"
           >
-            <div className="trace-combobox">
-              <label htmlFor="trace-search">Run</label>
-              <input
-                id="trace-search"
-                type="search"
-                role="combobox"
-                aria-autocomplete="list"
-                aria-controls="trace-track"
+            <div className="trace-dropdown">
+              <span className="trace-dropdown-caption">Run</span>
+              <button
+                id="trace-selector-button"
+                className="trace-selector-button"
+                type="button"
+                aria-haspopup="listbox"
+                aria-controls="trace-menu"
                 aria-expanded="false"
-                placeholder="Search runs…"
-                autoComplete="off"
                 disabled
-              />
-              <div
-                id="trace-track"
-                className="trace-track"
-                role="listbox"
-                hidden
               >
-                <p className="trace-rail-empty">Scanning directory…</p>
+                <span id="trace-selector-label">Waiting for registry</span>
+                <span className="dropdown-caret" aria-hidden="true">▾</span>
+              </button>
+              <div id="trace-menu" className="trace-menu" hidden>
+                <label htmlFor="trace-search">Search runs</label>
+                <input
+                  id="trace-search"
+                  type="search"
+                  role="searchbox"
+                  aria-controls="trace-track"
+                  placeholder="Model, mode, path…"
+                  autoComplete="off"
+                />
+                <div
+                  id="trace-track"
+                  className="trace-track"
+                  role="listbox"
+                >
+                  <p className="trace-rail-empty">Scanning directory…</p>
+                </div>
               </div>
             </div>
             <output
@@ -585,11 +596,20 @@ export function ProfilerApp({
                     </span>
                   </div>
                   <div
+                    id="kernel-table-scroller"
                     className="table-scroller"
                     tabIndex="0"
                     role="region"
                     aria-label="Scrollable kernel census"
                   >
+                    <p
+                      id="kernel-scroll-hint"
+                      className="table-scroll-hint"
+                      role="note"
+                      hidden
+                    >
+                      Scroll horizontally for more columns →
+                    </p>
                     <table id="kernel-table">
                       <caption>
                         Kernel dispatch counts, setBytes activity, and buffer binds
@@ -639,11 +659,20 @@ export function ProfilerApp({
                     </span>
                   </div>
                   <div
+                    id="wait-table-scroller"
                     className="table-scroller"
                     tabIndex="0"
                     role="region"
                     aria-label="Scrollable wait taxonomy"
                   >
+                    <p
+                      id="wait-scroll-hint"
+                      className="table-scroll-hint"
+                      role="note"
+                      hidden
+                    >
+                      Scroll horizontally for more columns →
+                    </p>
                     <table id="wait-table">
                       <caption>Wait causes, counts, and measured duration</caption>
                       <thead>

@@ -729,6 +729,15 @@ export function sortTableRows(rows, key, direction = "ascending") {
     .map(({ row }) => row);
 }
 
+export function tableNeedsHorizontalScroll(scroller) {
+  return Boolean(
+    scroller &&
+    Number.isFinite(scroller.scrollWidth) &&
+    Number.isFinite(scroller.clientWidth) &&
+    scroller.scrollWidth > scroller.clientWidth
+  );
+}
+
 export function samplingDisclosure(scope) {
   const sampling = scope?.renderSampling;
   if (sampling?.active !== true) return null;
@@ -2006,6 +2015,9 @@ export async function bootstrap({
     refresh: byId("refresh-button"),
     theme: byId("theme-toggle"),
     rail: byId("trace-rail"),
+    traceSelectorButton: byId("trace-selector-button"),
+    traceSelectorLabel: byId("trace-selector-label"),
+    traceMenu: byId("trace-menu"),
     traceSearch: byId("trace-search"),
     track: byId("trace-track"),
     selectedTraceSummary: byId("selected-trace-summary"),
@@ -2069,6 +2081,10 @@ export async function bootstrap({
       ["waitNs", byId("wait-sort-duration")],
       ["evidence", byId("wait-sort-evidence")],
     ],
+    kernelTableScroller: byId("kernel-table-scroller"),
+    kernelScrollHint: byId("kernel-scroll-hint"),
+    waitTableScroller: byId("wait-table-scroller"),
+    waitScrollHint: byId("wait-scroll-hint"),
     manualButton: byId("field-manual-button"),
     utilityBackdrop: byId("utility-backdrop"),
     manualDrawer: byId("field-manual-drawer"),
@@ -2590,19 +2606,28 @@ export async function bootstrap({
     }
   }
 
+  function closeTraceMenu({ restoreFocus = false } = {}) {
+    elements.traceMenu.hidden = true;
+    elements.traceSelectorButton.setAttribute("aria-expanded", "false");
+    if (restoreFocus) {
+      elements.traceSelectorButton.focus?.({ preventScroll: true });
+    }
+  }
+
+  function openTraceMenu() {
+    if (elements.traceSelectorButton.disabled) return;
+    elements.traceMenu.hidden = false;
+    elements.traceSelectorButton.setAttribute("aria-expanded", "true");
+    elements.traceSearch.value = "";
+    renderRegistry();
+    elements.traceSearch.focus?.({ preventScroll: true });
+  }
+
   function renderRegistry() {
     elements.rail.setAttribute("aria-busy", "false");
     const selectedTrace = state.traces.find((trace) => trace?.id === state.currentTraceId);
-    if (
-      selectedTrace &&
-      elements.track.hidden &&
-      documentObject.activeElement !== elements.traceSearch
-    ) {
-      elements.traceSearch.value = traceLabel(selectedTrace);
-    }
     const visibleTraces = filterTraces(state.traces, elements.traceSearch.value);
-    elements.traceSearch.disabled = state.traces.length === 0;
-    elements.traceSearch.setAttribute("aria-expanded", String(!elements.track.hidden));
+    elements.traceSelectorButton.disabled = state.traces.length === 0;
     renderTraceRail({
       documentObject,
       track: elements.track,
@@ -2615,9 +2640,9 @@ export async function bootstrap({
           : "No runs match this search.",
       onSelect(id) {
         const trace = state.traces.find((item) => item?.id === id);
-        elements.traceSearch.value = trace ? traceLabel(trace) : "";
-        elements.track.hidden = true;
-        elements.traceSearch.setAttribute("aria-expanded", "false");
+        elements.traceSelectorLabel.textContent =
+          trace ? traceLabel(trace) : "Choose a run";
+        closeTraceMenu();
         void selectTrace(id, {
           requestedWindow: 0,
           recordSelection: true,
@@ -2625,6 +2650,7 @@ export async function bootstrap({
       },
     });
     if (selectedTrace) {
+      elements.traceSelectorLabel.textContent = traceLabel(selectedTrace);
       const railState = traceRailState(
         selectedTrace,
         state.evidenceByCacheKey.get(traceCacheKey(selectedTrace)),
@@ -2632,6 +2658,8 @@ export async function bootstrap({
       elements.selectedTraceSummary.textContent =
         `${railState.model} · ${railState.mode} · ${railState.evidence}`;
     } else {
+      elements.traceSelectorLabel.textContent =
+        state.traces.length === 0 ? "No runs available" : "Choose a run";
       elements.selectedTraceSummary.textContent =
         state.traces.length === 0 ? "No runs available" : "Choose a run";
     }
@@ -2876,6 +2904,7 @@ export async function bootstrap({
         appendTableCell(row, "td", "—");
       }
       elements.kernelBody.append(row);
+      updateTableScrollHints();
       return;
     }
     for (const item of rows) {
@@ -2887,6 +2916,7 @@ export async function bootstrap({
       appendTableCell(row, "td", item.bufferBinds);
       elements.kernelBody.append(row);
     }
+    updateTableScrollHints();
   }
 
   function renderWaitTable(scope) {
@@ -2909,6 +2939,7 @@ export async function bootstrap({
         appendTableCell(row, "td", "—");
       }
       elements.waitBody.append(row);
+      updateTableScrollHints();
       return;
     }
     for (const item of rows) {
@@ -2935,6 +2966,16 @@ export async function bootstrap({
       );
       elements.waitBody.append(row);
     }
+    updateTableScrollHints();
+  }
+
+  function updateTableScrollHints() {
+    elements.kernelScrollHint.hidden = !tableNeedsHorizontalScroll(
+      elements.kernelTableScroller,
+    );
+    elements.waitScrollHint.hidden = !tableNeedsHorizontalScroll(
+      elements.waitTableScroller,
+    );
   }
 
   function renderTablePlaceholder(body, columnCount, message) {
@@ -3581,12 +3622,34 @@ export async function bootstrap({
     renderer.handleKeyDown({ key: "-", preventDefault() {} });
   };
   const handleRailKeydown = (event) => {
+    if (event.key === "Escape" && !elements.traceMenu.hidden) {
+      closeTraceMenu({ restoreFocus: true });
+      event.preventDefault?.();
+      return;
+    }
     handleTraceRailKey({
       documentObject,
       track: elements.track,
       event,
     });
   };
+  const handleTraceSelector = () => {
+    if (elements.traceMenu.hidden) {
+      openTraceMenu();
+    } else {
+      closeTraceMenu({ restoreFocus: true });
+    }
+  };
+  const handleTraceSearch = () => {
+    renderRegistry();
+  };
+  const handleOutsideTraceMenu = (event) => {
+    if (elements.traceMenu.hidden || elements.rail.contains?.(event.target)) {
+      return;
+    }
+    closeTraceMenu();
+  };
+  const handleTableResize = () => updateTableScrollHints();
   const selectTableTab = (tab, { focus = false } = {}) => {
     const kernelActive = tab !== "wait";
     state.tableTab = kernelActive ? "kernel" : "wait";
@@ -3596,6 +3659,7 @@ export async function bootstrap({
     elements.waitTab.tabIndex = kernelActive ? -1 : 0;
     elements.kernelPanel.hidden = !kernelActive;
     elements.waitPanel.hidden = kernelActive;
+    updateTableScrollHints();
     if (focus) {
       (kernelActive ? elements.kernelTab : elements.waitTab)
         .focus?.({ preventScroll: true });
@@ -3641,6 +3705,10 @@ export async function bootstrap({
   elements.zoomIn.addEventListener("click", handleZoomIn);
   elements.zoomOut.addEventListener("click", handleZoomOut);
   elements.rail.addEventListener("keydown", handleRailKeydown);
+  elements.traceSelectorButton.addEventListener("click", handleTraceSelector);
+  elements.traceSearch.addEventListener("input", handleTraceSearch);
+  documentObject.addEventListener("pointerdown", handleOutsideTraceMenu);
+  windowObject.addEventListener("resize", handleTableResize);
   elements.kernelTab.addEventListener("click", handleKernelTab);
   elements.waitTab.addEventListener("click", handleWaitTab);
   elements.tableTabs.addEventListener("keydown", handleTableTabKeydown);
@@ -3685,6 +3753,13 @@ export async function bootstrap({
     elements.zoomIn.removeEventListener?.("click", handleZoomIn);
     elements.zoomOut.removeEventListener?.("click", handleZoomOut);
     elements.rail.removeEventListener?.("keydown", handleRailKeydown);
+    elements.traceSelectorButton.removeEventListener?.(
+      "click",
+      handleTraceSelector,
+    );
+    elements.traceSearch.removeEventListener?.("input", handleTraceSearch);
+    documentObject.removeEventListener?.("pointerdown", handleOutsideTraceMenu);
+    windowObject.removeEventListener?.("resize", handleTableResize);
     elements.kernelTab.removeEventListener?.("click", handleKernelTab);
     elements.waitTab.removeEventListener?.("click", handleWaitTab);
     elements.tableTabs.removeEventListener?.("keydown", handleTableTabKeydown);

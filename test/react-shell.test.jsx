@@ -15,6 +15,9 @@ const BOOTSTRAP_IDS = [
   "refresh-button",
   "theme-toggle",
   "trace-rail",
+  "trace-selector-button",
+  "trace-selector-label",
+  "trace-menu",
   "trace-search",
   "trace-track",
   "selected-trace-summary",
@@ -65,6 +68,10 @@ const BOOTSTRAP_IDS = [
   "wait-tab",
   "kernel-panel",
   "wait-panel",
+  "kernel-table-scroller",
+  "kernel-scroll-hint",
+  "wait-table-scroller",
+  "wait-scroll-hint",
   "kernel-sort-kernel",
   "kernel-sort-count",
   "kernel-sort-setbytes-calls",
@@ -143,12 +150,17 @@ describe("ProfilerApp shell", () => {
     }
     expect(container.textContent).toMatch(/Waiting for registry/i);
     expect(container.textContent).not.toMatch(/Evidence:\s*Pending/i);
+    expect(container.querySelector("#trace-selector-button").getAttribute("aria-haspopup"))
+      .toBe("listbox");
+    expect(container.querySelector("#trace-menu").hidden).toBe(true);
     expect(container.querySelector("#trace-search").getAttribute("role"))
-      .toBe("combobox");
+      .toBe("searchbox");
     expect(container.querySelector("#trace-track").getAttribute("role"))
       .toBe("listbox");
     expect(container.textContent).toMatch(/Drag to zoom/i);
     expect(container.textContent).toMatch(/Shift-drag to pan/i);
+    expect(container.querySelector("#kernel-scroll-hint").hidden).toBe(true);
+    expect(container.querySelector("#wait-scroll-hint").hidden).toBe(true);
   });
 
   it("renders contextual help and local export as hidden accessible utilities", async () => {
