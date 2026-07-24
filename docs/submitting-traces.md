@@ -1,7 +1,8 @@
 # Submitting a profiler run
 
 This guide covers authentic traces created by the
-[OpenSourceWTF MLX profiler](https://github.com/OpenSourceWTF/mlx-profiler).
+[OpenSourceWTF MLX
+profiler](https://github.com/OpenSourceWTF/mlx-profiler/blob/main/PROFILER.md#first-census-quickstart).
 The workbench does not capture a GPU itself. It reads census JSONL after a
 profiled workload has run.
 
@@ -56,9 +57,11 @@ hosted submissions need a public primary checkpoint.
 
 ## 2. Capture with the public profiler
 
-Build and use
-[`OpenSourceWTF/mlx-profiler`](https://github.com/OpenSourceWTF/mlx-profiler)
-according to its `PROFILER.md`. Set `MLX_DISPATCH_CENSUS` before Python starts:
+Build and verify the
+[`OpenSourceWTF/mlx-profiler` source
+checkout](https://github.com/OpenSourceWTF/mlx-profiler/blob/main/PROFILER.md#first-census-quickstart).
+Do not use the official `pip install mlx` wheel for capture: it does not contain
+the OpenSourceWTF instrumentation. Set `MLX_DISPATCH_CENSUS` before Python starts:
 
 ```sh
 mkdir -p captures
@@ -168,9 +171,14 @@ record both hashes:
 
 ```sh
 WINDOW=/absolute/path/to/the-run.window-cb64.jsonl
-zip -9 profiler-run.zip "$WINDOW"
+zip -j -9 profiler-run.zip "$WINDOW"
+zipinfo -1 profiler-run.zip
 shasum -a 256 "$TRACE" "$WINDOW" profiler-run.zip
 ```
+
+`zipinfo` must list only the JSONL basename, with no parent directories. The
+`-j` flag discards path components so the archive cannot disclose a username,
+workspace name, or private directory layout.
 
 Attach `profiler-run.zip` to the new-run issue. Retain the raw capture until
 review is complete so maintainers can reproduce curation or verify its hash.
@@ -233,4 +241,3 @@ privacy, local rendering, and the complete test/build gate. A submission may be
 rejected or returned for recapture when it is synthetic, malformed, incomplete,
 has dropped rows, lacks exact provenance, exposes sensitive data, points only
 to a private/nonexistent model, or cannot legally be redistributed.
-
