@@ -1,12 +1,21 @@
 # Metal Dispatch Workbench
 
-A local, read-only workbench for understanding host encode, Metal GPU execution,
-waits, and dispatch density in profiler JSONL. It is designed for the practical
-question that aggregate kernel timings miss: where did host work, GPU work, and
-synchronization overlap within one launch?
+A hosted and local, read-only workbench for understanding host encode, Metal
+GPU execution, waits, and dispatch density in profiler JSONL. It is designed
+for the practical question that aggregate kernel timings miss: where did host
+work, GPU work, and synchronization overlap within one launch?
 
 The server serves files and registry metadata only. It does not capture,
 instrument, modify, or upload traces.
+
+## Hosted quick start
+
+Open **[mlx-profiler.opensource.wtf](https://mlx-profiler.opensource.wtf)** and
+choose one of the five curated public captures. No installation is required.
+
+The hosted application cannot open a file or folder from your computer and does
+not provide an upload endpoint. To inspect a private or arbitrary JSONL while
+keeping it on your machine, use the local trace-folder workflow below.
 
 ## Quick local start
 
@@ -19,6 +28,11 @@ npm start -- --trace-dir /path/to/trace-folder
 
 Open `http://127.0.0.1:4173/`. The trace folder is scanned recursively for
 `.jsonl` and `.ndjson` files and remains on your machine.
+
+Need to create a trace first? Follow the public profiler's
+[clone, build, capture, and validation
+quickstart](https://github.com/OpenSourceWTF/mlx-profiler/blob/main/PROFILER.md#first-census-quickstart).
+The workbench cannot attach to a running GPU or capture a process itself.
 
 See [Contributing](CONTRIBUTING.md) for code and documentation changes. Use
 [Submitting a profiler run](docs/submitting-traces.md) for new public trace
@@ -121,8 +135,14 @@ Configuration precedence is:
 For example:
 
 ```sh
-TRACE_DIR=/Volumes/captures HOST=0.0.0.0 PORT=5000 npm start
+TRACE_DIR=/Volumes/captures HOST=127.0.0.1 PORT=5000 npm start
 ```
+
+The Express server has no authentication. Binding `HOST` to a non-loopback
+address exposes registry metadata and complete bytes for every discovered trace
+to reachable clients. Keep private traces on `127.0.0.1`; place an authenticated
+reverse proxy in front of the server before intentionally sharing it over a
+network.
 
 The configured folder is rescanned when the registry is requested and when
 Refresh is pressed. Discovery is recursive for `.jsonl` and `.ndjson` files,
@@ -340,6 +360,18 @@ modification time, so changing a file in place invalidates its prior analysis.
 Changing selection terminates the superseded worker; stale loads and pending
 registry refreshes cannot publish over a newer selection.
 
+## Machine-readable range API status
+
+The browser's **Export for AI** workflow described above is available now and
+keeps data local until you explicitly copy or download it.
+
+The planned
+[`/api/llm/v1/traces/<trace-id>` range API](docs/specs/2026-07-23-llm-range-api-design.md)
+is **not deployed yet**. Its Cloudflare Worker workflow requires repository
+credentials that are intentionally absent. Until the Worker route is deployed
+and this section is updated, that path returns `404` and must not be used as an
+integration endpoint.
+
 ## Evidence boundaries
 
 Command-buffer host and GPU endpoints are measured profiler timestamps. GPU
@@ -376,11 +408,10 @@ sources are not part of the Pages artifact. The build job has read-only
 repository permission, the deploy job is restricted to `main`, and concurrent
 deployments use the non-cancelling `pages` group.
 
-The intended canonical origin is
-`https://mlx-profiler.opensource.wtf`. Configure that hostname in the
-repository's GitHub Pages settings before adding a DNS-only CNAME to
-`opensourcewtf.github.io`. The workflow does not commit or require a `CNAME`
-file.
+The canonical origin is
+[`https://mlx-profiler.opensource.wtf`](https://mlx-profiler.opensource.wtf).
+GitHub Pages serves the verified static artifact at that hostname. The workflow
+does not commit or require a `CNAME` file.
 
 ## Validation
 
