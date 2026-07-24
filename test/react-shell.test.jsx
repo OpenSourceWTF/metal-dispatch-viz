@@ -154,8 +154,7 @@ describe("ProfilerApp shell", () => {
     const trigger = container.querySelector("#trace-selector-button");
     expect(trigger.dataset.slot).toBe("popover-trigger");
     expect(trigger.getAttribute("role")).toBe("combobox");
-    expect(trigger.className).toContain("h-9");
-    expect(trigger.className).toContain("max-w");
+    expect(trigger.className).toContain("run-combobox-trigger");
     expect(trigger.querySelector("#trace-selector-label").className).toContain(
       "truncate",
     );
@@ -197,6 +196,10 @@ describe("ProfilerApp shell", () => {
     ).not.toBeNull();
     const input = document.querySelector('[data-slot="command-input"]');
     expect(input).not.toBeNull();
+    expect(input.className).toContain("run-combobox-search");
+    expect(
+      input.closest('[data-slot="command-input-wrapper"]').className,
+    ).toContain("run-combobox-search-shell");
     await act(async () => {
       Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
@@ -214,6 +217,20 @@ describe("ProfilerApp shell", () => {
     await act(async () => qwenItem.click());
     expect(onSelect).toHaveBeenCalledWith("b");
     expect(document.querySelector("#trace-menu")).toBeNull();
+  });
+
+  it("renders an instrument-style loading scan over the chart", async () => {
+    const bootstrapController = vi.fn(async () => ({ destroy() {} }));
+
+    await act(async () => {
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
+    });
+
+    const loadingVisual = container.querySelector(".timeline-loading-visual");
+    expect(loadingVisual).not.toBeNull();
+    expect(loadingVisual.getAttribute("aria-hidden")).toBe("true");
+    expect(loadingVisual.querySelectorAll("span")).toHaveLength(3);
+    expect(loadingVisual.closest("#loading-state")).not.toBeNull();
   });
 
   it("exposes React adapters for the launch selector and loading progress", async () => {

@@ -3894,7 +3894,10 @@ export async function bootstrap({
   const handleFit = () => {
     const bounds = selectedLaunchBounds();
     if (!bounds) return;
-    const range = renderer.fit(bounds, false);
+    const range = renderer.fit(
+      initialTimelineViewport(state.launchScope, bounds),
+      false,
+    );
     rangeNavigator.setRange(range);
     handleNavigatorRange(range, true);
   };

@@ -418,8 +418,28 @@ test("visual system uses measured tokens, effective sizing, and clipped-safe foc
   assert.equal(launchSelect.get("height"), "44px");
   assert.equal(launchSelect.get("min-block-size"), "44px");
 
+  const runTrigger = requireDeclarationRule(rules, ".run-combobox-trigger")[0];
+  assert.equal(runTrigger.get("height"), "40px");
+  assert.equal(runTrigger.get("min-block-size"), "40px");
+  const runSearch = requireDeclarationRule(
+    rules,
+    "input.run-combobox-search",
+  )[0];
+  assert.equal(runSearch.get("border"), "0");
+  assert.equal(runSearch.get("min-block-size"), "0");
+  const runSearchFocus = requireDeclarationRule(
+    rules,
+    "input.run-combobox-search:focus-visible",
+  )[0];
+  assert.equal(runSearchFocus.get("outline"), "0");
+
   const loadingState = requireDeclarationRule(rules, ".loading-state")[0];
   assert.equal(loadingState.get("position"), "absolute");
+  const loadingScan = requireDeclarationRule(
+    rules,
+    ".timeline-loading-visual::after",
+  )[0];
+  assert.match(loadingScan.get("animation") ?? "", /timeline-loading-scan/);
   const timelineViewport = requireDeclarationRule(rules, ".timeline-viewport")[0];
   assert.equal(timelineViewport.get("position"), "relative");
 

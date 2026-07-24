@@ -54,7 +54,7 @@ export function RunCombobox({
             aria-label="Select run"
             aria-expanded={open}
             disabled={disabled}
-            className="h-9 w-full max-w-[28rem] justify-between px-3 font-mono text-xs shadow-none"
+            className="run-combobox-trigger w-full max-w-[28rem] justify-between px-3 font-mono text-xs shadow-none"
           >
             <span
               id="trace-selector-label"
@@ -75,12 +75,15 @@ export function RunCombobox({
         <PopoverContent
           id="trace-menu"
           align="start"
-          className="w-[min(28rem,calc(100vw-2rem))] p-0"
+          sideOffset={6}
+          className="run-combobox-menu w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-0"
         >
           <Command>
             <CommandInput
               id="trace-search"
               placeholder="Search model, mode, or path…"
+              className="run-combobox-search"
+              wrapperClassName="run-combobox-search-shell"
             />
             <CommandList id="trace-track">
               <CommandEmpty>No runs match this search.</CommandEmpty>
