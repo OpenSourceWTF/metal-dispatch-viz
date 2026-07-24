@@ -251,11 +251,16 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
 
   assert.equal(byId.get("trace-selector-button").attributes.get("role"), "combobox");
 
-  const labels = nodes.filter((node) => node.name === "label");
-  for (const targetId of ["window-select", "loading-progress"]) {
-    const label = labels.find((node) => node.attributes.get("for") === targetId);
-    assert.ok(label, `explicit label for #${targetId}`);
-    assert.ok(byId.has(targetId), `label target #${targetId} exists`);
+  for (const [targetId, labelId] of [
+    ["window-select", "window-select-label"],
+    ["loading-progress", "loading-progress-label"],
+  ]) {
+    assert.equal(
+      byId.get(targetId).attributes.get("aria-labelledby"),
+      labelId,
+      `accessible label for #${targetId}`,
+    );
+    assert.ok(byId.has(labelId), `label #${labelId} exists`);
   }
 
   const status = byId.get("trace-status");
@@ -266,8 +271,7 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
   const metricGrid = byId.get("metric-grid");
   assert.equal(metricGrid.name, "dl");
   const windowSelect = byId.get("window-select");
-  assert.equal(windowSelect.name, "select");
-  assert.equal(windowSelect.attributes.get("disabled"), true);
+  assert.equal(windowSelect.name, "selecttrigger");
 
   for (const id of ["refresh-button", "theme-toggle"]) {
     const control = byId.get(id);
@@ -300,13 +304,12 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     assert.equal(byId.get(id).attributes.get("tabindex"), "0");
   }
   for (const id of ["range-mode-view", "range-mode-analyze"]) {
-    assert.equal(byId.get(id).name, "button");
-    assert.ok(byId.get(id).attributes.has("aria-pressed"));
+    assert.equal(byId.get(id).name, "togglegroupitem");
+    assert.ok(byId.get(id).attributes.has("value"));
   }
-  assert.equal(byId.get("range-mode-analyze").attributes.get("disabled"), true);
 
-  assert.equal(byId.get("kernel-table-body").name, "tbody");
-  assert.equal(byId.get("wait-table-body").name, "tbody");
+  assert.equal(byId.get("kernel-table-body").name, "tablebody");
+  assert.equal(byId.get("wait-table-body").name, "tablebody");
 
   const timelineViewport = byId.get("timeline-viewport");
   const timelineScroller = byId.get("timeline-scroller");
@@ -730,50 +733,24 @@ test("contextual help shell is accessible, singular, and placed with workbench c
 
   for (const id of [
     "field-manual-button",
-    "utility-backdrop",
     "field-manual-drawer",
     "field-manual-close",
     "manual-search",
     "manual-content",
     "manual-glossary-list",
-    "definition-tooltip",
-    "definition-tooltip-title",
-    "definition-tooltip-body",
-    "definition-popover",
-    "definition-popover-close",
-    "definition-popover-manual",
   ]) {
     assert.ok(byId.has(id), `#${id}`);
   }
 
   const headerActions = nodes.find((node) => hasClass(node, "header-actions"));
   assert.ok(isDescendantOf(byId.get("field-manual-button"), headerActions));
-  assert.equal(
-    nodes.filter((node) => node.attributes.get("id") === "utility-backdrop").length,
-    1,
-    "one shared utility backdrop",
-  );
+  assert.equal(nodes.some((node) => hasClass(node, "utility-drawer")), false);
 
   const drawer = byId.get("field-manual-drawer");
-  assert.equal(drawer.attributes.get("role"), "dialog");
-  assert.equal(drawer.attributes.get("aria-modal"), "true");
+  assert.equal(drawer.name, "sheetcontent");
   assert.equal(drawer.attributes.get("aria-labelledby"), "field-manual-heading");
-  assert.equal(drawer.attributes.get("hidden"), true);
-  assert.equal(byId.get("utility-backdrop").attributes.get("hidden"), true);
-  assert.equal(byId.get("definition-tooltip").attributes.get("role"), "tooltip");
-  assert.equal(byId.get("definition-tooltip").attributes.get("hidden"), true);
-  assert.equal(byId.get("definition-popover").attributes.get("role"), "dialog");
-  assert.equal(byId.get("definition-popover").attributes.get("aria-modal"), "false");
-  assert.equal(byId.get("definition-popover").attributes.get("hidden"), true);
-  assert.equal(
-    nodes.some(
-      (node) =>
-        node.name === "button" &&
-        isDescendantOf(node, byId.get("definition-tooltip")),
-    ),
-    false,
-    "role=tooltip remains noninteractive",
-  );
+  assert.ok(nodes.some((node) => node.name === "tooltipcontent"));
+  assert.ok(nodes.some((node) => node.name === "popovercontent"));
 
   const manualSearch = byId.get("manual-search");
   assert.equal(manualSearch.name, "input");
@@ -799,7 +776,7 @@ test("contextual help shell is accessible, singular, and placed with workbench c
   }
 });
 
-test("help styling preserves dense targets and responsive utility-drawer behavior", async () => {
+test("help styling preserves dense targets and responsive Sheet behavior", async () => {
   const css = await readFile(publicCssUrl, "utf8");
   const cleanCss = stripCssComments(css);
   const rules = parseFlatCssRules(cleanCss);
@@ -808,7 +785,7 @@ test("help styling preserves dense targets and responsive utility-drawer behavio
   assert.equal(trigger.get("min-width"), "44px");
   assert.equal(trigger.get("min-block-size"), "44px");
 
-  const drawer = requireDeclarationRule(rules, ".utility-drawer")[0];
+  const drawer = requireDeclarationRule(rules, ".field-manual-sheet")[0];
   assert.equal(drawer.get("position"), "fixed");
   assert.equal(drawer.get("right"), "0");
   assert.match(drawer.get("width") ?? "", /min\(/);
@@ -827,7 +804,7 @@ test("help styling preserves dense targets and responsive utility-drawer behavio
   )[0];
   assert.equal(hidden.get("display"), "none !important");
 
-  const mobileDrawer = requireDeclarationRule(rules, ".utility-drawer").find(
+  const mobileDrawer = requireDeclarationRule(rules, ".field-manual-sheet").find(
     (rule) => rule.get("width") === "100%",
   );
   assert.ok(mobileDrawer, "narrow utility drawer becomes a full-width sheet");
@@ -835,8 +812,7 @@ test("help styling preserves dense targets and responsive utility-drawer behavio
   assert.match(cleanCss, /@media\s*\(max-width:\s*760px\)/);
   assert.match(cleanCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
 
-  const tooltip = requireDeclarationRule(rules, ".definition-tooltip")[0];
-  assert.equal(tooltip.get("position"), "fixed");
+  const tooltip = requireDeclarationRule(rules, ".definition-help-tooltip")[0];
   assert.equal(tooltip.get("z-index"), "30");
   assert.match(cleanCss, /\.manual-entry:focus-visible/);
 });
@@ -1063,9 +1039,9 @@ test("AI export shell is local-only, scoped, read-only, and initially unavailabl
     "export action belongs to timeline controls",
   );
   const drawer = byId.get("ai-export-drawer");
-  assert.equal(drawer.attributes.get("role"), "dialog");
-  assert.equal(drawer.attributes.get("aria-modal"), "true");
-  assert.equal(drawer.attributes.get("hidden"), true);
+  assert.equal(drawer.name, "sheetcontent");
+  assert.equal(drawer.attributes.get("aria-labelledby"), "ai-export-heading");
+  assert.equal(byId.get("ai-export-format").name, "selecttrigger");
   assert.equal(byId.get("ai-export-preview").name, "textarea");
   assert.equal(byId.get("ai-export-preview").attributes.get("readonly"), true);
   assert.equal(byId.get("ai-export-status").attributes.get("role"), "status");

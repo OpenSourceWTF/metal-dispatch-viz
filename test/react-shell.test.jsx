@@ -4,10 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  createAnalysisSession,
-  ProfilerApp,
-} from "../src/ProfilerApp.jsx";
+import { createAnalysisSession, ProfilerApp } from "../src/ProfilerApp.jsx";
 
 const BOOTSTRAP_IDS = [
   "directory-identity",
@@ -78,27 +75,12 @@ const BOOTSTRAP_IDS = [
   "wait-sort-count",
   "wait-sort-duration",
   "wait-sort-evidence",
-  "utility-backdrop",
   "field-manual-drawer",
   "field-manual-close",
   "manual-search",
   "manual-search-status",
   "manual-quick-start",
   "manual-glossary-list",
-  "definition-tooltip",
-  "definition-tooltip-title",
-  "definition-tooltip-body",
-  "definition-tooltip-evidence",
-  "definition-tooltip-method",
-  "definition-tooltip-limitation",
-  "definition-popover",
-  "definition-popover-title",
-  "definition-popover-body",
-  "definition-popover-evidence",
-  "definition-popover-method",
-  "definition-popover-limitation",
-  "definition-popover-close",
-  "definition-popover-manual",
   "ai-export-button",
   "ai-export-drawer",
   "ai-export-close",
@@ -144,21 +126,17 @@ describe("ProfilerApp shell", () => {
     const bootstrapController = vi.fn(async () => ({ destroy() {} }));
 
     await act(async () => {
-      root.render(
-        <ProfilerApp bootstrapController={bootstrapController} />,
-      );
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
     });
 
     for (const id of BOOTSTRAP_IDS) {
-      expect(
-        container.querySelectorAll(`#${id}`),
-        `#${id}`,
-      ).toHaveLength(1);
+      expect(document.querySelectorAll(`#${id}`), `#${id}`).toHaveLength(1);
     }
     expect(container.textContent).toMatch(/Waiting for registry/i);
     expect(container.textContent).not.toMatch(/Evidence:\s*Pending/i);
-    expect(container.querySelector("#trace-selector-button").getAttribute("role"))
-      .toBe("combobox");
+    expect(
+      container.querySelector("#trace-selector-button").getAttribute("role"),
+    ).toBe("combobox");
     expect(document.querySelector("#trace-menu")).toBeNull();
     expect(container.textContent).toMatch(/Drag to zoom/i);
     expect(container.textContent).toMatch(/Shift-drag to pan/i);
@@ -170,9 +148,7 @@ describe("ProfilerApp shell", () => {
     const bootstrapController = vi.fn(async () => ({ destroy() {} }));
 
     await act(async () => {
-      root.render(
-        <ProfilerApp bootstrapController={bootstrapController} />,
-      );
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
     });
 
     const trigger = container.querySelector("#trace-selector-button");
@@ -180,8 +156,9 @@ describe("ProfilerApp shell", () => {
     expect(trigger.getAttribute("role")).toBe("combobox");
     expect(trigger.className).toContain("h-9");
     expect(trigger.className).toContain("max-w");
-    expect(trigger.querySelector("#trace-selector-label").className)
-      .toContain("truncate");
+    expect(trigger.querySelector("#trace-selector-label").className).toContain(
+      "truncate",
+    );
   });
 
   it("opens the shadcn command menu, searches runs, and selects one", async () => {
@@ -193,9 +170,7 @@ describe("ProfilerApp shell", () => {
     const onSelect = vi.fn();
 
     await act(async () => {
-      root.render(
-        <ProfilerApp bootstrapController={bootstrapController} />,
-      );
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
     });
     await act(async () => {
       runSelector.render({
@@ -217,7 +192,9 @@ describe("ProfilerApp shell", () => {
     });
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(document.body.innerHTML).toContain("trace-menu");
-    expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull();
+    expect(
+      document.querySelector('[data-slot="popover-content"]'),
+    ).not.toBeNull();
     const input = document.querySelector('[data-slot="command-input"]');
     expect(input).not.toBeNull();
     await act(async () => {
@@ -231,20 +208,68 @@ describe("ProfilerApp shell", () => {
     expect(menu.textContent).toContain("Qwen 3.6 27B");
     expect(menu.textContent).not.toContain("GLM-5.2 1.58q");
 
-    const qwenItem = [...document.querySelectorAll('[data-slot="command-item"]')]
-      .find((item) => item.textContent.includes("Qwen 3.6 27B"));
+    const qwenItem = [
+      ...document.querySelectorAll('[data-slot="command-item"]'),
+    ].find((item) => item.textContent.includes("Qwen 3.6 27B"));
     await act(async () => qwenItem.click());
     expect(onSelect).toHaveBeenCalledWith("b");
     expect(document.querySelector("#trace-menu")).toBeNull();
+  });
+
+  it("exposes React adapters for the launch selector and loading progress", async () => {
+    let launchSelector;
+    let progressIndicator;
+    let tableTabs;
+    const bootstrapController = vi.fn(async (options) => {
+      launchSelector = options.launchSelector;
+      progressIndicator = options.progressIndicator;
+      tableTabs = options.tableTabs;
+      return { destroy() {} };
+    });
+    const onSelect = vi.fn();
+
+    await act(async () => {
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
+    });
+    await act(async () => {
+      launchSelector.render({
+        options: [
+          { value: "0", label: "Launch 1 · 2.5 ms" },
+          { value: "1", label: "Launch 2 · 4.0 ms" },
+        ],
+        value: "0",
+        disabled: false,
+        onSelect,
+      });
+      progressIndicator.render({
+        value: 50,
+        text: "50%",
+      });
+      tableTabs.render({ value: "wait" });
+    });
+
+    const launchTrigger = container.querySelector("#window-select");
+    expect(launchTrigger.dataset.slot).toBe("select-trigger");
+    expect(launchTrigger.textContent).toContain("Launch 1");
+    expect(launchTrigger.disabled).toBe(false);
+    expect(container.querySelector("#loading-progress").dataset.slot).toBe(
+      "progress",
+    );
+    expect(
+      container
+        .querySelector("#loading-progress")
+        .getAttribute("aria-valuenow"),
+    ).toBe("50");
+    expect(
+      container.querySelector("#wait-tab").getAttribute("data-state"),
+    ).toBe("active");
   });
 
   it("renders contextual help and local export as hidden accessible utilities", async () => {
     const bootstrapController = vi.fn(async () => ({ destroy() {} }));
 
     await act(async () => {
-      root.render(
-        <ProfilerApp bootstrapController={bootstrapController} />,
-      );
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
     });
 
     const manualButton = container.querySelector("#field-manual-button");
@@ -253,37 +278,33 @@ describe("ProfilerApp shell", () => {
       "field-manual-drawer",
     );
 
-    const backdrop = container.querySelector("#utility-backdrop");
-    expect(container.querySelectorAll("#utility-backdrop")).toHaveLength(1);
-    expect(backdrop.hidden).toBe(true);
+    expect(container.querySelector("#utility-backdrop")).toBeNull();
 
-    const manualDrawer = container.querySelector("#field-manual-drawer");
-    expect(manualDrawer.hidden).toBe(true);
+    const manualDrawer = document.querySelector("#field-manual-drawer");
+    expect(manualDrawer.dataset.slot).toBe("sheet-content");
+    expect(manualDrawer.getAttribute("data-state")).toBe("closed");
     expect(manualDrawer.getAttribute("role")).toBe("dialog");
     expect(manualDrawer.getAttribute("aria-modal")).toBe("true");
+    expect(
+      container.querySelector("main").getAttribute("aria-hidden"),
+    ).toBeNull();
+    expect(container.querySelector("main").inert).toBe(false);
     expect(manualDrawer.getAttribute("aria-labelledby")).toBe(
       "field-manual-heading",
     );
-    expect(
-      container.querySelector('label[for="manual-search"]'),
-    ).not.toBeNull();
-    expect(container.textContent).toMatch(/Quick start/i);
-    expect(container.textContent).toMatch(/Read the timeline/i);
-    expect(container.textContent).toMatch(/Evidence limits/i);
-    expect(container.textContent).toMatch(/Keyboard controls/i);
+    expect(document.querySelector('label[for="manual-search"]')).not.toBeNull();
+    expect(document.body.textContent).toMatch(/Quick start/i);
+    expect(document.body.textContent).toMatch(/Read the timeline/i);
+    expect(document.body.textContent).toMatch(/Evidence limits/i);
+    expect(document.body.textContent).toMatch(/Keyboard controls/i);
 
-    const termTriggers = [
-      ...container.querySelectorAll(".term-trigger"),
-    ];
+    const termTriggers = [...container.querySelectorAll(".term-trigger")];
     expect(termTriggers.length).toBeGreaterThanOrEqual(23);
     for (const trigger of termTriggers) {
       expect(trigger.tagName).toBe("BUTTON");
       expect(trigger.type).toBe("button");
       expect(trigger.dataset.term).toBeTruthy();
       expect(trigger.getAttribute("aria-label")).toMatch(/define/i);
-      expect(trigger.getAttribute("aria-controls")).toBe(
-        "definition-tooltip",
-      );
     }
     for (const term of [
       "host-encode",
@@ -298,34 +319,33 @@ describe("ProfilerApp shell", () => {
       ).not.toBeNull();
     }
 
-    const tooltip = container.querySelector("#definition-tooltip");
-    expect(tooltip.hidden).toBe(true);
-    expect(tooltip.getAttribute("role")).toBe("tooltip");
-    expect(tooltip.querySelector("button, a, input, select, textarea")).toBeNull();
-
-    const popover = container.querySelector("#definition-popover");
-    expect(popover.hidden).toBe(true);
-    expect(popover.getAttribute("role")).toBe("dialog");
-    expect(popover.getAttribute("aria-modal")).toBe("false");
+    await act(async () => {
+      termTriggers[0].click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(
+      document.querySelector('[data-slot="popover-content"]'),
+    ).not.toBeNull();
+    expect(document.body.textContent).toMatch(/Open in Field manual/i);
 
     const exportButton = container.querySelector("#ai-export-button");
     expect(exportButton.disabled).toBe(true);
     expect(exportButton.closest(".timeline-actions")).not.toBeNull();
-    expect(exportButton.getAttribute("aria-controls")).toBe(
-      "ai-export-drawer",
-    );
-    const exportDrawer = container.querySelector("#ai-export-drawer");
-    expect(exportDrawer.hidden).toBe(true);
+    expect(exportButton.getAttribute("aria-controls")).toBe("ai-export-drawer");
+    const exportDrawer = document.querySelector("#ai-export-drawer");
+    expect(exportDrawer.dataset.slot).toBe("sheet-content");
+    expect(exportDrawer.getAttribute("data-state")).toBe("closed");
     expect(exportDrawer.getAttribute("role")).toBe("dialog");
-    expect(exportDrawer.getAttribute("aria-modal")).toBe("true");
-    expect(container.querySelector("#ai-export-preview").readOnly).toBe(true);
-    expect(container.querySelector("#ai-export-status").getAttribute("role")).toBe(
-      "status",
+    expect(document.querySelector("#ai-export-preview").readOnly).toBe(true);
+    expect(
+      document.querySelector("#ai-export-status").getAttribute("role"),
+    ).toBe("status");
+    expect(document.body.textContent).toMatch(/Generated locally/i);
+    expect(document.body.textContent).toMatch(/Nothing is uploaded/i);
+    expect(document.body.textContent).toMatch(/Prompt \+ data/i);
+    expect(document.querySelector("#ai-export-format").dataset.slot).toBe(
+      "select-trigger",
     );
-    expect(container.textContent).toMatch(/Generated locally/i);
-    expect(container.textContent).toMatch(/Nothing is uploaded/i);
-    expect(container.textContent).toMatch(/Prompt \+ data/i);
-    expect(container.textContent).toMatch(/Structured data/i);
   });
 
   it("renders wide analysis tables as sortable accessible tabs", async () => {
@@ -338,8 +358,9 @@ describe("ProfilerApp shell", () => {
     expect(tabs).toHaveLength(2);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(tabs[1].getAttribute("aria-selected")).toBe("false");
-    expect(container.querySelector("#kernel-panel").getAttribute("role"))
-      .toBe("tabpanel");
+    expect(container.querySelector("#kernel-panel").getAttribute("role")).toBe(
+      "tabpanel",
+    );
     expect(container.querySelector("#wait-panel").hidden).toBe(true);
 
     const sortButtons = container.querySelectorAll(".table-sort-button");
@@ -360,9 +381,7 @@ describe("ProfilerApp shell", () => {
     });
 
     await act(async () => {
-      root.render(
-        <ProfilerApp bootstrapController={bootstrapController} />,
-      );
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
     });
 
     expect(bootstrapController).toHaveBeenCalledTimes(1);
@@ -385,9 +404,7 @@ describe("ProfilerApp shell", () => {
     });
 
     await act(async () => {
-      root.render(
-        <ProfilerApp bootstrapController={bootstrapController} />,
-      );
+      root.render(<ProfilerApp bootstrapController={bootstrapController} />);
     });
     await act(async () => root.unmount());
     root = null;
