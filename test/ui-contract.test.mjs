@@ -31,6 +31,10 @@ import {
 
 const reactShellUrl = new URL("../src/ProfilerApp.jsx", import.meta.url);
 const runComboboxUrl = new URL("../src/components/RunCombobox.jsx", import.meta.url);
+const commandComponentUrl = new URL(
+  "../src/components/ui/command.jsx",
+  import.meta.url,
+);
 const publicCssUrl = new URL("../public/styles.css", import.meta.url);
 const publicAppUrl = new URL("../public/app.js", import.meta.url);
 const rootHtmlUrl = new URL("../index.html", import.meta.url);
@@ -497,6 +501,28 @@ test("visual system uses measured tokens, effective sizing, and clipped-safe foc
     ),
   );
   assert.match(cleanCss, /font-variant-numeric:\s*tabular-nums/);
+  const provenanceLinkRules = requireDeclarationRule(
+    rules,
+    ".provenance-link",
+    "Hugging Face provenance link",
+  );
+  assert.ok(
+    provenanceLinkRules.some(
+      (rule) =>
+        rule.get("text-underline-offset") === "2px" &&
+        rule.get("color") === "var(--gpu)",
+    ),
+  );
+  const provenanceLinkFocusRules = requireDeclarationRule(
+    rules,
+    ".provenance-link:focus-visible",
+    "Hugging Face provenance link focus",
+  );
+  assert.ok(
+    provenanceLinkFocusRules.some(
+      (rule) => rule.get("outline") === "2px solid var(--selection)",
+    ),
+  );
   assert.match(cleanCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
   assert.match(cleanCss, /@media\s*\(forced-colors:\s*active\)/);
   assert.doesNotMatch(cleanCss, /linear-gradient|radial-gradient/i);
@@ -740,6 +766,27 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
   );
   assert.doesNotMatch(source, /\.innerHTML\b/);
   assert.doesNotMatch(source, /sample(?:Data|Trace)|fixtures\/sample/i);
+});
+
+test("run combobox delegates keyboard search to cmdk and bounds the result panel", async () => {
+  const [runSource, commandSource] = await Promise.all([
+    readFile(runComboboxUrl, "utf8"),
+    readFile(commandComponentUrl, "utf8"),
+  ]);
+
+  assert.match(runSource, /<CommandInput/);
+  assert.match(runSource, /<CommandList id=["']trace-track["']/);
+  assert.match(runSource, /<CommandItem/);
+  assert.match(runSource, /value=\{runValue\(run\)\}/);
+  assert.match(runSource, /run\?\.huggingface_repo/);
+  assert.match(runSource, /run\?\.huggingface_source_repo/);
+  assert.match(runSource, /onSelect=\{\(\) => \{/);
+  assert.match(runSource, /setOpen\(false\)/);
+  assert.match(commandSource, /<CommandPrimitive\.Input/);
+  assert.match(commandSource, /<CommandPrimitive\.Item/);
+  assert.match(commandSource, /data-\[selected=true\]:bg-accent/);
+  assert.match(commandSource, /max-h-\[300px\]/);
+  assert.match(commandSource, /overflow-y-auto/);
 });
 
 test("contextual help shell is accessible, singular, and placed with workbench controls", async () => {

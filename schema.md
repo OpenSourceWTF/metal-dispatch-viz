@@ -213,9 +213,26 @@ The trace-folder root may contain:
 object keyed by exact root-relative POSIX file paths. Each value is an optional
 plain metadata object. Display metadata may include `label`, `model`,
 `checkpoint`, `quantization`, `mode`, capture description, raw-versus-curated
-status, and source hash. The registry strips any attempted filesystem path,
-ID, file size, modification time, extension, or other server-owned identity
-override.
+status, and source hash. New published runs also record `huggingface_repo`,
+`huggingface_revision`, `contributor`, `capture_utc`, and `hardware`.
+`huggingface_source_repo` identifies only the upstream source for a legacy or
+locally derived artifact; it must not be presented as the exact executed
+checkpoint. The browser constructs outbound Hugging Face links from validated
+repository IDs and never trusts an arbitrary manifest URL. The registry strips
+any attempted filesystem path, ID, file size, modification time, extension, or
+other server-owned identity override.
+
+New public run filenames use:
+
+```text
+<hf-owner>--<hf-repo>__<contributor>__<utc-date>.<artifact>.jsonl
+```
+
+The model-first layout groups lexical listings by Hugging Face repository,
+then contributor, then capture date. Existing published filenames are retained
+because the path participates in the stable opaque trace ID. See
+[`docs/submitting-traces.md`](docs/submitting-traces.md) for the complete
+naming, evidence, privacy, and submission contract.
 
 For a curated launch window, keep the normal schema-v1 summary as the terminal
 row and record provenance in the manifest: identify it as curated, describe the

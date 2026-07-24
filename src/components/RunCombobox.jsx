@@ -25,8 +25,15 @@ function runValue(run) {
   return [
     runLabel(run),
     run?.model,
+    run?.checkpoint,
+    run?.huggingface_repo,
+    run?.huggingface_source_repo,
+    ...(Array.isArray(run?.related_huggingface_repos)
+      ? run.related_huggingface_repos
+      : []),
     run?.mode,
     run?.quantization,
+    run?.capture,
     run?.relativePath,
   ]
     .filter(Boolean)
@@ -81,7 +88,7 @@ export function RunCombobox({
           <Command>
             <CommandInput
               id="trace-search"
-              placeholder="Search model, mode, or path…"
+              placeholder="Search model, HF repo, mode, or path…"
               className="run-combobox-search"
               wrapperClassName="run-combobox-search-shell"
             />

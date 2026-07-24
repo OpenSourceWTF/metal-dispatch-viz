@@ -9,6 +9,7 @@ import {
   formatAiPrompt,
 } from "./ai-export.js";
 import { glossaryEntry, searchGlossary } from "./glossary.js";
+import { huggingFaceRepoUrl } from "./run-identity.js";
 
 const NON_ADDITIVE_WAITS = new Set(["sched_backpressure", "sched_worker_wait"]);
 
@@ -1945,6 +1946,11 @@ export function filterTraces(traces, query) {
       trace?.model,
       trace?.mode,
       trace?.checkpoint,
+      trace?.huggingface_repo,
+      trace?.huggingface_source_repo,
+      ...(Array.isArray(trace?.related_huggingface_repos)
+        ? trace.related_huggingface_repos
+        : []),
       trace?.quantization,
       trace?.capture,
       trace?.capture_label,
@@ -2068,11 +2074,25 @@ export function handleTraceRailKey({ documentObject, track, event }) {
 }
 
 function sourceMetadata(trace) {
+  const huggingFaceRepository = stringValue(trace?.huggingface_repo);
+  const huggingFaceSourceRepository = stringValue(
+    trace?.huggingface_source_repo,
+  );
   const fields = [
     ["File", trace?.relativePath ?? trace?.name],
     ["Name", trace?.name],
     ["Model", trace?.model],
     ["Checkpoint", trace?.checkpoint],
+    [
+      "Hugging Face model",
+      huggingFaceRepository,
+      huggingFaceRepoUrl(huggingFaceRepository),
+    ],
+    [
+      "Hugging Face source",
+      huggingFaceSourceRepository,
+      huggingFaceRepoUrl(huggingFaceSourceRepository),
+    ],
     ["Quantization", trace?.quantization],
     ["Mode", trace?.mode],
     [
@@ -2981,12 +3001,22 @@ export async function bootstrap({
     announce("No trace files found in the configured directory.");
   }
 
-  function appendProvenanceItem(label, value) {
+  function appendProvenanceItem(label, value, href = null) {
     const item = documentObject.createElement("span");
     item.className = "provenance-item";
     const key = documentObject.createElement("b");
     key.textContent = label;
-    item.append(key, documentObject.createTextNode(String(value)));
+    if (href) {
+      const link = documentObject.createElement("a");
+      link.className = "provenance-link";
+      link.setAttribute("href", href);
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener noreferrer");
+      link.textContent = String(value);
+      item.append(key, link);
+    } else {
+      item.append(key, documentObject.createTextNode(String(value)));
+    }
     elements.provenance.append(item);
   }
 
@@ -3014,8 +3044,8 @@ export async function bootstrap({
       "Provenance",
       "strip-label",
     );
-    for (const [label, value] of sourceMetadata(trace)) {
-      appendProvenanceItem(label, value);
+    for (const [label, value, href] of sourceMetadata(trace)) {
+      appendProvenanceItem(label, value, href);
     }
     appendProvenanceItem("File size", formatBytes(trace?.size));
     appendProvenanceItem(
@@ -3051,8 +3081,8 @@ export async function bootstrap({
       "Provenance",
       "strip-label",
     );
-    for (const [label, value] of sourceMetadata(trace)) {
-      appendProvenanceItem(label, value);
+    for (const [label, value, href] of sourceMetadata(trace)) {
+      appendProvenanceItem(label, value, href);
     }
     appendProvenanceItem("File size", formatBytes(trace?.size));
     const badgeGroup = documentObject.createElement("span");

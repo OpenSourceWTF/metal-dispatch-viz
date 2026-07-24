@@ -1,0 +1,177 @@
+name: Submit a profiler run
+description: Submit an authentic MLX Metal dispatch-census trace for the hosted workbench.
+title: "[run] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Attach one curator-verified trace window per issue. Read
+        [Submitting a profiler run](https://github.com/OpenSourceWTF/metal-dispatch-viz/blob/main/docs/submitting-traces.md) before
+        completing this form. Do not paste raw JSONL or any secret into the issue.
+
+  - type: input
+    id: filename
+    attributes:
+      label: Curated run filename
+      description: Must follow the model-contributor-date filename contract and end in `.window-cb<number>.jsonl`.
+      placeholder: owner--model__contributor__2026-07-24t18-30-15z.window-cb64.jsonl
+    validations:
+      required: true
+
+  - type: input
+    id: huggingface_repo
+    attributes:
+      label: Primary Hugging Face model
+      description: Public repository for the exact executed checkpoint.
+      placeholder: https://huggingface.co/owner/model
+    validations:
+      required: true
+
+  - type: input
+    id: huggingface_revision
+    attributes:
+      label: Hugging Face revision
+      description: Exact immutable commit used for the capture.
+      placeholder: 40-character repository revision
+    validations:
+      required: true
+
+  - type: input
+    id: contributor
+    attributes:
+      label: Contributor
+      description: GitHub handle encoded in the filename.
+      placeholder: github-handle
+    validations:
+      required: true
+
+  - type: input
+    id: capture_utc
+    attributes:
+      label: Capture time in UTC
+      description: RFC 3339 timestamp matching the filename.
+      placeholder: 2026-07-24T18:30:15Z
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      description: Exact Mac model, chip, and unified memory.
+      placeholder: Mac Studio, M4 Max, 128 GB unified memory
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: 26.5
+    validations:
+      required: true
+
+  - type: input
+    id: quantization
+    attributes:
+      label: Quantization
+      description: Include all relevant bit widths, group sizes, and mixed components.
+    validations:
+      required: true
+
+  - type: input
+    id: mode
+    attributes:
+      label: Execution mode and capture phase
+      description: Include AR/MTP/speculative depth and decode/prefill/decision-drain phase.
+      placeholder: MTP K3, sustained decode decision-drain window
+    validations:
+      required: true
+
+  - type: input
+    id: profiler_commit
+    attributes:
+      label: MLX profiler commit
+      description: Full commit from OpenSourceWTF/mlx-profiler.
+    validations:
+      required: true
+
+  - type: input
+    id: workload_commit
+    attributes:
+      label: Workload repository and commit
+      description: Public URL and full commit, or an exact explanation when the workload is not public.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workload_command
+    attributes:
+      label: Exact workload command
+      description: Remove secrets and private paths without changing workload semantics.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: terminal_summary
+    attributes:
+      label: Terminal profiler summary
+      description: Include `schema_version`, `complete`, `dropped_rows`, `ops_total`, and `cbs_total`.
+      render: json
+    validations:
+      required: true
+
+  - type: input
+    id: raw_sha256
+    attributes:
+      label: Raw JSONL SHA-256
+      placeholder: 64 lowercase hexadecimal characters
+    validations:
+      required: true
+
+  - type: input
+    id: curated_sha256
+    attributes:
+      label: Curated JSONL SHA-256
+      placeholder: 64 lowercase hexadecimal characters
+    validations:
+      required: true
+
+  - type: textarea
+    id: curator_command
+    attributes:
+      label: Curator and verification commands
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: attachment
+    attributes:
+      label: ZIP attachment
+      description: Drag the ZIP containing the curated JSONL here. Keep the raw source until review is complete.
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: What should reviewers notice?
+      description: State the question this trace helps investigate without claiming unsupported causality.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Submission confirmations
+      options:
+        - label: The primary executed checkpoint is available in the public Hugging Face repository above.
+          required: true
+        - label: The capture is authentic, complete, has zero dropped rows, and was not hand-edited or hand-trimmed.
+          required: true
+        - label: I reviewed the attachment and metadata; they contain no secrets, private paths, prompts, generated text, customer data, or model weights.
+          required: true
+        - label: I created or am authorized to share this capture and permit OpenSourceWTF to redistribute it under this repository's MIT license.
+          required: true
+    validations:
+      required: true

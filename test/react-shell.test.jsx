@@ -170,12 +170,19 @@ describe("ProfilerApp shell", () => {
 
     await act(async () => {
       root.render(<ProfilerApp bootstrapController={bootstrapController} />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     await act(async () => {
       runSelector.render({
         runs: [
           { id: "a", label: "GLM-5.2 1.58q", model: "GLM-5.2" },
-          { id: "b", label: "Qwen 3.6 27B", model: "Qwen 3.6" },
+          {
+            id: "b",
+            label: "Qwen 3.6 27B",
+            model: "Qwen 3.6",
+            huggingface_repo:
+              "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed",
+          },
         ],
         selectedId: "a",
         onSelect,
@@ -204,7 +211,7 @@ describe("ProfilerApp shell", () => {
       Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
         "value",
-      ).set.call(input, "Qwen");
+      ).set.call(input, "Youssofal");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     const menu = document.querySelector("#trace-menu");

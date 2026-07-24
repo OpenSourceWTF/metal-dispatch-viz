@@ -8,6 +8,22 @@ synchronization overlap within one launch?
 The server serves files and registry metadata only. It does not capture,
 instrument, modify, or upload traces.
 
+## Quick local start
+
+```sh
+git clone https://github.com/OpenSourceWTF/metal-dispatch-viz.git
+cd metal-dispatch-viz
+npm ci
+npm start -- --trace-dir /path/to/trace-folder
+```
+
+Open `http://127.0.0.1:4173/`. The trace folder is scanned recursively for
+`.jsonl` and `.ndjson` files and remains on your machine.
+
+See [Contributing](CONTRIBUTING.md) for code and documentation changes. Use
+[Submitting a profiler run](docs/submitting-traces.md) for new public trace
+evidence.
+
 ## Requirements and installation
 
 The supported Node.js engine lines are exactly:
@@ -54,6 +70,29 @@ npm start -- --trace-dir /path/to/trace-folder
 `npm start` runs the authoritative build before starting the server. Open
 `http://127.0.0.1:4173/`. Without `--trace-dir`, Express reads
 `traces/showcase`.
+
+## shadcn component development
+
+The React/Vite client is configured for JavaScript shadcn/ui components with
+Tailwind CSS v4. `components.json` owns the component paths and aliases,
+`src/index.css` bridges shadcn semantic utilities to the existing profiler
+tokens, and `src/lib/utils.js` provides the conventional `cn()` helper.
+
+This compatibility layer does not migrate the current workbench. The trace
+selector, worker, timeline, and evidence state remain controller-owned, and the
+existing profiler stylesheet remains visually authoritative.
+
+The CLI is not installed as a project dependency. Its current MCP dependency
+chain includes a dev-only Hono release affected by
+[GHSA-frvp-7c67-39w9](https://github.com/advisories/GHSA-frvp-7c67-39w9).
+Use the reviewed CLI version explicitly when adding a component:
+
+```sh
+npx --yes shadcn@4.14.1 add button
+```
+
+Replace `button` with the component name, then review and test every generated
+file and dependency before committing it.
 
 ## Bundled showcase
 
@@ -104,6 +143,8 @@ Add `traces.json` at the trace-folder root to provide display metadata:
       "label": "Hy3 decode K3",
       "model": "Hy3",
       "checkpoint": "org/hy3",
+      "huggingface_repo": "org/hy3",
+      "huggingface_revision": "full immutable revision",
       "quantization": "2-bit",
       "mode": "MTP K3",
       "capture": "steady-state decode",
@@ -132,13 +173,16 @@ symlinked, unlisted, or mismatched inputs fail the build.
 
 To add or replace a public run:
 
-1. Put the curated `.jsonl` or `.ndjson` file under `traces/showcase/`.
-2. Add its exact relative POSIX path and display metadata to
+1. Follow [Submitting a profiler run](docs/submitting-traces.md), including the
+   model-contributor-date filename and evidence checks.
+2. Validate the new filename with `npm run validate:run-name -- <filename>`.
+3. Put the curated `.jsonl` or `.ndjson` file under `traces/showcase/`.
+4. Add its exact relative POSIX path and display metadata to
    `traces/showcase/traces.json`.
-3. Run `npm test`.
-4. Run `npm run build`.
-5. Run `npm run verify:pages`.
-6. Inspect `dist/client/hosted-traces.json` and load the run through
+5. Run `npm test`.
+6. Run `npm run build`.
+7. Run `npm run verify:pages`.
+8. Inspect `dist/client/hosted-traces.json` and load the run through
    `npm start`.
 
 The verifier proves that the source manifest, generated registry, and emitted
@@ -147,9 +191,11 @@ content-hashed JavaScript, CSS, and worker bundles.
 
 ## Workbench controls
 
-- Search runs from the top Run dropdown by label, path, model, mode,
-  checkpoint, quantization, or capture metadata. Arrow keys move through
-  matches and Enter loads the highlighted run.
+- Search runs from the top Run dropdown by label, path, model, Hugging Face
+  repository, mode, checkpoint, quantization, or capture metadata. Focus opens
+  every run, typing filters immediately, Arrow keys move through matches, Enter
+  loads the active run, and Escape dismisses the list without changing the
+  loaded run.
 - Choose a launch when a file contains more than one launch window. The
   selector is hidden for a single launch.
 - Use the timeline buttons, mouse wheel, or keyboard: arrows pan,
