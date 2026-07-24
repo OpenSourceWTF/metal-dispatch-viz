@@ -9,6 +9,7 @@ import {
   evidenceBadges,
   filterTraces,
   handleTraceRailKey,
+  initialTimelineViewport,
   kernelRowsForScope,
   loadTraceRegistry,
   parseRangeSelection,
@@ -694,6 +695,7 @@ function createBootstrapHarness({
   cached = new Map(),
   deferredLoads = false,
   useRealRenderer = false,
+  runSelector = null,
 } = {}) {
   const documentObject = bootstrapDocument();
   if (baseURI !== undefined) {
@@ -884,6 +886,7 @@ function createBootstrapHarness({
     windowObject: windowHarness.windowObject,
     RendererClass: RendererConstructor,
     RangeNavigatorClass: HarnessNavigator,
+    runSelector,
   });
   return {
     bootPromise,
@@ -1017,6 +1020,30 @@ test("Run dropdown opens, searches registry metadata, and closes after selection
   assert.equal(app.state.currentTraceId, "trace-b");
   assert.equal(menu.hidden, true);
   assert.equal(trigger.getAttribute("aria-expanded"), "false");
+});
+
+test("bootstrap publishes runs to the React selector bridge and accepts its selection", async () => {
+  const renders = [];
+  const runSelector = {
+    render(value) {
+      renders.push(value);
+    },
+  };
+  const harness = createBootstrapHarness({
+    runSelector,
+    datasets: new Map([
+      ["trace-a", bootstrapDataset([bootstrapLaunch({ name: "a" })])],
+      ["trace-b", bootstrapDataset([bootstrapLaunch({ name: "b" })])],
+    ]),
+  });
+  const app = await harness.bootPromise;
+
+  assert.equal(renders.at(-1).runs.length, 2);
+  assert.equal(renders.at(-1).selectedId, "trace-a");
+  renders.at(-1).onSelect("trace-b");
+  await flushMicrotasks();
+  assert.equal(app.state.currentTraceId, "trace-b");
+  assert.equal(renders.at(-1).selectedId, "trace-b");
 });
 
 function analyzedScope({
@@ -1578,6 +1605,57 @@ test("bootstrap commits timeline View ranges once, resets launch and Fit, and fa
   assert.deepEqual(app.state.selectedRange, { startNs: 500, endNs: 600 });
 });
 
+test("initial activity fit becomes the persisted selected range", async () => {
+  const launch = bootstrapLaunch({ startNs: 0, endNs: 253_961_917 });
+  launch.dispatches = [
+    { commandBufferIndex: 1, atNs: 100_000 },
+    { commandBufferIndex: 2, atNs: 5_900_000 },
+  ];
+  launch.commandBuffers = [
+    {
+      commandBufferIndex: 1,
+      encodeStartNs: 0,
+      encodeEndNs: 500_000,
+      gpuStartNs: 600_000,
+      gpuEndNs: 900_000,
+    },
+    {
+      commandBufferIndex: 2,
+      encodeStartNs: 5_700_000,
+      encodeEndNs: 5_800_000,
+      gpuStartNs: 5_900_000,
+      gpuEndNs: 6_000_000,
+    },
+    {
+      commandBufferIndex: 3,
+      encodeStartNs: 253_892_667,
+      encodeEndNs: 253_892_667,
+      gpuStartNs: 253_935_209,
+      gpuEndNs: 253_935_584,
+    },
+  ];
+  launch.waits = [{
+    atNs: 253_961_917,
+    waitNs: 52_084,
+    bucket: "cb_wait_until_completed",
+  }];
+  const harness = createBootstrapHarness({
+    datasets: new Map([["trace-a", bootstrapDataset([launch])]]),
+  });
+
+  const app = await harness.bootPromise;
+  assert.deepEqual(app.state.selectedRange, {
+    startNs: 0,
+    endNs: 6_180_000,
+  });
+  const persisted = new URL(
+    harness.historyWrites.at(-1),
+    "http://localhost/",
+  );
+  assert.equal(persisted.searchParams.get("from"), "0");
+  assert.equal(persisted.searchParams.get("to"), "6180000");
+});
+
 test("real timeline Analyze pan survives exact-to-launch swap and commits once on release", async () => {
   const launch = bootstrapLaunch();
   const harness = createBootstrapHarness({
@@ -1921,6 +1999,55 @@ test("table overflow hint only applies when content is wider than its viewport",
     false,
   );
   assert.equal(tableNeedsHorizontalScroll(null), false);
+});
+
+test("initial timeline fit ignores a distant empty marker without hiding meaningful activity", () => {
+  const bounds = { startNs: 0, endNs: 253_961_917 };
+  const scope = {
+    dispatches: [
+      { commandBufferIndex: 1, atNs: 100_000 },
+      { commandBufferIndex: 2, atNs: 5_900_000 },
+    ],
+    waits: [
+      {
+        atNs: 253_961_917,
+        waitNs: 52_084,
+        bucket: "cb_wait_until_completed",
+      },
+    ],
+    commandBuffers: [
+      {
+        commandBufferIndex: 1,
+        encodeStartNs: 0,
+        encodeEndNs: 500_000,
+        gpuStartNs: 600_000,
+        gpuEndNs: 900_000,
+      },
+      {
+        commandBufferIndex: 2,
+        encodeStartNs: 5_700_000,
+        encodeEndNs: 5_800_000,
+        gpuStartNs: 5_900_000,
+        gpuEndNs: 6_000_000,
+      },
+      {
+        commandBufferIndex: 3,
+        encodeStartNs: 253_892_667,
+        encodeEndNs: 253_892_667,
+        gpuStartNs: 253_935_209,
+        gpuEndNs: 253_935_584,
+      },
+    ],
+  };
+
+  assert.deepEqual(initialTimelineViewport(scope, bounds), {
+    startNs: 0,
+    endNs: 6_180_000,
+  });
+  assert.deepEqual(
+    initialTimelineViewport({ commandBuffers: [], dispatches: [], waits: [] }, bounds),
+    bounds,
+  );
 });
 
 test("dataset construction uses an asynchronous worker boundary for large inputs", async () => {

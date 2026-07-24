@@ -30,6 +30,7 @@ import {
 } from "../public/app.js";
 
 const reactShellUrl = new URL("../src/ProfilerApp.jsx", import.meta.url);
+const runComboboxUrl = new URL("../src/components/RunCombobox.jsx", import.meta.url);
 const publicCssUrl = new URL("../public/styles.css", import.meta.url);
 const publicAppUrl = new URL("../public/app.js", import.meta.url);
 const rootHtmlUrl = new URL("../index.html", import.meta.url);
@@ -171,7 +172,9 @@ function contrastRatio(a, b) {
 }
 
 test("workbench shell has real landmark topology, unique IDs, and safe initial controls", async () => {
-  const html = jsxShellAsHtml(await readFile(reactShellUrl, "utf8"));
+  const html = jsxShellAsHtml(
+    `${await readFile(reactShellUrl, "utf8")}\n${await readFile(runComboboxUrl, "utf8")}`,
+  );
   const nodes = parseHtmlStartTags(html);
   const byId = new Map();
 
@@ -246,11 +249,7 @@ test("workbench shell has real landmark topology, unique IDs, and safe initial c
     assert.ok(byId.has(id), `#${id}`);
   }
 
-  assert.equal(byId.get("trace-selector-button").attributes.get("aria-haspopup"), "listbox");
-  assert.equal(byId.get("trace-selector-button").attributes.get("aria-controls"), "trace-menu");
-  assert.equal(byId.get("trace-search").attributes.get("role"), "searchbox");
-  assert.equal(byId.get("trace-search").attributes.get("aria-controls"), "trace-track");
-  assert.equal(byId.get("trace-track").attributes.get("role"), "listbox");
+  assert.equal(byId.get("trace-selector-button").attributes.get("role"), "combobox");
 
   const labels = nodes.filter((node) => node.name === "label");
   for (const targetId of ["window-select", "loading-progress"]) {
@@ -642,11 +641,13 @@ test("window, URL, metric, census, wait, and evidence helpers preserve truth lab
 });
 
 test("dynamic integration source exposes secure state hooks and ordered setup", async () => {
-  const [html, source, reactSource] = await Promise.all([
+  const [shellSource, runComboboxSource, source, reactSource] = await Promise.all([
     readFile(reactShellUrl, "utf8"),
+    readFile(runComboboxUrl, "utf8"),
     readFile(publicAppUrl, "utf8"),
     readFile(reactShellUrl, "utf8"),
   ]);
+  const html = `${shellSource}\n${runComboboxSource}`;
 
   for (const id of [
     "trace-track",
@@ -673,6 +674,9 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
   );
   assert.match(source, /new RangeNavigatorClass\(/);
   assert.match(source, /new RangeRequestAuthority\(/);
+  assert.match(runComboboxSource, /PopoverTrigger/);
+  assert.match(runComboboxSource, /CommandInput/);
+  assert.match(runComboboxSource, /CommandItem/);
   assert.match(source, /analysisSessionFactory\(\{/);
   assert.match(source, /analysisSession\.analyzeRange\(\{/);
   assert.match(source, /analysisDebounceMs/);

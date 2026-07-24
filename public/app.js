@@ -738,6 +738,64 @@ export function tableNeedsHorizontalScroll(scroller) {
   );
 }
 
+export function initialTimelineViewport(scope, bounds) {
+  if (!validRangeBounds(bounds)) return bounds;
+  const dispatchCommandBuffers = new Set(
+    (Array.isArray(scope?.dispatches) ? scope.dispatches : [])
+      .map((dispatch) => dispatch?.commandBufferIndex)
+      .filter(Number.isFinite),
+  );
+  const activityPoints = [];
+  for (const commandBuffer of Array.isArray(scope?.commandBuffers)
+    ? scope.commandBuffers
+    : []) {
+    if (!dispatchCommandBuffers.has(commandBuffer?.commandBufferIndex)) continue;
+    for (const value of [
+      commandBuffer.encodeStartNs,
+      commandBuffer.encodeEndNs,
+      commandBuffer.gpuStartNs,
+      commandBuffer.gpuEndNs,
+    ]) {
+      if (Number.isFinite(value)) activityPoints.push(value);
+    }
+  }
+  const commandActivityStart =
+    activityPoints.length > 0 ? Math.min(...activityPoints) : null;
+  const commandActivityEnd =
+    activityPoints.length > 0 ? Math.max(...activityPoints) : null;
+  const commandActivitySpan =
+    commandActivityStart === null || commandActivityEnd === null
+      ? 0
+      : commandActivityEnd - commandActivityStart;
+  const completionWaitProximity = Math.max(
+    1_000_000,
+    commandActivitySpan * 0.1,
+  );
+  for (const wait of Array.isArray(scope?.waits) ? scope.waits : []) {
+    if (!Number.isFinite(wait?.atNs)) continue;
+    const distantCompletionMarker =
+      wait?.bucket === "cb_wait_until_completed" &&
+      commandActivityEnd !== null &&
+      wait.atNs > commandActivityEnd + completionWaitProximity;
+    if (!distantCompletionMarker) activityPoints.push(wait.atNs);
+  }
+  if (activityPoints.length < 2) return bounds;
+  const activityStart = Math.min(...activityPoints);
+  const activityEnd = Math.max(...activityPoints);
+  if (activityEnd <= activityStart) return bounds;
+  const fullSpan = bounds.endNs - bounds.startNs;
+  const activitySpan = activityEnd - activityStart;
+  if (activitySpan / fullSpan >= 0.9) return bounds;
+  const padding = Math.round(activitySpan * 0.03);
+  return clampViewport(
+    {
+      startNs: Math.max(bounds.startNs, activityStart - padding),
+      endNs: Math.min(bounds.endNs, activityEnd + padding),
+    },
+    bounds,
+  );
+}
+
 export function samplingDisclosure(scope) {
   const sampling = scope?.renderSampling;
   if (sampling?.active !== true) return null;
@@ -1977,6 +2035,7 @@ export async function bootstrap({
   windowObject = documentObject?.defaultView ?? globalThis.window,
   RendererClass = TimelineRenderer,
   RangeNavigatorClass = RangeNavigator,
+  runSelector = null,
   signal,
 } = {}) {
   if (!documentObject || !windowObject) {
@@ -2010,16 +2069,30 @@ export async function bootstrap({
     if (!element) throw new Error(`Missing required UI hook #${id}`);
     return element;
   };
+  const externalRunSelector =
+    runSelector && typeof runSelector.render === "function"
+      ? runSelector
+      : null;
   const elements = {
     directory: byId("directory-identity"),
     refresh: byId("refresh-button"),
     theme: byId("theme-toggle"),
     rail: byId("trace-rail"),
-    traceSelectorButton: byId("trace-selector-button"),
-    traceSelectorLabel: byId("trace-selector-label"),
-    traceMenu: byId("trace-menu"),
-    traceSearch: byId("trace-search"),
-    track: byId("trace-track"),
+    traceSelectorButton: externalRunSelector
+      ? documentObject.getElementById("trace-selector-button")
+      : byId("trace-selector-button"),
+    traceSelectorLabel: externalRunSelector
+      ? documentObject.getElementById("trace-selector-label")
+      : byId("trace-selector-label"),
+    traceMenu: externalRunSelector
+      ? documentObject.getElementById("trace-menu")
+      : byId("trace-menu"),
+    traceSearch: externalRunSelector
+      ? documentObject.getElementById("trace-search")
+      : byId("trace-search"),
+    track: externalRunSelector
+      ? documentObject.getElementById("trace-track")
+      : byId("trace-track"),
     selectedTraceSummary: byId("selected-trace-summary"),
     provenance: byId("provenance-strip"),
     health: byId("health-strip"),
@@ -2433,10 +2506,11 @@ export async function bootstrap({
     {
       preserveInspector = false,
       preservePointerDrag = false,
+      viewport: requestedViewport = null,
     } = {},
   ) {
     const bounds = selectedLaunchBounds();
-    const viewport = state.selectedRange ?? bounds;
+    const viewport = requestedViewport ?? state.selectedRange ?? bounds;
     const pinned = preserveInspector ? state.inspectorPayload : null;
     const interactionIdentity =
       typeof state.currentTraceId === "string" &&
@@ -2626,31 +2700,46 @@ export async function bootstrap({
   function renderRegistry() {
     elements.rail.setAttribute("aria-busy", "false");
     const selectedTrace = state.traces.find((trace) => trace?.id === state.currentTraceId);
-    const visibleTraces = filterTraces(state.traces, elements.traceSearch.value);
-    elements.traceSelectorButton.disabled = state.traces.length === 0;
-    renderTraceRail({
-      documentObject,
-      track: elements.track,
-      traces: visibleTraces,
-      selectedId: state.currentTraceId,
-      evidenceByCacheKey: state.evidenceByCacheKey,
-      emptyMessage:
-        state.traces.length === 0
-          ? "No .jsonl or .ndjson traces in this directory."
-          : "No runs match this search.",
-      onSelect(id) {
-        const trace = state.traces.find((item) => item?.id === id);
-        elements.traceSelectorLabel.textContent =
-          trace ? traceLabel(trace) : "Choose a run";
-        closeTraceMenu();
+    const selectRun = (id) => {
+      if (state.traces.some((item) => item?.id === id)) {
         void selectTrace(id, {
           requestedWindow: 0,
           recordSelection: true,
         });
-      },
-    });
+      }
+    };
+    if (externalRunSelector) {
+      externalRunSelector.render({
+        runs: state.traces,
+        selectedId: state.currentTraceId,
+        onSelect: selectRun,
+      });
+    } else {
+      const visibleTraces = filterTraces(state.traces, elements.traceSearch.value);
+      elements.traceSelectorButton.disabled = state.traces.length === 0;
+      renderTraceRail({
+        documentObject,
+        track: elements.track,
+        traces: visibleTraces,
+        selectedId: state.currentTraceId,
+        evidenceByCacheKey: state.evidenceByCacheKey,
+        emptyMessage:
+          state.traces.length === 0
+            ? "No .jsonl or .ndjson traces in this directory."
+            : "No runs match this search.",
+        onSelect(id) {
+          const trace = state.traces.find((item) => item?.id === id);
+          elements.traceSelectorLabel.textContent =
+            trace ? traceLabel(trace) : "Choose a run";
+          closeTraceMenu();
+          selectRun(id);
+        },
+      });
+    }
     if (selectedTrace) {
-      elements.traceSelectorLabel.textContent = traceLabel(selectedTrace);
+      if (!externalRunSelector) {
+        elements.traceSelectorLabel.textContent = traceLabel(selectedTrace);
+      }
       const railState = traceRailState(
         selectedTrace,
         state.evidenceByCacheKey.get(traceCacheKey(selectedTrace)),
@@ -2658,8 +2747,10 @@ export async function bootstrap({
       elements.selectedTraceSummary.textContent =
         `${railState.model} · ${railState.mode} · ${railState.evidence}`;
     } else {
-      elements.traceSelectorLabel.textContent =
-        state.traces.length === 0 ? "No runs available" : "Choose a run";
+      if (!externalRunSelector) {
+        elements.traceSelectorLabel.textContent =
+          state.traces.length === 0 ? "No runs available" : "Choose a run";
+      }
       elements.selectedTraceSummary.textContent =
         state.traces.length === 0 ? "No runs available" : "Choose a run";
     }
@@ -3202,13 +3293,20 @@ export async function bootstrap({
 
     const bounds = selectedLaunchBounds();
     const overview = scope?.overview;
+    const rangeUrl = new URL(requestedRangeInput ?? "http://localhost/");
+    const hasExplicitRange =
+      rangeUrl.searchParams.has("range") &&
+      rangeUrl.searchParams.has("from") &&
+      rangeUrl.searchParams.has("to");
     let requestedMode = "view";
     if (bounds && overview) {
       const selection = parseRangeSelection(
         requestedRangeInput ?? "http://localhost/",
         bounds,
       );
-      state.selectedRange = selection.range;
+      state.selectedRange = hasExplicitRange
+        ? selection.range
+        : initialTimelineViewport(scope, bounds);
       requestedMode = selection.mode;
       elements.rangeNavigator.hidden = false;
       rangeNavigator.setDisabled(false);
@@ -3704,10 +3802,12 @@ export async function bootstrap({
   elements.fit.addEventListener("click", handleFit);
   elements.zoomIn.addEventListener("click", handleZoomIn);
   elements.zoomOut.addEventListener("click", handleZoomOut);
-  elements.rail.addEventListener("keydown", handleRailKeydown);
-  elements.traceSelectorButton.addEventListener("click", handleTraceSelector);
-  elements.traceSearch.addEventListener("input", handleTraceSearch);
-  documentObject.addEventListener("pointerdown", handleOutsideTraceMenu);
+  if (!externalRunSelector) {
+    elements.rail.addEventListener("keydown", handleRailKeydown);
+    elements.traceSelectorButton.addEventListener("click", handleTraceSelector);
+    elements.traceSearch.addEventListener("input", handleTraceSearch);
+    documentObject.addEventListener("pointerdown", handleOutsideTraceMenu);
+  }
   windowObject.addEventListener("resize", handleTableResize);
   elements.kernelTab.addEventListener("click", handleKernelTab);
   elements.waitTab.addEventListener("click", handleWaitTab);
@@ -3752,13 +3852,15 @@ export async function bootstrap({
     elements.fit.removeEventListener?.("click", handleFit);
     elements.zoomIn.removeEventListener?.("click", handleZoomIn);
     elements.zoomOut.removeEventListener?.("click", handleZoomOut);
-    elements.rail.removeEventListener?.("keydown", handleRailKeydown);
-    elements.traceSelectorButton.removeEventListener?.(
-      "click",
-      handleTraceSelector,
-    );
-    elements.traceSearch.removeEventListener?.("input", handleTraceSearch);
-    documentObject.removeEventListener?.("pointerdown", handleOutsideTraceMenu);
+    if (!externalRunSelector) {
+      elements.rail.removeEventListener?.("keydown", handleRailKeydown);
+      elements.traceSelectorButton.removeEventListener?.(
+        "click",
+        handleTraceSelector,
+      );
+      elements.traceSearch.removeEventListener?.("input", handleTraceSearch);
+      documentObject.removeEventListener?.("pointerdown", handleOutsideTraceMenu);
+    }
     windowObject.removeEventListener?.("resize", handleTableResize);
     elements.kernelTab.removeEventListener?.("click", handleKernelTab);
     elements.waitTab.removeEventListener?.("click", handleWaitTab);
