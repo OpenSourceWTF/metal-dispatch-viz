@@ -1045,7 +1045,33 @@ export function ProfilerApp({
               />{" "}
               within their parent command buffer, not measured timestamps.
             </p>
-            <p>Local read-only workbench · source files are never modified</p>
+            <div className="disclosure-meta">
+              <p>Local read-only workbench · source files are never modified</p>
+              <nav
+                className="source-repositories"
+                aria-label="Source repositories"
+              >
+                <span>Source</span>
+                <a
+                  className="source-repository-link"
+                  href="https://github.com/OpenSourceWTF/metal-dispatch-viz"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Open the Metal Dispatch Visualizer repository on GitHub; opens in a new tab"
+                >
+                  Visualizer <span aria-hidden="true">↗</span>
+                </a>
+                <a
+                  className="source-repository-link"
+                  href="https://github.com/OpenSourceWTF/mlx-profiler"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Open the MLX Profiler repository on GitHub; opens in a new tab"
+                >
+                  Profiler <span aria-hidden="true">↗</span>
+                </a>
+              </nav>
+            </div>
           </footer>
         </div>
       </main>

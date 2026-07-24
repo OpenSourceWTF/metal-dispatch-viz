@@ -27,7 +27,7 @@
 
 **Security flag:** `none`
 
-- [ ] **Step 1: Write failing React shell test**
+- [x] **Step 1: Write failing React shell test**
 
 Add a test that renders `ProfilerApp`, selects
 `nav[aria-label="Source repositories"]`, and asserts:
@@ -45,7 +45,7 @@ for (const link of links) {
 }
 ```
 
-- [ ] **Step 2: Write failing UI contract assertions**
+- [x] **Step 2: Write failing UI contract assertions**
 
 Extend the visual-system contract to require:
 
@@ -59,7 +59,7 @@ const sourceLinkFocus = requireDeclarationRule(
 assert.match(sourceLinkFocus.get("outline") ?? "", /var\(--focus\)/);
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run:
 
@@ -70,7 +70,7 @@ node --test test/ui-contract.test.mjs
 
 Expected: FAIL because the source navigation and CSS rules do not exist.
 
-- [ ] **Step 4: Implement the static source navigation**
+- [x] **Step 4: Implement the static source navigation**
 
 Inside `.disclosure`, add:
 
@@ -103,7 +103,7 @@ group must use `display: flex`, `flex-wrap: wrap`, preserve visible focus with
 `outline: 2px solid var(--focus)`, and avoid a fixed width so it can wrap
 without horizontal overflow.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 Run:
 
@@ -114,7 +114,7 @@ node --test test/ui-contract.test.mjs
 
 Expected: both focused suites PASS.
 
-- [ ] **Step 6: Run commit gate**
+- [x] **Step 6: Run commit gate**
 
 Run:
 
@@ -126,7 +126,7 @@ git diff --check
 
 Expected: all tests and production build PASS with no whitespace errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/ProfilerApp.jsx public/styles.css test/react-shell.test.jsx test/ui-contract.test.mjs docs/plans/2026-07-24-source-repository-links.md
