@@ -1794,11 +1794,16 @@ export function filterTraces(traces, query) {
   });
 }
 
+function traceOptionDomId(traceId) {
+  return `trace-option-${encodeURIComponent(String(traceId)).replaceAll("%", "_")}`;
+}
+
 export function renderTraceRail({
   documentObject,
   track,
   traces,
   selectedId,
+  activeId = null,
   evidenceByCacheKey,
   onSelect,
   emptyMessage = "No .jsonl or .ndjson traces in this directory.",
@@ -1828,11 +1833,14 @@ export function renderTraceRail({
     const railState = traceRailState(trace, dataset);
     const button = documentObject.createElement("button");
     button.type = "button";
+    button.id = traceOptionDomId(trace.id);
     button.className = "trace-toggle";
+    button.tabIndex = -1;
     button.setAttribute("role", "option");
     button.setAttribute("aria-selected", String(trace.id === selectedId));
     button.setAttribute("aria-pressed", String(trace.id === selectedId));
     button.setAttribute("data-trace-id", trace.id);
+    button.setAttribute("data-active", String(trace.id === activeId));
     button.setAttribute(
       "aria-label",
       `${traceLabel(trace)}. Model ${railState.model}. Mode ${railState.mode}. ` +
@@ -2138,6 +2146,11 @@ export async function bootstrap({
       kernel: { key: null, direction: "ascending" },
       wait: { key: null, direction: "ascending" },
     },
+  };
+  const runSearch = {
+    open: false,
+    query: "",
+    activeId: null,
   };
   const helpController = createHelpController({
     documentObject,
@@ -2590,40 +2603,86 @@ export async function bootstrap({
     }
   }
 
-  function renderRegistry() {
-    elements.rail.setAttribute("aria-busy", "false");
-    const selectedTrace = state.traces.find((trace) => trace?.id === state.currentTraceId);
-    if (
-      selectedTrace &&
-      elements.track.hidden &&
-      documentObject.activeElement !== elements.traceSearch
-    ) {
-      elements.traceSearch.value = traceLabel(selectedTrace);
+  function selectedRunLabel() {
+    const trace = state.traces.find(
+      (item) => item?.id === state.currentTraceId,
+    );
+    return trace ? traceLabel(trace) : "";
+  }
+
+  function visibleRunSearchTraces() {
+    return filterTraces(
+      state.traces,
+      runSearch.open ? runSearch.query : "",
+    );
+  }
+
+  function synchronizeRunSearchActive(visibleTraces) {
+    if (!runSearch.open || visibleTraces.length === 0) {
+      runSearch.activeId = null;
+      return;
     }
-    const visibleTraces = filterTraces(state.traces, elements.traceSearch.value);
+    if (visibleTraces.some((trace) => trace?.id === runSearch.activeId)) {
+      return;
+    }
+    const selectedVisible = visibleTraces.find(
+      (trace) => trace?.id === state.currentTraceId,
+    );
+    runSearch.activeId = selectedVisible?.id ?? visibleTraces[0]?.id ?? null;
+  }
+
+  function renderRegistry({ scrollActive = false } = {}) {
+    elements.rail.setAttribute("aria-busy", "false");
+    const selectedTrace = state.traces.find(
+      (trace) => trace?.id === state.currentTraceId,
+    );
+    if (state.traces.length === 0) {
+      runSearch.open = false;
+      runSearch.query = "";
+      runSearch.activeId = null;
+    }
+    if (!runSearch.open) {
+      elements.traceSearch.value = selectedTrace
+        ? traceLabel(selectedTrace)
+        : "";
+    }
+    elements.track.hidden = !runSearch.open;
+    const visibleTraces = visibleRunSearchTraces();
+    synchronizeRunSearchActive(visibleTraces);
     elements.traceSearch.disabled = state.traces.length === 0;
-    elements.traceSearch.setAttribute("aria-expanded", String(!elements.track.hidden));
-    renderTraceRail({
+    elements.traceSearch.setAttribute(
+      "aria-expanded",
+      String(runSearch.open),
+    );
+    if (runSearch.activeId === null) {
+      elements.traceSearch.removeAttribute("aria-activedescendant");
+    } else {
+      elements.traceSearch.setAttribute(
+        "aria-activedescendant",
+        traceOptionDomId(runSearch.activeId),
+      );
+    }
+    const buttons = renderTraceRail({
       documentObject,
       track: elements.track,
       traces: visibleTraces,
       selectedId: state.currentTraceId,
+      activeId: runSearch.activeId,
       evidenceByCacheKey: state.evidenceByCacheKey,
       emptyMessage:
         state.traces.length === 0
           ? "No .jsonl or .ndjson traces in this directory."
           : "No runs match this search.",
       onSelect(id) {
-        const trace = state.traces.find((item) => item?.id === id);
-        elements.traceSearch.value = trace ? traceLabel(trace) : "";
-        elements.track.hidden = true;
-        elements.traceSearch.setAttribute("aria-expanded", "false");
-        void selectTrace(id, {
-          requestedWindow: 0,
-          recordSelection: true,
-        });
+        commitRunSearch(id);
       },
     });
+    if (scrollActive && runSearch.activeId !== null) {
+      buttons
+        .find((button) =>
+          button.getAttribute("data-trace-id") === runSearch.activeId)
+        ?.scrollIntoView?.({ block: "nearest" });
+    }
     if (selectedTrace) {
       const railState = traceRailState(
         selectedTrace,
@@ -2635,6 +2694,72 @@ export async function bootstrap({
       elements.selectedTraceSummary.textContent =
         state.traces.length === 0 ? "No runs available" : "Choose a run";
     }
+  }
+
+  function openRunSearch() {
+    if (state.traces.length === 0 || state.destroyed) return;
+    if (!runSearch.open) {
+      runSearch.open = true;
+      runSearch.query = "";
+      runSearch.activeId = state.currentTraceId;
+      renderRegistry();
+    }
+    elements.traceSearch.select?.();
+  }
+
+  function closeRunSearch({ restoreLabel = true } = {}) {
+    if (!runSearch.open && !restoreLabel) return;
+    runSearch.open = false;
+    runSearch.query = "";
+    runSearch.activeId = null;
+    if (restoreLabel) {
+      elements.traceSearch.value = selectedRunLabel();
+    }
+    renderRegistry();
+  }
+
+  function setRunSearchQuery(query) {
+    if (state.traces.length === 0 || state.destroyed) return;
+    runSearch.open = true;
+    runSearch.query = String(query ?? "");
+    renderRegistry();
+  }
+
+  function moveRunSearchActive(direction) {
+    if (!runSearch.open) openRunSearch();
+    const visibleTraces = visibleRunSearchTraces();
+    if (visibleTraces.length === 0) {
+      runSearch.activeId = null;
+      renderRegistry();
+      return;
+    }
+    const activeIndex = visibleTraces.findIndex(
+      (trace) => trace?.id === runSearch.activeId,
+    );
+    const fallbackIndex = direction < 0 ? visibleTraces.length - 1 : 0;
+    const nextIndex =
+      activeIndex < 0
+        ? fallbackIndex
+        : (activeIndex + direction + visibleTraces.length) %
+          visibleTraces.length;
+    runSearch.activeId = visibleTraces[nextIndex].id;
+    renderRegistry({ scrollActive: true });
+  }
+
+  function commitRunSearch(id = runSearch.activeId) {
+    const trace = state.traces.find((item) => item?.id === id);
+    if (!trace || state.destroyed) return;
+    runSearch.open = false;
+    runSearch.query = "";
+    runSearch.activeId = null;
+    elements.track.hidden = true;
+    elements.traceSearch.value = traceLabel(trace);
+    elements.traceSearch.setAttribute("aria-expanded", "false");
+    elements.traceSearch.removeAttribute("aria-activedescendant");
+    void selectTrace(id, {
+      requestedWindow: 0,
+      recordSelection: true,
+    });
   }
 
   function renderProgress(progress, fallbackTotalBytes) {
@@ -3580,12 +3705,53 @@ export async function bootstrap({
   const handleZoomOut = () => {
     renderer.handleKeyDown({ key: "-", preventDefault() {} });
   };
-  const handleRailKeydown = (event) => {
-    handleTraceRailKey({
-      documentObject,
-      track: elements.track,
-      event,
-    });
+  const handleRunSearchFocus = () => {
+    openRunSearch();
+  };
+  const handleRunSearchPointerDown = (event) => {
+    if (runSearch.open || elements.traceSearch.disabled) return;
+    event.preventDefault?.();
+    elements.traceSearch.focus?.({ preventScroll: true });
+    openRunSearch();
+  };
+  const handleRunSearchInput = () => {
+    setRunSearchQuery(elements.traceSearch.value);
+  };
+  const handleRunSearchKeydown = (event) => {
+    switch (event.key) {
+      case "ArrowDown":
+      case "ArrowUp":
+        event.preventDefault?.();
+        moveRunSearchActive(event.key === "ArrowDown" ? 1 : -1);
+        break;
+      case "Enter":
+        if (runSearch.open && runSearch.activeId !== null) {
+          event.preventDefault?.();
+          commitRunSearch();
+        }
+        break;
+      case "Escape":
+        if (runSearch.open) {
+          event.preventDefault?.();
+          closeRunSearch();
+        }
+        break;
+      case "Tab":
+        if (runSearch.open) closeRunSearch();
+        break;
+      default:
+        break;
+    }
+  };
+  const handleRunSearchOutsidePointer = (event) => {
+    if (
+      !runSearch.open ||
+      event.target === elements.traceSearch ||
+      elements.track.contains?.(event.target)
+    ) {
+      return;
+    }
+    closeRunSearch();
   };
   const selectTableTab = (tab, { focus = false } = {}) => {
     const kernelActive = tab !== "wait";
@@ -3640,7 +3806,14 @@ export async function bootstrap({
   elements.fit.addEventListener("click", handleFit);
   elements.zoomIn.addEventListener("click", handleZoomIn);
   elements.zoomOut.addEventListener("click", handleZoomOut);
-  elements.rail.addEventListener("keydown", handleRailKeydown);
+  elements.traceSearch.addEventListener("focus", handleRunSearchFocus);
+  elements.traceSearch.addEventListener(
+    "pointerdown",
+    handleRunSearchPointerDown,
+  );
+  elements.traceSearch.addEventListener("input", handleRunSearchInput);
+  elements.traceSearch.addEventListener("keydown", handleRunSearchKeydown);
+  documentObject.addEventListener("pointerdown", handleRunSearchOutsidePointer);
   elements.kernelTab.addEventListener("click", handleKernelTab);
   elements.waitTab.addEventListener("click", handleWaitTab);
   elements.tableTabs.addEventListener("keydown", handleTableTabKeydown);
@@ -3684,7 +3857,26 @@ export async function bootstrap({
     elements.fit.removeEventListener?.("click", handleFit);
     elements.zoomIn.removeEventListener?.("click", handleZoomIn);
     elements.zoomOut.removeEventListener?.("click", handleZoomOut);
-    elements.rail.removeEventListener?.("keydown", handleRailKeydown);
+    elements.traceSearch.removeEventListener?.(
+      "focus",
+      handleRunSearchFocus,
+    );
+    elements.traceSearch.removeEventListener?.(
+      "pointerdown",
+      handleRunSearchPointerDown,
+    );
+    elements.traceSearch.removeEventListener?.(
+      "input",
+      handleRunSearchInput,
+    );
+    elements.traceSearch.removeEventListener?.(
+      "keydown",
+      handleRunSearchKeydown,
+    );
+    documentObject.removeEventListener?.(
+      "pointerdown",
+      handleRunSearchOutsidePointer,
+    );
     elements.kernelTab.removeEventListener?.("click", handleKernelTab);
     elements.waitTab.removeEventListener?.("click", handleWaitTab);
     elements.tableTabs.removeEventListener?.("keydown", handleTableTabKeydown);
