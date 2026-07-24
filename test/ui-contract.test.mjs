@@ -717,7 +717,11 @@ test("run combobox exposes active-descendant behavior and a bounded result panel
   assert.match(source, /setAttribute\(["']data-active["']/);
   assert.match(source, /traceSearch\.addEventListener\(["']input["']/);
   assert.match(source, /documentObject\.addEventListener\(["']pointerdown["']/);
-  assert.match(css, /\.trace-toggle\[data-active=["']true["']\]/);
+  assert.match(
+    css,
+    /\.trace-toggle\[data-active=["']true["']\]\s*\{[\s\S]*?inset 3px 0 0 var\(--selection\)/,
+    "the keyboard-active option has a contrasting selection marker",
+  );
   assert.match(
     css,
     /\.trace-track\s*\{[\s\S]*?max-height:\s*min\(360px,\s*55vh\)[\s\S]*?overflow-y:\s*auto/,

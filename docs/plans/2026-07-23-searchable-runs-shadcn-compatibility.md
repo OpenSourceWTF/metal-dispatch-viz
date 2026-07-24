@@ -211,7 +211,9 @@
 - [x] Add `src/index.css` with Tailwind and animation utility imports; map shadcn semantic variables to the profiler's existing tokens; and use the existing theme authority:
 
   ```css
-  @import "tailwindcss";
+  @layer theme, components, utilities;
+  @import "tailwindcss/theme.css" layer(theme);
+  @import "tailwindcss/utilities.css" layer(utilities);
   @import "tw-animate-css";
 
   @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
@@ -227,7 +229,9 @@
   }
   ```
 
-  Do not add a global Tailwind base layer that competes with the current profiler rules.
+  Import Tailwind's theme and utilities explicitly without Preflight. A full
+  `@import "tailwindcss"` resets the Field Manual's ordered and unordered list
+  markers and therefore competes with the current profiler rules.
 
 - [x] Import `./index.css` before `../public/styles.css` in `src/main.jsx`.
 - [x] Run the config tests, CLI inspection, and no-write component resolution:
@@ -290,7 +294,7 @@
   - the theme toggle and timeline remain visually unchanged;
   - the result panel remains inside the viewport at 390 px width.
 - [x] Capture before/after screenshots and compare the surrounding layout for unexplained Tailwind preflight regressions.
-- [ ] Review the complete diff against the approved design, run a focused code review, and resolve any correctness or accessibility findings.
+- [x] Review the complete diff against the approved design, run focused code and adversarial reviews, and resolve the reported Tailwind Preflight and keyboard-active contrast findings.
 - [x] Mark completed plan boxes, commit documentation, and verify the worktree:
 
   ```bash

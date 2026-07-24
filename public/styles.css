@@ -349,13 +349,13 @@ main {
 .trace-toggle[data-active="true"] {
   background: var(--raised);
   box-shadow:
-    inset 3px 0 0 var(--accent),
+    inset 3px 0 0 var(--selection),
     inset 0 -1px 0 var(--rule);
 }
 
 .trace-toggle[aria-pressed="true"][data-active="true"] {
   box-shadow:
-    inset 3px 0 0 var(--accent),
+    inset 3px 0 0 var(--selection),
     inset 0 -2px 0 var(--selection);
 }
 

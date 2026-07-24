@@ -72,6 +72,19 @@ test("production build emits a relocatable compiled client and bundled analysis 
     reference.endsWith(".js"),
   );
   assert.ok(mainReference);
+  const styleReference = assetReferences.find((reference) =>
+    reference.endsWith(".css"),
+  );
+  assert.ok(styleReference);
+  const styleSource = await readFile(
+    path.join(clientRoot, styleReference.replace(/^\.\//, "")),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    styleSource,
+    /ol,ul,menu\{list-style:none/,
+    "Tailwind compatibility must not reset the Field Manual list markers",
+  );
   const mainSource = await readFile(
     path.join(clientRoot, mainReference.replace(/^\.\//, "")),
     "utf8",

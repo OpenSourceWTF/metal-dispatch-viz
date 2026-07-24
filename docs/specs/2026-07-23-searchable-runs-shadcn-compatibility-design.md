@@ -183,7 +183,9 @@ Tests require all runs to appear before the first edit.
 
 ### Critical: Tailwind preflight changes the profiler layout
 
-The compatibility stylesheet loads before the existing visual system. Desktop
+The compatibility stylesheet imports Tailwind's theme and utilities without
+Preflight, then loads before the existing visual system. This preserves Field
+Manual list markers and the profiler's established element defaults. Desktop
 and narrow screenshot comparisons plus the existing UI contract must remain
 stable. Any unexplained layout delta blocks publication.
 
