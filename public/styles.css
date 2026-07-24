@@ -311,6 +311,49 @@ main {
   text-align: left;
 }
 
+.run-combobox-trigger {
+  height: 40px;
+  min-block-size: 40px;
+  border-radius: 4px;
+}
+
+.run-combobox-menu {
+  overflow: hidden;
+  border-color: var(--control-border);
+  border-radius: 4px;
+  background: var(--panel);
+  box-shadow: 0 14px 32px rgb(0 0 0 / 42%);
+}
+
+.run-combobox-search-shell {
+  height: 40px;
+  border-color: var(--rule);
+  background: var(--canvas);
+  transition:
+    border-color 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+.run-combobox-search-shell:focus-within {
+  border-color: var(--gpu);
+  box-shadow: inset 0 -1px 0 var(--gpu);
+}
+
+input.run-combobox-search {
+  height: 38px;
+  min-block-size: 0;
+  padding-block: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+}
+
+input.run-combobox-search:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
 .dropdown-caret {
   color: var(--gpu);
 }
@@ -1003,6 +1046,88 @@ main {
   grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr);
   transform: translate(-50%, -50%);
   background: var(--panel);
+}
+
+.loading-state > :not(.timeline-loading-visual) {
+  position: relative;
+  z-index: 1;
+}
+
+.timeline-loading-visual {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.timeline-loading-visual::after {
+  position: absolute;
+  inset-block: 0;
+  width: 2px;
+  content: "";
+  background: color-mix(in srgb, var(--gpu) 46%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--gpu) 32%, transparent);
+  transform: translateX(-120%);
+  animation: timeline-loading-scan 1.45s ease-in-out 8;
+}
+
+.timeline-loading-visual span {
+  position: absolute;
+  top: 0;
+  width: 33.333%;
+  height: 2px;
+  background: var(--gpu);
+  opacity: 0.22;
+  animation: timeline-loading-segment 1.2s ease-in-out 10;
+}
+
+.timeline-loading-visual span:nth-child(1) {
+  left: 0;
+}
+
+.timeline-loading-visual span:nth-child(2) {
+  left: 33.333%;
+  animation-delay: 160ms;
+}
+
+.timeline-loading-visual span:nth-child(3) {
+  left: 66.666%;
+  animation-delay: 320ms;
+}
+
+.plot-frame.is-loading .placeholder-lane::after {
+  transform-origin: left;
+  animation: timeline-placeholder-pulse 1.2s ease-in-out 10 alternate;
+}
+
+@keyframes timeline-loading-scan {
+  to {
+    transform: translateX(520px);
+  }
+}
+
+@keyframes timeline-loading-segment {
+  0%,
+  100% {
+    opacity: 0.14;
+  }
+
+  50% {
+    opacity: 0.82;
+  }
+}
+
+@keyframes timeline-placeholder-pulse {
+  from {
+    opacity: 0.2;
+    transform: scaleX(0.72);
+  }
+
+  to {
+    opacity: 0.7;
+    transform: scaleX(1);
+  }
 }
 
 .progress-readout {
@@ -1792,6 +1917,12 @@ tbody th {
   .field-manual-sheet,
   .ai-export-sheet {
     transition: none;
+  }
+
+  .timeline-loading-visual::after,
+  .timeline-loading-visual span,
+  .plot-frame.is-loading .placeholder-lane::after {
+    animation: none;
   }
 }
 

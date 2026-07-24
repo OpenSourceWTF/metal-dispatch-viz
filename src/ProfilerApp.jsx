@@ -645,6 +645,11 @@ export function ProfilerApp({
                     className="state-region loading-state"
                     aria-label="Trace loading progress"
                   >
+                    <div className="timeline-loading-visual" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
                     <div>
                       <strong>Preparing timeline</strong>
                       <span id="loading-filename">

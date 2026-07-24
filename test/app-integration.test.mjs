@@ -1654,6 +1654,17 @@ test("initial activity fit becomes the persisted selected range", async () => {
   );
   assert.equal(persisted.searchParams.get("from"), "0");
   assert.equal(persisted.searchParams.get("to"), "6180000");
+
+  harness.navigators[0].emitCommit({
+    startNs: 1_000_000,
+    endNs: 2_000_000,
+  });
+  harness.documentObject.getElementById("fit-timeline").click();
+  assert.deepEqual(
+    app.state.selectedRange,
+    { startNs: 0, endNs: 6_180_000 },
+    "Fit restores the same activity-focused viewport used on initial load",
+  );
 });
 
 test("real timeline Analyze pan survives exact-to-launch swap and commits once on release", async () => {
