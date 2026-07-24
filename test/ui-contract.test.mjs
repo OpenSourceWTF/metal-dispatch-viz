@@ -706,6 +706,24 @@ test("dynamic integration source exposes secure state hooks and ordered setup", 
   assert.doesNotMatch(source, /sample(?:Data|Trace)|fixtures\/sample/i);
 });
 
+test("run combobox exposes active-descendant behavior and a bounded result panel", async () => {
+  const [source, css] = await Promise.all([
+    readFile(publicAppUrl, "utf8"),
+    readFile(publicCssUrl, "utf8"),
+  ]);
+
+  assert.match(source, /trace-option-/);
+  assert.match(source, /aria-activedescendant/);
+  assert.match(source, /setAttribute\(["']data-active["']/);
+  assert.match(source, /traceSearch\.addEventListener\(["']input["']/);
+  assert.match(source, /documentObject\.addEventListener\(["']pointerdown["']/);
+  assert.match(css, /\.trace-toggle\[data-active=["']true["']\]/);
+  assert.match(
+    css,
+    /\.trace-track\s*\{[\s\S]*?max-height:\s*min\(360px,\s*55vh\)[\s\S]*?overflow-y:\s*auto/,
+  );
+});
+
 test("contextual help shell is accessible, singular, and placed with workbench controls", async () => {
   const html = jsxShellAsHtml(await readFile(reactShellUrl, "utf8"));
   const nodes = parseHtmlStartTags(html);

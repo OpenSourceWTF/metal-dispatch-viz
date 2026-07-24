@@ -371,6 +371,10 @@ class BootstrapElement {
     );
   }
 
+  listenerCount(type) {
+    return this.listeners.get(type)?.length ?? 0;
+  }
+
   dispatch(type, event = {}) {
     for (const listener of this.listeners.get(type) ?? []) {
       listener({
@@ -388,6 +392,11 @@ class BootstrapElement {
 
   focus() {
     this.ownerDocument.activeElement = this;
+  }
+
+  select() {
+    this.selectionStart = 0;
+    this.selectionEnd = String(this.value).length;
   }
 
   getContext(kind) {
@@ -469,6 +478,19 @@ function bootstrapDocument() {
     removeEventListener(type, listener) {
       listeners.get(type)?.delete(listener);
     },
+    dispatch(type, event = {}) {
+      for (const listener of [...(listeners.get(type) ?? [])]) {
+        listener({
+          currentTarget: documentObject,
+          target: documentObject,
+          preventDefault() {},
+          ...event,
+        });
+      }
+    },
+    listenerCount(type) {
+      return listeners.get(type)?.size ?? 0;
+    },
   };
   documentObject.documentElement =
     new BootstrapElement(documentObject, "document", "html");
@@ -497,7 +519,7 @@ function bootstrapDocument() {
             "download-export",
           ].includes(id) ? "button" :
       id === "window-select" || id === "ai-export-format" ? "select" :
-      id === "manual-search" ? "input" :
+      id === "manual-search" || id === "trace-search" ? "input" :
       id === "ai-export-preview" ? "textarea" :
       id.includes("table-body") ? "tbody" :
       id === "loading-progress" ? "progress" :
@@ -509,6 +531,7 @@ function bootstrapDocument() {
     );
   }
   documentObject.getElementById("range-mode-analyze").disabled = true;
+  documentObject.getElementById("trace-track").hidden = true;
   return documentObject;
 }
 
@@ -913,6 +936,143 @@ test("bootstrap passes absolute trace URLs at root and project bases", async () 
     assert.equal(harness.sessions[0].url, `${baseURI}api/traces/trace-a`);
     app.destroy();
   }
+});
+
+test("searchable run combobox filters, navigates, selects, dismisses, and tears down", async () => {
+  const traces = [
+    {
+      id: "hy3-2q",
+      label: "Hy3 2Q",
+      model: "Hy3",
+      mode: "queued",
+      relativePath: "hy3/2q.jsonl",
+      size: 100,
+    },
+    {
+      id: "qwen-27b",
+      label: "Qwen3.6 27B",
+      model: "Qwen3.6",
+      mode: "queued",
+      relativePath: "qwen/27b.jsonl",
+      size: 100,
+    },
+    {
+      id: "glm-158q",
+      label: "GLM 5.2 1.58Q",
+      model: "GLM 5.2",
+      mode: "queued",
+      relativePath: "glm/1.58q.jsonl",
+      size: 100,
+    },
+  ];
+  const datasets = new Map(
+    traces.map((trace) => [
+      trace.id,
+      bootstrapDataset([bootstrapLaunch({ name: trace.id })]),
+    ]),
+  );
+  const harness = createBootstrapHarness({
+    href: "http://localhost/?trace=qwen-27b&window=0",
+    traces,
+    datasets,
+  });
+  const app = await harness.bootPromise;
+  const search = harness.documentObject.getElementById("trace-search");
+  const track = harness.documentObject.getElementById("trace-track");
+
+  assert.equal(search.value, "Qwen3.6 27B");
+  assert.equal(track.hidden, true);
+  search.focus();
+  search.dispatch("focus");
+  assert.equal(track.hidden, false);
+  assert.equal(search.getAttribute("aria-expanded"), "true");
+  assert.deepEqual(
+    track.querySelectorAll(".trace-toggle").map((option) =>
+      childByClass(option, "trace-name").textContent),
+    ["Hy3 2Q", "Qwen3.6 27B", "GLM 5.2 1.58Q"],
+  );
+  assert.equal(search.selectionStart, 0);
+  assert.equal(search.selectionEnd, search.value.length);
+
+  search.value = "hy3";
+  search.dispatch("input");
+  const [hy3Option] = track.querySelectorAll(".trace-toggle");
+  assert.equal(childByClass(hy3Option, "trace-name").textContent, "Hy3 2Q");
+  assert.equal(app.state.currentTraceId, "qwen-27b");
+  assert.equal(hy3Option.getAttribute("data-active"), "true");
+  assert.equal(search.getAttribute("aria-activedescendant"), hy3Option.id);
+  assert.match(hy3Option.id, /^trace-option-/);
+
+  let prevented = 0;
+  search.dispatch("keydown", {
+    key: "ArrowDown",
+    preventDefault() {
+      prevented += 1;
+    },
+  });
+  search.dispatch("keydown", {
+    key: "Enter",
+    preventDefault() {
+      prevented += 1;
+    },
+  });
+  await flushMicrotasks();
+  assert.equal(prevented, 2);
+  assert.equal(app.state.currentTraceId, "hy3-2q");
+  assert.equal(search.value, "Hy3 2Q");
+  assert.equal(track.hidden, true);
+
+  search.dispatch("focus");
+  search.value = "qwen";
+  search.dispatch("input");
+  search.dispatch("keydown", { key: "Escape" });
+  assert.equal(track.hidden, true);
+  assert.equal(search.value, "Hy3 2Q");
+  assert.equal(app.state.currentTraceId, "hy3-2q");
+
+  search.dispatch("focus");
+  search.value = "missing";
+  search.dispatch("input");
+  assert.match(track.children[0].textContent, /no runs match/i);
+  assert.equal(search.getAttribute("aria-activedescendant"), null);
+  search.dispatch("keydown", { key: "Enter" });
+  assert.equal(app.state.currentTraceId, "hy3-2q");
+
+  let tabPrevented = false;
+  search.dispatch("keydown", {
+    key: "Tab",
+    preventDefault() {
+      tabPrevented = true;
+    },
+  });
+  assert.equal(tabPrevented, false);
+  assert.equal(track.hidden, true);
+
+  search.dispatch("focus");
+  search.value = "qwen";
+  search.dispatch("input");
+  await app.refresh();
+  assert.equal(track.hidden, false);
+  assert.equal(
+    childByClass(
+      track.querySelectorAll(".trace-toggle")[0],
+      "trace-name",
+    ).textContent,
+    "Qwen3.6 27B",
+  );
+  assert.equal(app.state.currentTraceId, "hy3-2q");
+
+  harness.documentObject.dispatch("pointerdown", {
+    target: harness.documentObject.getElementById("refresh-button"),
+  });
+  assert.equal(track.hidden, true);
+  assert.equal(search.value, "Hy3 2Q");
+
+  assert.equal(search.listenerCount("input"), 1);
+  assert.equal(harness.documentObject.listenerCount("pointerdown"), 1);
+  app.destroy();
+  assert.equal(search.listenerCount("input"), 0);
+  assert.equal(harness.documentObject.listenerCount("pointerdown"), 0);
 });
 
 test("bootstrap destroy is idempotent and pagehide delegates to the same cleanup", async () => {
