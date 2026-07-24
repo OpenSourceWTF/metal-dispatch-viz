@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
+import {
+  LEGACY_SHOWCASE_FILENAMES,
+  validateRunFilename,
+} from "../public/run-identity.js";
+
 const showcaseUrl = new URL("../traces/showcase/", import.meta.url);
 const manifestUrl = new URL("traces.json", showcaseUrl);
 
@@ -11,6 +16,29 @@ const EXPECTED_TRACES = new Map([
   ["laguna-s21-oq4e-ar.jsonl", "Laguna 2.1 S"],
   ["qwen36-27b-mtp-k3.jsonl", "Qwen3.6 27B"],
   ["qwen36-35b-a3b-k1.jsonl", "Qwen3.6 35B"],
+]);
+
+const EXPECTED_HUGGING_FACE = new Map([
+  ["hy3-oq2e-mtp-k2.jsonl", {
+    field: "huggingface_repo",
+    repository: "mlx-community/Hy3-oQ2e",
+  }],
+  ["qwen36-27b-mtp-k3.jsonl", {
+    field: "huggingface_repo",
+    repository: "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed",
+  }],
+  ["qwen36-35b-a3b-k1.jsonl", {
+    field: "huggingface_repo",
+    repository: "Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed",
+  }],
+  ["glm52-q1t-t158-mtp-k3.jsonl", {
+    field: "huggingface_source_repo",
+    repository: "zai-org/GLM-5.2",
+  }],
+  ["laguna-s21-oq4e-ar.jsonl", {
+    field: "huggingface_repo",
+    repository: "mlx-community/Laguna-S-2.1-oQ4e",
+  }],
 ]);
 
 function countRecords(rows, record) {
@@ -29,15 +57,43 @@ test("bundled showcase is an exact five-trace manifest-to-folder bijection", asy
   assert.equal(manifest.schema_version, 1);
   assert.deepEqual(files, expectedFiles);
   assert.deepEqual(manifestFiles, expectedFiles);
+  assert.deepEqual(LEGACY_SHOWCASE_FILENAMES, expectedFiles);
   assert.doesNotMatch(manifestText, /\/Users\//);
 
   for (const [filename, expectedLabel] of EXPECTED_TRACES) {
     const metadata = manifest.traces[filename];
+    const huggingFace = EXPECTED_HUGGING_FACE.get(filename);
     assert.equal(metadata.label, expectedLabel);
+    assert.equal(
+      metadata[huggingFace.field],
+      huggingFace.repository,
+      `${filename}: honest Hugging Face provenance`,
+    );
+    if (huggingFace.field === "huggingface_source_repo") {
+      assert.equal(
+        metadata.huggingface_repo,
+        undefined,
+        `${filename}: local derivative is not mislabeled as a public checkpoint`,
+      );
+    }
     assert.equal(metadata.artifact_status, "curated-window");
     assert.match(metadata.source_sha256, /^[a-f0-9]{64}$/);
     assert.equal(typeof metadata.source_complete, metadata.source_complete === null ? "object" : "boolean");
     assert.equal(typeof metadata.valid_evidence, "boolean");
+  }
+});
+
+test("future showcase paths must use the model-contributor-date contract", async () => {
+  const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
+  const legacy = new Set(LEGACY_SHOWCASE_FILENAMES);
+
+  for (const filename of Object.keys(manifest.traces)) {
+    if (legacy.has(filename)) continue;
+    assert.deepEqual(
+      validateRunFilename(filename),
+      { valid: true, errors: [] },
+      `${filename}: new showcase filename`,
+    );
   }
 });
 

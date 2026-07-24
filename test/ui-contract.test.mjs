@@ -466,6 +466,28 @@ test("visual system uses measured tokens, effective sizing, and clipped-safe foc
     ),
   );
   assert.match(cleanCss, /font-variant-numeric:\s*tabular-nums/);
+  const provenanceLinkRules = requireDeclarationRule(
+    rules,
+    ".provenance-link",
+    "Hugging Face provenance link",
+  );
+  assert.ok(
+    provenanceLinkRules.some(
+      (rule) =>
+        rule.get("text-underline-offset") === "2px" &&
+        rule.get("color") === "var(--gpu)",
+    ),
+  );
+  const provenanceLinkFocusRules = requireDeclarationRule(
+    rules,
+    ".provenance-link:focus-visible",
+    "Hugging Face provenance link focus",
+  );
+  assert.ok(
+    provenanceLinkFocusRules.some(
+      (rule) => rule.get("outline") === "2px solid var(--selection)",
+    ),
+  );
   assert.match(cleanCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
   assert.match(cleanCss, /@media\s*\(forced-colors:\s*active\)/);
   assert.doesNotMatch(cleanCss, /linear-gradient|radial-gradient/i);

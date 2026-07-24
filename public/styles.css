@@ -433,6 +433,22 @@ main {
   font-weight: 650;
 }
 
+.provenance-link {
+  color: var(--gpu);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.provenance-link:hover {
+  color: var(--text);
+}
+
+.provenance-link:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: 2px;
+  border-radius: 1px;
+}
+
 .evidence-badge {
   padding: 4px 6px;
   border: 1px solid var(--danger);

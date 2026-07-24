@@ -2014,12 +2014,29 @@ test("run search matches registry metadata case-insensitively and keeps registry
     { id: "a", label: "Alpha", model: "Qwen", mode: "decode", relativePath: "nightly/a.jsonl" },
     { id: "b", label: "Beta", checkpoint: "GLM-5.2", capture: "Prefill", relativePath: "runs/b.jsonl" },
     { id: "c", label: "Gamma", quantization: "oQ4e", relativePath: "archive/c.jsonl" },
+    {
+      id: "d",
+      label: "Delta",
+      huggingface_repo: "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed",
+      relativePath: "archive/d.jsonl",
+    },
+    {
+      id: "e",
+      label: "Epsilon",
+      huggingface_source_repo: "zai-org/GLM-5.2",
+      relativePath: "archive/e.jsonl",
+    },
   ];
   assert.deepEqual(filterTraces(traces, "glm prefill").map(({ id }) => id), ["b"]);
   assert.deepEqual(filterTraces(traces, "RUNS").map(({ id }) => id), ["b"]);
-  assert.deepEqual(filterTraces(traces, "q").map(({ id }) => id), ["a", "c"]);
+  assert.deepEqual(filterTraces(traces, "q").map(({ id }) => id), ["a", "c", "d"]);
+  assert.deepEqual(filterTraces(traces, "youssofal optimized").map(({ id }) => id), ["d"]);
+  assert.deepEqual(filterTraces(traces, "zai-org").map(({ id }) => id), ["e"]);
   assert.deepEqual(filterTraces(traces, "missing"), []);
-  assert.deepEqual(filterTraces(traces, "   ").map(({ id }) => id), ["a", "b", "c"]);
+  assert.deepEqual(
+    filterTraces(traces, "   ").map(({ id }) => id),
+    ["a", "b", "c", "d", "e"],
+  );
 });
 
 test("table sorting handles text and numeric columns without mutating source rows", () => {
@@ -2473,6 +2490,95 @@ function childByClass(element, className) {
     String(child.className).split(/\s+/).includes(className),
   );
 }
+
+function descendantsByTag(element, tagName) {
+  const normalized = tagName.toUpperCase();
+  const matches = [];
+  for (const child of element?.children ?? []) {
+    if (child?.tagName === normalized) matches.push(child);
+    matches.push(...descendantsByTag(child, normalized));
+  }
+  return matches;
+}
+
+test("provenance derives safe Hugging Face model and source links", async () => {
+  const primaryTrace = {
+    id: "trace-a",
+    label: "Trace A",
+    name: "a.jsonl",
+    relativePath: "a.jsonl",
+    size: 100,
+    huggingface_repo: "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed",
+  };
+  const harness = createBootstrapHarness({
+    traces: [primaryTrace],
+    datasets: new Map([
+      ["trace-a", bootstrapDataset([bootstrapLaunch()])],
+    ]),
+  });
+  const app = await harness.bootPromise;
+  const provenance =
+    harness.documentObject.getElementById("provenance-strip");
+  const [modelLink] = descendantsByTag(provenance, "a");
+
+  assert.equal(
+    modelLink.getAttribute("href"),
+    "https://huggingface.co/Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed",
+  );
+  assert.equal(modelLink.getAttribute("target"), "_blank");
+  assert.equal(modelLink.getAttribute("rel"), "noopener noreferrer");
+  assert.equal(modelLink.textContent, primaryTrace.huggingface_repo);
+  const modelItem = provenance.children.find(
+    (child) => child?.children?.[0]?.textContent === "Hugging Face model",
+  );
+  assert.ok(modelItem);
+  app.destroy();
+
+  const sourceTrace = {
+    ...primaryTrace,
+    huggingface_repo: undefined,
+    huggingface_source_repo: "zai-org/GLM-5.2",
+  };
+  const sourceHarness = createBootstrapHarness({
+    traces: [sourceTrace],
+    datasets: new Map([
+      ["trace-a", bootstrapDataset([bootstrapLaunch()])],
+    ]),
+  });
+  const sourceApp = await sourceHarness.bootPromise;
+  const sourceProvenance =
+    sourceHarness.documentObject.getElementById("provenance-strip");
+  const [sourceLink] = descendantsByTag(sourceProvenance, "a");
+  assert.equal(
+    sourceLink.getAttribute("href"),
+    "https://huggingface.co/zai-org/GLM-5.2",
+  );
+  assert.ok(
+    sourceProvenance.children.some(
+      (child) => child?.children?.[0]?.textContent === "Hugging Face source",
+    ),
+  );
+  sourceApp.destroy();
+
+  const unsafeHarness = createBootstrapHarness({
+    traces: [{
+      ...primaryTrace,
+      huggingface_repo: "https://example.com/steal",
+    }],
+    datasets: new Map([
+      ["trace-a", bootstrapDataset([bootstrapLaunch()])],
+    ]),
+  });
+  const unsafeApp = await unsafeHarness.bootPromise;
+  assert.deepEqual(
+    descendantsByTag(
+      unsafeHarness.documentObject.getElementById("provenance-strip"),
+      "a",
+    ),
+    [],
+  );
+  unsafeApp.destroy();
+});
 
 test("trace rail exposes model, mode, evidence and retains focus across rerenders", () => {
   const documentObject = new FakeDocument();

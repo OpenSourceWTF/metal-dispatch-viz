@@ -17,6 +17,7 @@ test("package contract locks the React profiler toolchain", async () => {
     build: "vite build && node scripts/build_hosted.mjs",
     start: "npm run build && node server.mjs",
     test: "node --test && vitest run",
+    "validate:run-name": "node scripts/validate_run_name.mjs",
     "verify:pages": "node scripts/verify_pages_artifact.mjs",
   });
   assert.deepEqual(packageJson.dependencies, {
