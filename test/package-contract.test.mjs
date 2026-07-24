@@ -20,8 +20,12 @@ test("package contract locks the React profiler toolchain", async () => {
     "verify:pages": "node scripts/verify_pages_artifact.mjs",
   });
   assert.deepEqual(packageJson.dependencies, {
+    "class-variance-authority": "0.7.1",
     clsx: "2.1.1",
+    cmdk: "1.1.1",
     express: "5.2.1",
+    "lucide-react": "1.26.0",
+    "radix-ui": "1.6.5",
     react: "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "3.6.0",

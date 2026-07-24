@@ -59,7 +59,14 @@ test("compatibility CSS loads before profiler CSS and bridges the existing theme
     entrySource.indexOf('import "./index.css"') <
       entrySource.indexOf('import "../public/styles.css"'),
   );
-  assert.match(compatibilityCss, /@import ["']tailwindcss["'];/);
+  assert.match(
+    compatibilityCss,
+    /@import ["']tailwindcss\/theme\.css["'] layer\(theme\);/,
+  );
+  assert.match(
+    compatibilityCss,
+    /@import ["']tailwindcss\/utilities\.css["'] layer\(utilities\);/,
+  );
   assert.match(compatibilityCss, /@import ["']tw-animate-css["'];/);
   assert.doesNotMatch(compatibilityCss, /@import ["']shadcn\//);
   assert.match(

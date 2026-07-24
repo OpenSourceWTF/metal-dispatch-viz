@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import datasetWorkerUrl from "../public/dataset-worker.js?worker&url";
 import { TraceAnalysisSession } from "../public/analysis-session.js";
 import { bootstrap } from "../public/app.js";
+import { RunCombobox } from "./components/RunCombobox.jsx";
 
 export function resolveWorkerUrl(workerUrl, baseUrl) {
   const source =
@@ -77,6 +78,22 @@ export function ProfilerApp({
   bootstrapController = bootstrap,
   analysisSessionFactory = createAnalysisSession,
 }) {
+  const [runSelectorState, setRunSelectorState] = useState({
+    runs: [],
+    selectedId: null,
+  });
+  const runSelectionHandler = useRef(() => {});
+  const runSelector = useMemo(
+    () => ({
+      render({ runs, selectedId, onSelect }) {
+        runSelectionHandler.current =
+          typeof onSelect === "function" ? onSelect : () => {};
+        setRunSelectorState({ runs, selectedId });
+      },
+    }),
+    [],
+  );
+
   useEffect(() => {
     const controllerAbort = new AbortController();
     let active = true;
@@ -84,6 +101,7 @@ export function ProfilerApp({
     void Promise.resolve(
       bootstrapController({
         analysisSessionFactory,
+        runSelector,
         signal: controllerAbort.signal,
       }),
     ).then(
@@ -103,7 +121,7 @@ export function ProfilerApp({
       active = false;
       controllerAbort.abort();
     };
-  }, [analysisSessionFactory, bootstrapController]);
+  }, [analysisSessionFactory, bootstrapController, runSelector]);
 
   return (
     <>
@@ -158,39 +176,11 @@ export function ProfilerApp({
             aria-label="Run selector"
             aria-busy="true"
           >
-            <div className="trace-dropdown">
-              <span className="trace-dropdown-caption">Run</span>
-              <button
-                id="trace-selector-button"
-                className="trace-selector-button"
-                type="button"
-                aria-haspopup="listbox"
-                aria-controls="trace-menu"
-                aria-expanded="false"
-                disabled
-              >
-                <span id="trace-selector-label">Waiting for registry</span>
-                <span className="dropdown-caret" aria-hidden="true">▾</span>
-              </button>
-              <div id="trace-menu" className="trace-menu" hidden>
-                <label htmlFor="trace-search">Search runs</label>
-                <input
-                  id="trace-search"
-                  type="search"
-                  role="searchbox"
-                  aria-controls="trace-track"
-                  placeholder="Model, mode, path…"
-                  autoComplete="off"
-                />
-                <div
-                  id="trace-track"
-                  className="trace-track"
-                  role="listbox"
-                >
-                  <p className="trace-rail-empty">Scanning directory…</p>
-                </div>
-              </div>
-            </div>
+            <RunCombobox
+              runs={runSelectorState.runs}
+              selectedId={runSelectorState.selectedId}
+              onSelect={(id) => runSelectionHandler.current(id)}
+            />
             <output
               id="selected-trace-summary"
               className="selected-trace-summary"

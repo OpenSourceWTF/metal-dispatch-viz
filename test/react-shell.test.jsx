@@ -17,9 +17,6 @@ const BOOTSTRAP_IDS = [
   "trace-rail",
   "trace-selector-button",
   "trace-selector-label",
-  "trace-menu",
-  "trace-search",
-  "trace-track",
   "selected-trace-summary",
   "provenance-strip",
   "health-strip",
@@ -117,9 +114,17 @@ const BOOTSTRAP_IDS = [
 describe("ProfilerApp shell", () => {
   let container;
   let root;
+  let originalScrollIntoView;
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    originalScrollIntoView = globalThis.Element.prototype.scrollIntoView;
+    globalThis.Element.prototype.scrollIntoView = () => {};
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -131,6 +136,8 @@ describe("ProfilerApp shell", () => {
     }
     container.remove();
     delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+    delete globalThis.ResizeObserver;
+    globalThis.Element.prototype.scrollIntoView = originalScrollIntoView;
   });
 
   it("renders every bootstrap hook exactly once with honest initial evidence copy", async () => {
@@ -150,17 +157,85 @@ describe("ProfilerApp shell", () => {
     }
     expect(container.textContent).toMatch(/Waiting for registry/i);
     expect(container.textContent).not.toMatch(/Evidence:\s*Pending/i);
-    expect(container.querySelector("#trace-selector-button").getAttribute("aria-haspopup"))
-      .toBe("listbox");
-    expect(container.querySelector("#trace-menu").hidden).toBe(true);
-    expect(container.querySelector("#trace-search").getAttribute("role"))
-      .toBe("searchbox");
-    expect(container.querySelector("#trace-track").getAttribute("role"))
-      .toBe("listbox");
+    expect(container.querySelector("#trace-selector-button").getAttribute("role"))
+      .toBe("combobox");
+    expect(document.querySelector("#trace-menu")).toBeNull();
     expect(container.textContent).toMatch(/Drag to zoom/i);
     expect(container.textContent).toMatch(/Shift-drag to pan/i);
     expect(container.querySelector("#kernel-scroll-hint").hidden).toBe(true);
     expect(container.querySelector("#wait-scroll-hint").hidden).toBe(true);
+  });
+
+  it("uses a compact shadcn combobox trigger for Run instead of a full-width form control", async () => {
+    const bootstrapController = vi.fn(async () => ({ destroy() {} }));
+
+    await act(async () => {
+      root.render(
+        <ProfilerApp bootstrapController={bootstrapController} />,
+      );
+    });
+
+    const trigger = container.querySelector("#trace-selector-button");
+    expect(trigger.dataset.slot).toBe("popover-trigger");
+    expect(trigger.getAttribute("role")).toBe("combobox");
+    expect(trigger.className).toContain("h-9");
+    expect(trigger.className).toContain("max-w");
+    expect(trigger.querySelector("#trace-selector-label").className)
+      .toContain("truncate");
+  });
+
+  it("opens the shadcn command menu, searches runs, and selects one", async () => {
+    let runSelector;
+    const bootstrapController = vi.fn(async (options) => {
+      runSelector = options.runSelector;
+      return { destroy() {} };
+    });
+    const onSelect = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfilerApp bootstrapController={bootstrapController} />,
+      );
+    });
+    await act(async () => {
+      runSelector.render({
+        runs: [
+          { id: "a", label: "GLM-5.2 1.58q", model: "GLM-5.2" },
+          { id: "b", label: "Qwen 3.6 27B", model: "Qwen 3.6" },
+        ],
+        selectedId: "a",
+        onSelect,
+      });
+    });
+
+    const trigger = container.querySelector("#trace-selector-button");
+    expect(trigger.disabled).toBe(false);
+    expect(trigger.textContent).toContain("GLM-5.2");
+    await act(async () => {
+      trigger.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(document.body.innerHTML).toContain("trace-menu");
+    expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull();
+    const input = document.querySelector('[data-slot="command-input"]');
+    expect(input).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      ).set.call(input, "Qwen");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const menu = document.querySelector("#trace-menu");
+    expect(menu.textContent).toContain("Qwen 3.6 27B");
+    expect(menu.textContent).not.toContain("GLM-5.2 1.58q");
+
+    const qwenItem = [...document.querySelectorAll('[data-slot="command-item"]')]
+      .find((item) => item.textContent.includes("Qwen 3.6 27B"));
+    await act(async () => qwenItem.click());
+    expect(onSelect).toHaveBeenCalledWith("b");
+    expect(document.querySelector("#trace-menu")).toBeNull();
   });
 
   it("renders contextual help and local export as hidden accessible utilities", async () => {
