@@ -121,6 +121,58 @@
         "summaries": 2
       },
       "curator_command": "python3 scripts/curate_trace.py --max-command-buffers 64 RAW traces/showcase/laguna-s21-oq4e-ar.jsonl"
+    },
+    "mlx-community--laguna-s-2.1-oq4e__davidtai__2026-07-24t22-45-20z.window-cb64.jsonl": {
+      "label": "Laguna 2.1 S stock decode",
+      "model": "Laguna-S-2.1",
+      "checkpoint": "mlx-community/Laguna-S-2.1-oQ4e",
+      "huggingface_repo": "mlx-community/Laguna-S-2.1-oQ4e",
+      "huggingface_revision": "8e3f5cad513746264940c1c4195de48d7ea345a5",
+      "contributor": "davidtai",
+      "quantization": "mixed-precision imatrix oQ4e: 4-bit gs128 experts, 8-bit gs64 lm_head/embeddings, 5/6-bit gs64 layer-0 dense, per-layer 5/8-bit gs64 attention, BF16 routers",
+      "mode": "AR B=1 stock lane",
+      "capture": "curated 64-command-buffer decision-drain window from the STOCK python-cache AR decode lane (B=1, context 1024), captured under mlx-profiler 0.32.1.dev+56b7a3ea; the measured decode phase is snapshot-bracketed and averages roughly 2,419 dispatches/step across roughly 145 command buffers in the raw capture",
+      "capture_date": "2026-07-24",
+      "artifact_status": "curated-window",
+      "source_file": "census-stock-20260724-174520.jsonl",
+      "source_sha256": "efe92241887e4103d5d0e752fef3dc621f7e2f85d2408543eb1ed76f037976ed",
+      "source_complete": true,
+      "valid_evidence": true,
+      "source_evidence_status": "verified-complete",
+      "raw_row_counts": {
+        "rows": 53158,
+        "ops": 42368,
+        "command_buffers": 3670,
+        "waits": 7115,
+        "summaries": 5
+      },
+      "curator_command": "python3 scripts/curate_trace.py --max-command-buffers 64 RAW traces/showcase/mlx-community--laguna-s-2.1-oq4e__davidtai__2026-07-24t22-45-20z.window-cb64.jsonl"
+    },
+    "mlx-community--laguna-s-2.1-oq4e__davidtai__2026-07-25t01-19-34z.window-cb64.jsonl": {
+      "label": "Laguna 2.1 S compiled decode",
+      "model": "Laguna-S-2.1",
+      "checkpoint": "mlx-community/Laguna-S-2.1-oQ4e",
+      "huggingface_repo": "mlx-community/Laguna-S-2.1-oQ4e",
+      "huggingface_revision": "8e3f5cad513746264940c1c4195de48d7ea345a5",
+      "contributor": "davidtai",
+      "quantization": "mixed-precision imatrix oQ4e: 4-bit gs128 experts, 8-bit gs64 lm_head/embeddings, 5/6-bit gs64 layer-0 dense, per-layer 5/8-bit gs64 attention, BF16 routers",
+      "mode": "AR B=1 compiled tensor-leaf lane + fused-kernel stack",
+      "capture": "curated 64-command-buffer decision-drain window from the COMPILED tensor-leaf AR decode lane (B=1, context 1024) with the env-gated fused-kernel stack (fused gate/up + shared concat, router kernel, attention-gate kernel, MoE-combine kernel; pre-router-gemv era, 15.55 ms/step), captured under mlx-profiler 0.32.1.dev+56b7a3ea; the measured decode phase is snapshot-bracketed and averages roughly 1,668 dispatches/step across roughly 98 command buffers in the raw capture",
+      "capture_date": "2026-07-24",
+      "artifact_status": "curated-window",
+      "source_file": "census-compiled-20260724-201934.jsonl",
+      "source_sha256": "c6cb9f92401adcb411fc29b6c23bf7b9aff9051ed6549100f45b528d6129699d",
+      "source_complete": true,
+      "valid_evidence": true,
+      "source_evidence_status": "verified-complete",
+      "raw_row_counts": {
+        "rows": 41250,
+        "ops": 30518,
+        "command_buffers": 3053,
+        "waits": 7674,
+        "summaries": 5
+      },
+      "curator_command": "python3 scripts/curate_trace.py --max-command-buffers 64 RAW traces/showcase/mlx-community--laguna-s-2.1-oq4e__davidtai__2026-07-25t01-19-34z.window-cb64.jsonl"
     }
   }
 }
