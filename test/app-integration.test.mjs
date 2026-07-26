@@ -20,8 +20,10 @@ import {
   renderTraceRail,
   samplingDisclosure,
   sortTableRows,
+  summaryBucketRows,
   tableNeedsHorizontalScroll,
   traceCacheKey,
+  traceRecordStatus,
   traceRailState,
   traceSourceUrl,
   waitRowsForScope,
@@ -70,6 +72,38 @@ test("registry loading falls back to the generated hosted manifest", async () =>
   assert.equal(
     traceSourceUrl(loaded.registry.traces[0], { hosted: loaded.hosted }),
     "/traces/showcase/nested/capture%20one.jsonl",
+  );
+});
+
+test("file status reports every normalized profiler record kind", () => {
+  assert.equal(
+    traceRecordStatus({
+      recordCounts: {
+        commandBuffers: 3_731,
+        operations: 53_324,
+        waits: 8_991,
+        summaries: 4,
+        unrecognized: 0,
+      },
+    }),
+    "3,731 command buffers · 53,324 commands · 8,991 waits · " +
+      "4 summary records · 0 unrecognized",
+  );
+});
+
+test("summary bucket rows retain valid profiler count and total_ns values", () => {
+  assert.deepEqual(
+    summaryBucketRows({
+      buckets: {
+        sched_worker_wait: { count: 3_762, total_ns: 699_571_200 },
+        alloc_lock: { count: 47_932, total_ns: 536_903 },
+        malformed: { count: -1, total_ns: "unknown" },
+      },
+    }),
+    [
+      { bucket: "alloc_lock", count: 47_932, totalNs: 536_903 },
+      { bucket: "sched_worker_wait", count: 3_762, totalNs: 699_571_200 },
+    ],
   );
 });
 
@@ -174,9 +208,39 @@ test("browser registry and trace requests resolve against root and project base 
   }
 });
 
+test("local trace URLs bypass registry routing and revisions invalidate cache identity", () => {
+  const first = {
+    id: "local:trace.jsonl",
+    name: "trace.jsonl",
+    size: 100,
+    modifiedTime: "2026-07-26T12:00:00.000Z",
+    sourceKind: "local-file",
+    sourceUrl: "blob:https://mlx-profiler.opensource.wtf/first",
+    localRevision: 1,
+  };
+  const replacement = {
+    ...first,
+    sourceUrl: "blob:https://mlx-profiler.opensource.wtf/replacement",
+    localRevision: 2,
+  };
+
+  assert.equal(
+    traceSourceUrl(first, {
+      hosted: true,
+      baseUrl: "https://mlx-profiler.opensource.wtf/",
+    }),
+    first.sourceUrl,
+  );
+  assert.notEqual(traceCacheKey(first), traceCacheKey(replacement));
+});
+
 const BOOTSTRAP_IDS = [
   "directory-identity",
   "field-manual-button",
+  "open-trace-button",
+  "local-trace-input",
+  "trace-drop-overlay",
+  "trace-drop-status",
   "refresh-button",
   "theme-toggle",
   "trace-rail",
@@ -210,6 +274,13 @@ const BOOTSTRAP_IDS = [
   "kernel-table-state",
   "wait-table-body",
   "wait-table-state",
+  "source-summary-panel",
+  "source-summary-state",
+  "summary-ops-total",
+  "summary-cbs-total",
+  "summary-dropped-rows",
+  "summary-complete",
+  "summary-bucket-body",
   "timeline-scale",
   "zoom-out",
   "fit-timeline",
@@ -506,7 +577,7 @@ function bootstrapDocument() {
             "download-export",
           ].includes(id) ? "button" :
       id === "window-select" || id === "ai-export-format" ? "select" :
-      id === "manual-search" ? "input" :
+      id === "manual-search" || id === "local-trace-input" ? "input" :
       id === "ai-export-preview" ? "textarea" :
       id.includes("table-body") ? "tbody" :
       id === "loading-progress" ? "progress" :
@@ -521,6 +592,8 @@ function bootstrapDocument() {
   documentObject.getElementById("trace-menu").hidden = true;
   documentObject.getElementById("kernel-scroll-hint").hidden = true;
   documentObject.getElementById("wait-scroll-hint").hidden = true;
+  documentObject.getElementById("source-summary-panel").hidden = true;
+  documentObject.getElementById("trace-drop-overlay").hidden = true;
   return documentObject;
 }
 
@@ -696,6 +769,8 @@ function createBootstrapHarness({
   deferredLoads = false,
   useRealRenderer = false,
   runSelector = null,
+  createObjectUrl = () => "blob:local-test",
+  revokeObjectUrl = () => {},
 } = {}) {
   const documentObject = bootstrapDocument();
   if (baseURI !== undefined) {
@@ -824,8 +899,9 @@ function createBootstrapHarness({
       this.url = url;
       const trace = traces.find((item) =>
         url.endsWith(encodeURIComponent(item.id)));
+      const dataset = datasets.get(url) ?? datasets.get(trace?.id);
       const loaded = {
-        dataset: datasets.get(trace?.id),
+        dataset,
         diagnostics: { sourceBytes: trace?.size ?? 0, parsedRows: 1 },
       };
       if (!loadsDeferred) {
@@ -884,6 +960,8 @@ function createBootstrapHarness({
     cacheObject,
     documentObject,
     windowObject: windowHarness.windowObject,
+    createObjectUrl,
+    revokeObjectUrl,
     RendererClass: RendererConstructor,
     RangeNavigatorClass: HarnessNavigator,
     runSelector,
@@ -991,6 +1069,167 @@ test("analysis table tabs switch panels and sort toggles retain table state", as
     key: "count",
     direction: "descending",
   });
+});
+
+test("wait section renders the selected profiler summary and dropped-row warning", async () => {
+  const dataset = {
+    ...bootstrapDataset([bootstrapLaunch()]),
+    recordCounts: {
+      commandBuffers: 3_731,
+      operations: 53_324,
+      waits: 8_991,
+      summaries: 4,
+      unrecognized: 0,
+    },
+    sourceSummary: {
+      type: "summary",
+      summarySeq: 3,
+      final: true,
+      opsTotal: 53_324,
+      cbsTotal: 3_731,
+      droppedRows: 7,
+      complete: false,
+      buckets: {
+        alloc_lock: { count: 47_932, total_ns: 536_903 },
+        cap_wait: { count: 1_654, total_ns: 1_472_558_080 },
+      },
+    },
+  };
+  const harness = createBootstrapHarness({
+    traces: [{
+      id: "trace-a",
+      label: "Trace A",
+      name: "a.jsonl",
+      relativePath: "a.jsonl",
+      size: 100,
+    }],
+    datasets: new Map([["trace-a", dataset]]),
+  });
+
+  const app = await harness.bootPromise;
+  const panel = harness.documentObject.getElementById("source-summary-panel");
+  assert.equal(panel.hidden, false);
+  assert.equal(panel.classList.contains("is-warning"), true);
+  assert.equal(
+    harness.documentObject.getElementById("source-summary-state").textContent,
+    "Final summary · sequence 3",
+  );
+  assert.equal(
+    harness.documentObject.getElementById("summary-ops-total").textContent,
+    "53,324",
+  );
+  assert.equal(
+    harness.documentObject.getElementById("summary-cbs-total").textContent,
+    "3,731",
+  );
+  assert.equal(
+    harness.documentObject.getElementById("summary-dropped-rows").textContent,
+    "7",
+  );
+  assert.equal(
+    harness.documentObject.getElementById("summary-complete").textContent,
+    "No",
+  );
+  assert.equal(
+    harness.documentObject.getElementById("summary-bucket-body").children.length,
+    2,
+  );
+  assert.match(
+    harness.documentObject.getElementById("trace-status").textContent,
+    /4 summary records · 0 unrecognized/,
+  );
+  app.destroy();
+});
+
+test("file drops load locally, replace same-name traces, and revoke object URLs", async () => {
+  const createdUrls = [];
+  const revokedUrls = [];
+  const localDataset = {
+    ...bootstrapDataset([bootstrapLaunch()]),
+    recordCounts: {
+      commandBuffers: 1,
+      operations: 2,
+      waits: 3,
+      summaries: 4,
+      unrecognized: 0,
+    },
+  };
+  const harness = createBootstrapHarness({
+    datasets: new Map([
+      ["trace-a", bootstrapDataset([bootstrapLaunch()])],
+      ["blob:local-1", localDataset],
+      ["blob:local-2", localDataset],
+    ]),
+    createObjectUrl(file) {
+      const url = `blob:local-${createdUrls.length + 1}`;
+      createdUrls.push({ file, url });
+      return url;
+    },
+    revokeObjectUrl(url) {
+      revokedUrls.push(url);
+    },
+  });
+  const app = await harness.bootPromise;
+  let pickerClicks = 0;
+  harness.documentObject
+    .getElementById("local-trace-input")
+    .addEventListener("click", () => {
+      pickerClicks += 1;
+    });
+  harness.documentObject.getElementById("open-trace-button").click();
+  assert.equal(pickerClicks, 1, "Open trace invokes the native file picker");
+  const overlay =
+    harness.documentObject.getElementById("trace-drop-overlay");
+  const first = {
+    name: "q27b-census.jsonl",
+    size: 17_000_000,
+    lastModified: 1,
+  };
+  let prevented = 0;
+
+  harness.windowObject.dispatchEvent({
+    type: "dragenter",
+    dataTransfer: { files: [first], types: ["Files"] },
+    preventDefault() {
+      prevented += 1;
+    },
+  });
+  assert.equal(prevented, 1);
+  assert.equal(overlay.hidden, false);
+
+  harness.windowObject.dispatchEvent({
+    type: "drop",
+    dataTransfer: { files: [first], types: ["Files"] },
+    preventDefault() {
+      prevented += 1;
+    },
+  });
+  await flushMicrotasks();
+  assert.equal(overlay.hidden, true);
+  assert.equal(app.state.localTraces.length, 1);
+  assert.equal(app.state.currentTrace.sourceKind, "local-file");
+  assert.equal(app.state.currentTrace.localRevision, 1);
+  assert.equal(harness.sessions.at(-1).url, "blob:local-1");
+  assert.match(
+    harness.documentObject.getElementById("trace-status").textContent,
+    /4 summary records · 0 unrecognized/,
+  );
+
+  const replacement = { ...first, lastModified: Number.MAX_VALUE };
+  harness.windowObject.dispatchEvent({
+    type: "drop",
+    dataTransfer: { files: [replacement], types: ["Files"] },
+    preventDefault() {},
+  });
+  await flushMicrotasks();
+  assert.equal(app.state.localTraces.length, 1);
+  assert.equal(app.state.currentTrace.localRevision, 2);
+  assert.equal(app.state.currentTrace.modifiedTime, undefined);
+  assert.equal(harness.sessions.at(-1).url, "blob:local-2");
+  assert.deepEqual(revokedUrls, ["blob:local-1"]);
+
+  app.destroy();
+  assert.deepEqual(revokedUrls, ["blob:local-1", "blob:local-2"]);
 });
 
 test("Run dropdown opens, searches registry metadata, and closes after selection", async () => {

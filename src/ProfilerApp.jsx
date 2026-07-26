@@ -345,6 +345,23 @@ export function ProfilerApp({
         </div>
         <div className="header-actions" aria-label="Workbench controls">
           <Button
+            id="open-trace-button"
+            type="button"
+            aria-controls="local-trace-input"
+            data-ready-control
+            disabled
+          >
+            Open trace
+          </Button>
+          <input
+            id="local-trace-input"
+            className="visually-hidden"
+            type="file"
+            accept=".jsonl,.ndjson,application/x-ndjson"
+            aria-label="Open local profiler traces"
+            multiple
+          />
+          <Button
             id="field-manual-button"
             type="button"
             aria-haspopup="dialog"
@@ -373,6 +390,21 @@ export function ProfilerApp({
           </Button>
         </div>
       </header>
+
+      <div
+        id="trace-drop-overlay"
+        className="trace-drop-overlay"
+        role="status"
+        aria-live="polite"
+        hidden
+      >
+        <div className="trace-drop-card">
+          <strong>Drop profiler traces</strong>
+          <span id="trace-drop-status">
+            .jsonl and .ndjson stay in this browser
+          </span>
+        </div>
+      </div>
 
       <main>
         <div className="instrument">
@@ -933,6 +965,67 @@ export function ProfilerApp({
                         Awaiting rows
                       </span>
                     </div>
+                    <section
+                      id="source-summary-panel"
+                      className="source-summary-panel"
+                      aria-labelledby="source-summary-heading"
+                      role="region"
+                      hidden
+                    >
+                      <div className="source-summary-heading">
+                        <div>
+                          <p className="eyebrow">Profiler rollup</p>
+                          <h3 id="source-summary-heading">Capture summary</h3>
+                        </div>
+                        <span
+                          id="source-summary-state"
+                          className="table-state"
+                        >
+                          Awaiting summary
+                        </span>
+                      </div>
+                      <dl className="source-summary-metrics">
+                        <div>
+                          <dt>ops_total</dt>
+                          <dd id="summary-ops-total">—</dd>
+                        </div>
+                        <div>
+                          <dt>cbs_total</dt>
+                          <dd id="summary-cbs-total">—</dd>
+                        </div>
+                        <div>
+                          <dt>dropped_rows</dt>
+                          <dd id="summary-dropped-rows">—</dd>
+                        </div>
+                        <div>
+                          <dt>complete</dt>
+                          <dd id="summary-complete">—</dd>
+                        </div>
+                      </dl>
+                      <div className="table-scroller">
+                        <Table id="summary-bucket-table">
+                          <TableCaption>
+                            Selected profiler summary wait buckets
+                          </TableCaption>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead scope="col">Wait bucket</TableHead>
+                              <TableHead scope="col">Count</TableHead>
+                              <TableHead scope="col">total_ns</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody id="summary-bucket-body">
+                            <TableRow className="placeholder-row">
+                              <TableHead scope="row">
+                                No summary buckets
+                              </TableHead>
+                              <TableCell>—</TableCell>
+                              <TableCell>—</TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </section>
                     <div
                       id="wait-table-scroller"
                       className="table-scroller"

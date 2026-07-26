@@ -57,6 +57,22 @@ function lexicalCompare(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function countLabel(value, singular, plural = `${singular}s`) {
+  const count = Math.max(0, Math.trunc(finiteOrZero(value)));
+  return `${count.toLocaleString("en-US")} ${count === 1 ? singular : plural}`;
+}
+
+export function traceRecordStatus(dataset) {
+  const counts = dataset?.recordCounts ?? {};
+  return [
+    countLabel(counts.commandBuffers, "command buffer"),
+    countLabel(counts.operations, "command"),
+    countLabel(counts.waits, "wait"),
+    countLabel(counts.summaries, "summary record"),
+    countLabel(counts.unrecognized, "unrecognized", "unrecognized"),
+  ].join(" · ");
+}
+
 export function filterGlossaryEntries(query) {
   return searchGlossary(query);
 }
@@ -382,6 +398,13 @@ function browserRequestUrl(path, baseUrl) {
 }
 
 export function traceSourceUrl(trace, { hosted = false, baseUrl } = {}) {
+  const localSourceUrl = stringValue(trace?.sourceUrl);
+  if (
+    trace?.sourceKind === "local-file" &&
+    localSourceUrl?.startsWith("blob:")
+  ) {
+    return localSourceUrl;
+  }
   if (hosted) {
     const relativePath = stringValue(trace?.relativePath);
     const segments = relativePath?.split("/") ?? [];
@@ -694,6 +717,33 @@ export function waitRowsForScope(scope) {
     .sort((left, right) => lexicalCompare(left.bucket, right.bucket));
 }
 
+export function summaryBucketRows(summary) {
+  const buckets = summary?.buckets;
+  if (
+    buckets === null ||
+    typeof buckets !== "object" ||
+    Array.isArray(buckets)
+  ) {
+    return [];
+  }
+  return Object.entries(buckets)
+    .filter(([, entry]) =>
+      entry !== null &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      Number.isFinite(entry.count) &&
+      entry.count >= 0 &&
+      Number.isFinite(entry.total_ns) &&
+      entry.total_ns >= 0)
+    .map(([bucket, entry]) =>
+      Object.freeze({
+        bucket,
+        count: entry.count,
+        totalNs: entry.total_ns,
+      }))
+    .sort((left, right) => lexicalCompare(left.bucket, right.bucket));
+}
+
 export function sortTableRows(rows, key, direction = "ascending") {
   const multiplier = direction === "descending" ? -1 : 1;
   return (Array.isArray(rows) ? rows : [])
@@ -863,6 +913,7 @@ export function traceCacheKey(trace) {
     trace.id,
     Number.isFinite(trace.size) ? trace.size : null,
     stringValue(trace.modifiedTime),
+    Number.isSafeInteger(trace.localRevision) ? trace.localRevision : null,
   ]);
 }
 
@@ -2146,6 +2197,8 @@ function errorDescription(error) {
 
 export async function bootstrap({
   fetchImpl = globalThis.fetch,
+  createObjectUrl = (file) => globalThis.URL.createObjectURL(file),
+  revokeObjectUrl = (url) => globalThis.URL.revokeObjectURL(url),
   analysisSessionFactory = (options) => new TraceAnalysisSession(options),
   analysisDebounceMs = 100,
   cacheObject = new TraceCache(),
@@ -2172,6 +2225,12 @@ export async function bootstrap({
   }
   if (typeof analysisSessionFactory !== "function") {
     throw new TypeError("bootstrap requires an analysis session factory");
+  }
+  if (
+    typeof createObjectUrl !== "function" ||
+    typeof revokeObjectUrl !== "function"
+  ) {
+    throw new TypeError("bootstrap requires object URL lifecycle functions");
   }
   if (!Number.isFinite(analysisDebounceMs) || analysisDebounceMs < 0) {
     throw new TypeError("analysisDebounceMs must be a non-negative number");
@@ -2225,6 +2284,10 @@ export async function bootstrap({
       : null;
   const elements = {
     directory: byId("directory-identity"),
+    openTrace: byId("open-trace-button"),
+    localTraceInput: byId("local-trace-input"),
+    dropOverlay: byId("trace-drop-overlay"),
+    dropStatus: byId("trace-drop-status"),
     refresh: byId("refresh-button"),
     theme: byId("theme-toggle"),
     rail: byId("trace-rail"),
@@ -2272,6 +2335,13 @@ export async function bootstrap({
     kernelState: byId("kernel-table-state"),
     waitBody: byId("wait-table-body"),
     waitState: byId("wait-table-state"),
+    sourceSummaryPanel: byId("source-summary-panel"),
+    sourceSummaryState: byId("source-summary-state"),
+    sourceSummaryOps: byId("summary-ops-total"),
+    sourceSummaryCbs: byId("summary-cbs-total"),
+    sourceSummaryDropped: byId("summary-dropped-rows"),
+    sourceSummaryComplete: byId("summary-complete"),
+    sourceSummaryBucketBody: byId("summary-bucket-body"),
     scale: byId("timeline-scale"),
     zoomOut: byId("zoom-out"),
     fit: byId("fit-timeline"),
@@ -2379,6 +2449,10 @@ export async function bootstrap({
   const requestBaseUrl = documentObject.baseURI ?? undefined;
   const state = {
     traces: [],
+    registryTraces: [],
+    localTraces: [],
+    registryRootLabel: "configured trace directory",
+    localRevision: 0,
     registryHosted: false,
     evidenceByCacheKey: new Map(),
     currentTraceId: null,
@@ -2417,6 +2491,15 @@ export async function bootstrap({
 
   function announce(message) {
     elements.status.textContent = message;
+  }
+
+  function syncTraceList() {
+    state.traces = [...state.localTraces, ...state.registryTraces];
+    const localLabel =
+      state.localTraces.length === 0
+        ? ""
+        : ` + ${countLabel(state.localTraces.length, "local trace")}`;
+    elements.directory.textContent = `${state.registryRootLabel}${localLabel}`;
   }
 
   function applyTheme(theme) {
@@ -3167,6 +3250,67 @@ export async function bootstrap({
     return cell;
   }
 
+  function formatInteger(value) {
+    return Number.isFinite(value) && value >= 0
+      ? Math.trunc(value).toLocaleString("en-US")
+      : "—";
+  }
+
+  function renderSourceSummary(dataset) {
+    const summary = dataset?.sourceSummary;
+    const hasSummary = summary !== null && typeof summary === "object";
+    elements.sourceSummaryPanel.hidden = !hasSummary;
+    elements.sourceSummaryPanel.classList.toggle(
+      "is-warning",
+      hasSummary && finiteOrZero(summary.droppedRows) > 0,
+    );
+    elements.sourceSummaryBucketBody.replaceChildren();
+    if (!hasSummary) {
+      elements.sourceSummaryState.textContent = "No profiler summary";
+      elements.sourceSummaryOps.textContent = "—";
+      elements.sourceSummaryCbs.textContent = "—";
+      elements.sourceSummaryDropped.textContent = "—";
+      elements.sourceSummaryComplete.textContent = "—";
+      return;
+    }
+
+    const summaryKind = summary.final === true
+      ? "Final summary"
+      : "Periodic summary";
+    elements.sourceSummaryState.textContent = Number.isFinite(summary.summarySeq)
+      ? `${summaryKind} · sequence ${formatInteger(summary.summarySeq)}`
+      : summaryKind;
+    elements.sourceSummaryOps.textContent = formatInteger(summary.opsTotal);
+    elements.sourceSummaryCbs.textContent = formatInteger(summary.cbsTotal);
+    elements.sourceSummaryDropped.textContent = formatInteger(
+      summary.droppedRows,
+    );
+    elements.sourceSummaryComplete.textContent =
+      summary.complete === true
+        ? "Yes"
+        : summary.complete === false
+          ? "No"
+          : "Unknown";
+
+    const rows = summaryBucketRows(summary);
+    if (rows.length === 0) {
+      const row = documentObject.createElement("tr");
+      row.className = "placeholder-row";
+      appendTableCell(row, "th", "No summary buckets");
+      appendTableCell(row, "td", "—");
+      appendTableCell(row, "td", "—");
+      elements.sourceSummaryBucketBody.append(row);
+      return;
+    }
+    for (const item of rows) {
+      const row = documentObject.createElement("tr");
+      appendTableCell(row, "th", item.bucket);
+      appendTableCell(row, "td", formatInteger(item.count));
+      appendTableCell(row, "td", formatInteger(item.totalNs));
+      elements.sourceSummaryBucketBody.append(row);
+    }
+  }
+
   function waitEvidenceText(item) {
     return item.additive
       ? `${item.waitClass} · measured`
@@ -3214,7 +3358,10 @@ export async function bootstrap({
     }
     for (const item of rows) {
       const row = documentObject.createElement("tr");
-      appendTableCell(row, "th", item.kernel);
+      const kernelCell = appendTableCell(row, "th", item.kernel);
+      if (Array.isArray(item.rawKernels) && item.rawKernels.length > 0) {
+        kernelCell.setAttribute("title", item.rawKernels.join("\n"));
+      }
       appendTableCell(row, "td", item.count);
       appendTableCell(row, "td", item.setBytesCalls);
       appendTableCell(row, "td", formatBytes(item.setBytesTotalBytes));
@@ -3456,6 +3603,7 @@ export async function bootstrap({
     updateRangeReadouts();
     setAnalysisBusy(false);
     renderMetrics(null, true);
+    renderSourceSummary(null);
     elements.kernelState.textContent = "Awaiting rows";
     elements.waitState.textContent = "Awaiting rows";
     renderTablePlaceholder(elements.kernelBody, 5, "Waiting for dispatch rows");
@@ -3543,6 +3691,7 @@ export async function bootstrap({
     }
 
     updateRangeModeControls();
+    renderSourceSummary(dataset);
     renderScopeEvidence(scope);
     renderCanvasScope(scope);
     updateRangeReadouts();
@@ -3560,7 +3709,7 @@ export async function bootstrap({
     announce(
       `${traceLabel(state.currentTrace)} · ` +
         `${windows.length > 0 ? `launch ${selectedIndex + 1} of ${windows.length}` : "no launch window"} · ` +
-        `${scope.summary?.opsTotal ?? 0} dispatches`,
+        traceRecordStatus(dataset),
     );
     if (state.rangeMode === "analyze") {
       scheduleRangeAnalysis(state.selectedRange, true);
@@ -3823,14 +3972,18 @@ export async function bootstrap({
       ) {
         return;
       }
-      const traces = Array.isArray(registry?.traces) ? registry.traces : [];
+      const registryTraces = Array.isArray(registry?.traces)
+        ? registry.traces
+        : [];
+      const traces = [...state.localTraces, ...registryTraces];
       const commit = registrySelection.commitRefresh(refreshToken, traces);
       if (!commit.current) return;
       const activeTraceKey = traceCacheKey(state.currentTrace);
       state.registryHosted = loadedRegistry.hosted;
-      state.traces = traces;
-      elements.directory.textContent =
+      state.registryTraces = registryTraces;
+      state.registryRootLabel =
         stringValue(registry?.rootLabel) ?? "configured trace directory";
+      syncTraceList();
 
       const nextId = commit.selectedId;
       state.currentTraceId = nextId;
@@ -3884,6 +4037,146 @@ export async function bootstrap({
       showError("Registry unavailable", errorDescription(error));
     }
   }
+
+  function supportedLocalFile(file) {
+    return (
+      file !== null &&
+      typeof file === "object" &&
+      typeof file.name === "string" &&
+      /\.(?:jsonl|ndjson)$/i.test(file.name) &&
+      Number.isFinite(file.size) &&
+      file.size >= 0
+    );
+  }
+
+  async function importLocalFiles(fileList) {
+    const files = Array.from(fileList ?? []).filter(supportedLocalFile);
+    if (files.length === 0) {
+      const message =
+        "No supported traces found. Choose .jsonl or .ndjson files.";
+      elements.dropStatus.textContent = message;
+      announce(message);
+      return [];
+    }
+
+    const imported = [];
+    for (const file of files) {
+      let sourceUrl;
+      try {
+        sourceUrl = createObjectUrl(file);
+        if (typeof sourceUrl !== "string" || !sourceUrl.startsWith("blob:")) {
+          throw new TypeError("Local trace object URLs must use the blob scheme.");
+        }
+      } catch {
+        if (typeof sourceUrl === "string") revokeObjectUrl(sourceUrl);
+        continue;
+      }
+      const localRevision = (state.localRevision += 1);
+      const modifiedDate = Number.isFinite(file.lastModified)
+        ? new Date(file.lastModified)
+        : null;
+      const modifiedTime =
+        modifiedDate !== null && Number.isFinite(modifiedDate.getTime())
+          ? modifiedDate.toISOString()
+          : undefined;
+      imported.push({
+        id: `local:${encodeURIComponent(file.name)}:${localRevision}`,
+        label: file.name,
+        name: file.name,
+        relativePath: file.name,
+        size: file.size,
+        modifiedTime,
+        sourceKind: "local-file",
+        sourceUrl,
+        localRevision,
+        evidence: "Browser-local file",
+      });
+    }
+    if (imported.length === 0) {
+      const message = "The selected traces could not be opened locally.";
+      elements.dropStatus.textContent = message;
+      announce(message);
+      return [];
+    }
+
+    const importedNames = new Set(imported.map((trace) => trace.name));
+    const replaced = state.localTraces.filter((trace) =>
+      importedNames.has(trace.name));
+    state.localTraces = [
+      ...imported,
+      ...state.localTraces.filter((trace) => !importedNames.has(trace.name)),
+    ];
+    syncTraceList();
+    const selected = imported[0];
+    registrySelection.select(selected.id);
+    renderRegistry();
+    elements.dropStatus.textContent =
+      `${countLabel(imported.length, "local trace")} ready; files stay in this browser.`;
+    try {
+      await selectTrace(selected.id, {
+        requestedWindow: 0,
+        requestedRangeInput: null,
+        recordSelection: true,
+      });
+    } finally {
+      for (const trace of replaced) {
+        revokeObjectUrl(trace.sourceUrl);
+      }
+    }
+    return imported;
+  }
+
+  let dragDepth = 0;
+  function fileTransfer(event) {
+    const types = Array.from(event?.dataTransfer?.types ?? []);
+    return (
+      types.includes("Files") ||
+      Array.from(event?.dataTransfer?.files ?? []).length > 0
+    );
+  }
+  function showDropOverlay() {
+    elements.dropStatus.textContent =
+      "Drop .jsonl or .ndjson traces; files stay in this browser.";
+    elements.dropOverlay.hidden = false;
+  }
+  function hideDropOverlay() {
+    dragDepth = 0;
+    elements.dropOverlay.hidden = true;
+  }
+  const handleOpenTrace = () => {
+    elements.localTraceInput.value = "";
+    elements.localTraceInput.click();
+  };
+  const handleLocalTraceChange = (event) => {
+    void importLocalFiles(event?.target?.files).finally(() => {
+      elements.localTraceInput.value = "";
+    });
+  };
+  const handleDragEnter = (event) => {
+    if (!fileTransfer(event)) return;
+    event.preventDefault?.();
+    dragDepth += 1;
+    showDropOverlay();
+  };
+  const handleDragOver = (event) => {
+    if (!fileTransfer(event)) return;
+    event.preventDefault?.();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    showDropOverlay();
+  };
+  const handleDragLeave = (event) => {
+    if (!fileTransfer(event) && dragDepth === 0) return;
+    event.preventDefault?.();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) hideDropOverlay();
+  };
+  const handleDrop = (event) => {
+    if (!fileTransfer(event)) return;
+    event.preventDefault?.();
+    const files = event.dataTransfer?.files;
+    hideDropOverlay();
+    void importLocalFiles(files);
+  };
 
   const handleRefresh = () => {
     announce("Refreshing trace directory…");
@@ -4019,6 +4312,8 @@ export async function bootstrap({
     }
   };
 
+  elements.openTrace.addEventListener("click", handleOpenTrace);
+  elements.localTraceInput.addEventListener("change", handleLocalTraceChange);
   elements.refresh.addEventListener("click", handleRefresh);
   elements.theme.addEventListener("click", handleTheme);
   if (!externalLaunchSelector) {
@@ -4038,6 +4333,10 @@ export async function bootstrap({
     elements.traceSearch.addEventListener("input", handleTraceSearch);
     documentObject.addEventListener("pointerdown", handleOutsideTraceMenu);
   }
+  windowObject.addEventListener("dragenter", handleDragEnter);
+  windowObject.addEventListener("dragover", handleDragOver);
+  windowObject.addEventListener("dragleave", handleDragLeave);
+  windowObject.addEventListener("drop", handleDrop);
   windowObject.addEventListener("resize", handleTableResize);
   if (!externalTableTabs) {
     elements.kernelTab.addEventListener("click", handleKernelTab);
@@ -4049,6 +4348,7 @@ export async function bootstrap({
   selectTableTab("kernel");
 
   for (const element of [
+    elements.openTrace,
     elements.refresh,
     elements.theme,
     elements.zoomOut,
@@ -4069,6 +4369,11 @@ export async function bootstrap({
     exportController.destroy();
     rangeNavigator.destroy();
     renderer.destroy();
+    elements.openTrace.removeEventListener?.("click", handleOpenTrace);
+    elements.localTraceInput.removeEventListener?.(
+      "change",
+      handleLocalTraceChange,
+    );
     elements.refresh.removeEventListener?.("click", handleRefresh);
     elements.theme.removeEventListener?.("click", handleTheme);
     if (!externalLaunchSelector) {
@@ -4103,6 +4408,10 @@ export async function bootstrap({
         handleOutsideTraceMenu,
       );
     }
+    windowObject.removeEventListener?.("dragenter", handleDragEnter);
+    windowObject.removeEventListener?.("dragover", handleDragOver);
+    windowObject.removeEventListener?.("dragleave", handleDragLeave);
+    windowObject.removeEventListener?.("drop", handleDrop);
     windowObject.removeEventListener?.("resize", handleTableResize);
     if (!externalTableTabs) {
       elements.kernelTab.removeEventListener?.("click", handleKernelTab);
@@ -4115,6 +4424,10 @@ export async function bootstrap({
     for (const [button, listener] of sortListeners) {
       button.removeEventListener?.("click", listener);
     }
+    for (const trace of state.localTraces) {
+      revokeObjectUrl(trace.sourceUrl);
+    }
+    state.localTraces = [];
     windowObject.removeEventListener?.("pagehide", pagehide);
     signal?.removeEventListener?.("abort", destroy);
   }
@@ -4138,6 +4451,7 @@ export async function bootstrap({
     rangeNavigator,
     rangeAuthority,
     helpController,
+    importLocalFiles,
     exportController,
     renderer,
     refresh: refreshRegistry,

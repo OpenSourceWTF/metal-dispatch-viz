@@ -13,9 +13,16 @@ instrument, modify, or upload traces.
 Open **[mlx-profiler.opensource.wtf](https://mlx-profiler.opensource.wtf)** and
 choose one of the five curated public captures. No installation is required.
 
-The hosted application cannot open a file or folder from your computer and does
-not provide an upload endpoint. To inspect a private or arbitrary JSONL while
-keeping it on your machine, use the local trace-folder workflow below.
+To inspect your own capture, choose **Open trace** or drag one or more `.jsonl`
+or `.ndjson` files anywhere onto the page. The browser reads each file through
+a local object URL and does not upload it or send its contents to a server.
+Dropping a newer file with the same name replaces the browser-local entry and
+forces a fresh analysis.
+
+Raw schema-v1 output from `MLX_DISPATCH_CENSUS` loads directly in the hosted or
+local workbench: no remapping or preprocessing step is required. Use the local
+trace-folder workflow below when you want recursive folder discovery, stable
+manifest metadata, or a private long-running Express session.
 
 ## Quick local start
 
@@ -211,6 +218,10 @@ content-hashed JavaScript, CSS, and worker bundles.
 
 ## Workbench controls
 
+- Choose **Open trace**, or drag `.jsonl` and `.ndjson` files anywhere onto the
+  page, to analyze browser-local captures without uploading them. Multiple
+  files may be added at once and appear before registry traces in the Run
+  dropdown.
 - Search runs from the top Run dropdown by label, path, model, Hugging Face
   repository, mode, checkpoint, quantization, or capture metadata. Focus opens
   every run, typing filters immediately, Arrow keys move through matches, Enter
@@ -386,6 +397,11 @@ count-mismatch, duplicate-command-buffer, legacy, unsupported-schema, and
 missing-summary warnings visible while rendering the records that remain
 usable. Scheduler backpressure and worker-wait buckets are detail signals and
 are explicitly non-additive.
+
+The compact capture summary reports raw command-buffer, operation, wait, and
+summary-record counts. When a schema-v1 summary is present, it also exposes
+`ops_total`, `cbs_total`, `dropped_rows`, `complete`, and every wait bucket's
+exact `count` and `total_ns`.
 
 Profiler schema v1 does not contain tensor producer/consumer identities.
 Therefore the workbench does not claim a tensor dependency path, an output

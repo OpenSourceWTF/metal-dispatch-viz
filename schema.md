@@ -10,10 +10,34 @@ The public profiler schema uses `record` as its discriminator. The normalizer
 also accepts the legacy aliases below; aliases exist for reading old captures,
 not as preferred names for new instrumentation.
 
+## Record detection and normalization
+
+Raw `MLX_DISPATCH_CENSUS` output is a first-class input and does not need a
+remapping pass. Records are detected in this order:
+
+1. a supported explicit `record` value;
+2. a supported legacy `type` value;
+3. a supported legacy `kind` value;
+4. legacy field-shape inference, checking wait, command-buffer, summary, then
+   operation shapes.
+
+An unsupported explicit `record` or `type` value remains an unknown row instead
+of being reclassified from its shape. All original fields, including fields
+unknown to the normalizer, remain available on the normalized record's raw
+metadata and in inspector details.
+
+| Public `record` | Workbench collection | Purpose |
+|---|---|---|
+| `"op"` | Operations | One encoded operation or dispatch |
+| `"cb"` | Command buffers | Host-encode and GPU interval ownership |
+| `"wait"` | Waits | A measured wait duration and optional anchor |
+| `"summary"` | Source summary | Capture totals, completeness, and wait buckets |
+
 ## Operation record
 
 ```json
 {
+  "schema_version": 1,
   "record": "op",
   "seq": 512,
   "command_buffer_index": 11,
@@ -50,10 +74,18 @@ placement** everywhere; they are not operation timing measurements. Unowned or
 unplaceable operations stay in counts and census data but do not receive an
 invented timeline position.
 
+For the kernel census only, names matching
+`^custom_kernel_(.+?)__` are grouped under the captured family name. For
+example,
+`custom_kernel_gated_delta_step__bfloat16_t_float_128` is shown as
+`gated_delta_step`. Non-custom names are unchanged, and complete raw kernel
+names remain attached to operation records and census tooltips.
+
 ## Command-buffer record
 
 ```json
 {
+  "schema_version": 1,
   "record": "cb",
   "command_buffer_index": 11,
   "op_count": 50,
@@ -88,6 +120,7 @@ health diagnostics.
 
 ```json
 {
+  "schema_version": 1,
   "record": "wait",
   "bucket": "cap_wait",
   "wait_ns": 3000,
@@ -127,6 +160,7 @@ buckets are never added again to headline wait totals.
 {
   "record": "summary",
   "schema_version": 1,
+  "summary_seq": 3,
   "final": true,
   "complete": true,
   "dropped_rows": 0,
@@ -137,9 +171,17 @@ buckets are never added again to headline wait totals.
 ```
 
 Legacy aliases are `type: "final_summary"` or `"final-summary"`,
-`schemaVersion`, `droppedRows`, `opsTotal`, and `cbsTotal`. When multiple
-summaries exist, the last row with `final: true` wins; otherwise the last
-summary wins.
+`schemaVersion`, `summarySeq`, `droppedRows`, `opsTotal`, and `cbsTotal`. When
+multiple summaries exist, the last row with `final: true` wins. If none is
+final, the summary with the highest finite `summary_seq` wins; a trace whose
+summaries have no sequence falls back to its last summary row.
+
+The workbench shows the selected summary beside the wait taxonomy, including
+`ops_total`, `cbs_total`, `dropped_rows`, `complete`, and every bucket's exact
+`count` and `total_ns`. A nonzero `dropped_rows` value receives a visible
+warning without suppressing otherwise usable records. File status separately
+reports the raw number of command-buffer, operation, wait, summary, and
+unrecognized records.
 
 Evidence is complete only when all of the following hold:
 

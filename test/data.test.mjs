@@ -135,6 +135,7 @@ test("normalizes summaries and handles malformed or unknown rows honestly", () =
   const raw = {
     record: "summary",
     schema_version: 1,
+    summary_seq: 7,
     final: true,
     ops_total: 5,
     cbs_total: 2,
@@ -146,6 +147,7 @@ test("normalizes summaries and handles malformed or unknown rows honestly", () =
   assert.deepEqual(normalizeRow(raw), {
     type: "summary",
     schemaVersion: 1,
+    summarySeq: 7,
     final: true,
     opsTotal: 5,
     cbsTotal: 2,
@@ -176,6 +178,105 @@ test("normalizes summaries and handles malformed or unknown rows honestly", () =
       setBytes_calls: -1,
     },
   });
+});
+
+test("selects a final summary first, otherwise the highest summary sequence", () => {
+  const periodicOnly = buildDataset([
+    { record: "summary", summary_seq: 2, final: false },
+    { record: "summary", summary_seq: 9, final: false },
+    { record: "summary", summary_seq: 4, final: false },
+  ]);
+  assert.equal(periodicOnly.sourceSummary.summarySeq, 9);
+  assert.equal(periodicOnly.summaryCount, 3);
+
+  const withFinal = buildDataset([
+    { record: "summary", summary_seq: 99, final: false },
+    { record: "summary", summary_seq: 7, final: true },
+  ]);
+  assert.equal(withFinal.sourceSummary.summarySeq, 7);
+  assert.equal(withFinal.summaryCount, 2);
+});
+
+test("groups MLX custom-kernel templates by their stable profiler name", () => {
+  const first =
+    "custom_kernel_mtplx_linear_gated_delta_from_conv_tape_v1__bfloat16_t_float_128";
+  const second =
+    "custom_kernel_mtplx_linear_gated_delta_from_conv_tape_v1__float_float_256";
+  const data = buildDataset([
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      first_op_seq: 0,
+      last_op_seq: 2,
+      encode_start_ns: 0,
+      encode_end_ns: 3,
+    },
+    { record: "op", command_buffer_index: 0, seq: 0, kernel_name: first },
+    { record: "op", command_buffer_index: 0, seq: 1, kernel_name: second },
+    { record: "op", command_buffer_index: 0, seq: 2, kernel_name: "affine_qmv" },
+  ]);
+
+  assert.deepEqual(
+    data.kernelCensus.map(({ kernel, count, rawKernels }) => ({
+      kernel,
+      count,
+      rawKernels,
+    })),
+    [
+      {
+        kernel: "mtplx_linear_gated_delta_from_conv_tape_v1",
+        count: 2,
+        rawKernels: [first, second],
+      },
+      {
+        kernel: "affine_qmv",
+        count: 1,
+        rawKernels: ["affine_qmv"],
+      },
+    ],
+  );
+  assert.deepEqual(
+    data.operations.map((operation) => operation.kernel),
+    [first, second, "affine_qmv"],
+    "dispatch tooltips retain the complete raw kernel names",
+  );
+});
+
+test("real profiler fixture is referentially closed and fully recognized", async () => {
+  const text = await readFile(
+    new URL("../fixtures/profiler-sample.jsonl", import.meta.url),
+    "utf8",
+  );
+  const rows = text.trimEnd().split("\n").map(JSON.parse);
+  const data = buildDataset(rows);
+
+  assert.equal(rows.length, 50);
+  assert.deepEqual(data.recordCounts, {
+    commandBuffers: 4,
+    operations: 38,
+    waits: 6,
+    summaries: 2,
+    unrecognized: 0,
+  });
+  assert.equal(data.sourceSummary.final, true);
+  assert.equal(data.sourceSummary.summarySeq, 3);
+  assert.equal(data.health.malformedRows, 0);
+  assert.equal(data.health.unknownRows, 0);
+  assert.equal(
+    data.kernelCensus.find(
+      (entry) => entry.kernel === "gated_delta_step",
+    ).count,
+    1,
+  );
+  for (const commandBuffer of data.commandBuffers) {
+    assert.equal(
+      data.operations.filter(
+        (operation) =>
+          operation.commandBufferIndex === commandBuffer.commandBufferIndex,
+      ).length,
+      commandBuffer.opCount,
+    );
+  }
 });
 
 test("merges overlapping and adjacent intervals and rejects invalid spans", () => {
