@@ -353,7 +353,7 @@ export function ProfilerApp({
           >
             Open trace
           </Button>
-          <input
+          <Input
             id="local-trace-input"
             className="visually-hidden"
             type="file"
