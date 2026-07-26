@@ -117,6 +117,8 @@ export function compactDatasetForClient(dataset, options = {}) {
   return Object.freeze({
     ...compactTopLevel,
     sourceSummary: source.sourceSummary,
+    summaryCount: source.summaryCount,
+    recordCounts: source.recordCounts,
     sourceCompleteness: source.sourceCompleteness,
     launchWindows: Object.freeze(launchWindows),
     unassignedDispatches: Object.freeze(

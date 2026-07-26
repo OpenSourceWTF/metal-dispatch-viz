@@ -40,8 +40,10 @@ The supported Node versions and complete local-running instructions are in the
 - Preserve the application’s evidence language. Ordered dispatch placement is
   not a measured per-kernel timestamp, and schema v1 cannot establish tensor or
   output critical paths.
-- Keep the Express trace server read-only. Do not add implicit uploads,
-  fallback sample data, path traversal, or symlink following.
+- Keep the Express trace server read-only. Browser-local file selection and
+  drag-and-drop must use local object URLs; do not add upload endpoints,
+  implicit network transfers, fallback sample data, path traversal, or symlink
+  following.
 - Do not commit `dist/`, dependency caches, raw profiler captures, model
   weights, secrets, tokens, credentials, private filesystem paths, prompts, or
   generated model text.
@@ -114,4 +116,3 @@ Code and documentation contributions are accepted under this repository’s MIT
 license. Trace submitters must affirm that they created or are authorized to
 share the capture and permit OpenSourceWTF to redistribute the submitted
 artifact under the MIT license.
-

@@ -290,6 +290,11 @@ function normalizeSummary(row) {
     "schemaVersion",
     nonNegativeValue(row, ["schema_version", "schemaVersion"]),
   );
+  copyPresent(
+    result,
+    "summarySeq",
+    nonNegativeValue(row, ["summary_seq", "summarySeq"]),
+  );
   if (typeof row.final === "boolean") {
     result.final = row.final;
   }
@@ -942,19 +947,27 @@ function buildWaitTaxonomy(waits) {
   return Object.freeze(taxonomy);
 }
 
+function kernelFamilyName(kernel) {
+  return /^custom_kernel_(.+?)__/.exec(kernel)?.[1] ?? kernel;
+}
+
 function kernelCensus(dispatches) {
   const byKernel = new Map();
   for (const dispatch of dispatches) {
     if (typeof dispatch.kernel !== "string") {
       continue;
     }
-    const entry = byKernel.get(dispatch.kernel) ?? {
-      kernel: dispatch.kernel,
+    const rawKernel = dispatch.kernel;
+    const kernel = kernelFamilyName(rawKernel);
+    const entry = byKernel.get(kernel) ?? {
+      kernel,
+      rawKernelSet: new Set(),
       count: 0,
       setBytesCalls: 0,
       setBytesTotalBytes: 0,
       bufferBinds: 0,
     };
+    entry.rawKernelSet.add(rawKernel);
     entry.count = checkedFiniteAdd(
       entry.count,
       1,
@@ -975,12 +988,16 @@ function kernelCensus(dispatches) {
       dispatch.bufferBinds ?? 0,
       "Kernel buffer binds",
     );
-    byKernel.set(dispatch.kernel, entry);
+    byKernel.set(kernel, entry);
   }
   return Object.freeze(
     [...byKernel.values()]
       .sort((left, right) => right.count - left.count || left.kernel.localeCompare(right.kernel))
-      .map(Object.freeze),
+      .map(({ rawKernelSet, ...entry }) =>
+        Object.freeze({
+          ...entry,
+          rawKernels: Object.freeze([...rawKernelSet].sort()),
+        })),
   );
 }
 
@@ -1778,7 +1795,18 @@ function selectSourceSummary(summaries) {
       return summaries[index];
     }
   }
-  return summaries.at(-1) ?? null;
+  let selected = summaries.at(-1) ?? null;
+  let highestSequence = -Infinity;
+  for (const summary of summaries) {
+    if (
+      Number.isFinite(summary.summarySeq) &&
+      summary.summarySeq >= highestSequence
+    ) {
+      selected = summary;
+      highestSequence = summary.summarySeq;
+    }
+  }
+  return selected;
 }
 
 function quarantineDuplicateCommandBuffers(commandBuffers) {
@@ -1863,6 +1891,13 @@ export function buildDataset(rows, diagnostics = {}) {
   const normalizedWaits = records.filter((record) => record.type === "wait");
   const summaries = records.filter((record) => record.type === "summary");
   const unknownRows = records.filter((record) => record.type === "unknown").length;
+  const recordCounts = Object.freeze({
+    commandBuffers: allCommandBuffers.length,
+    operations: operations.length,
+    waits: normalizedWaits.length,
+    summaries: summaries.length,
+    unrecognized: unknownRows,
+  });
   const gpuIntervals = mergeIntervals(
     rawCommandBuffers.map(commandBufferGpuInterval).filter((interval) => interval !== null),
   );
@@ -1930,6 +1965,8 @@ export function buildDataset(rows, diagnostics = {}) {
     duplicateCommandBufferIndices: duplicateResolution.duplicateIndices,
     waits: Object.freeze(waits),
     sourceSummary,
+    summaryCount: summaries.length,
+    recordCounts,
     sourceCompleteness: completeness,
     gpuIntervals: aggregate.gpuIntervals,
     waitTaxonomy: aggregate.waitTaxonomy,
