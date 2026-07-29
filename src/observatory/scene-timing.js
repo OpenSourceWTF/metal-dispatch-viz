@@ -46,3 +46,28 @@ export function observatoryPixelRatio({
     1_200 / safeHeight,
   );
 }
+
+export function nextObservatoryFrameIndex({
+  current,
+  frameCount,
+  stride = 1,
+} = {}) {
+  if (!Number.isSafeInteger(frameCount) || frameCount <= 0) return 0;
+  const safeCurrent = Number.isSafeInteger(current)
+    ? Math.min(frameCount - 1, Math.max(0, current))
+    : 0;
+  const safeStride =
+    Number.isSafeInteger(stride) && stride > 0 ? stride : 1;
+  return Math.min(frameCount - 1, safeCurrent + safeStride);
+}
+
+export function frameIndexFromProgress({
+  frameCount,
+  progress,
+} = {}) {
+  if (!Number.isSafeInteger(frameCount) || frameCount <= 1) return 0;
+  const bounded = Number.isFinite(progress)
+    ? Math.min(1, Math.max(0, progress))
+    : 0;
+  return Math.min(frameCount - 1, Math.round(bounded * (frameCount - 1)));
+}

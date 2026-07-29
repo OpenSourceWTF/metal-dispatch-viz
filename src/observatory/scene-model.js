@@ -161,6 +161,18 @@ function dimensionProduct(value) {
   return finiteDimensions.reduce((product, dimension) => product * dimension, 1);
 }
 
+function normalizedGrid(value) {
+  const dimensions = Array.isArray(value) ? value.slice(0, 3) : [];
+  return Object.freeze(
+    [0, 1, 2].map((index) => {
+      const dimension = dimensions[index];
+      return Number.isFinite(dimension) && dimension > 0
+        ? Math.floor(dimension)
+        : 1;
+    }),
+  );
+}
+
 function dispatchWork(dispatch) {
   return dimensionProduct(dispatch?.grid);
 }
@@ -235,17 +247,49 @@ function maximumGpuCommandBufferOverlap(commandBuffers) {
 function buildFrames(dispatches, launch, speculationWidth) {
   const maximumWork = Math.max(1, ...dispatches.map(dispatchWork));
   const maximumBinding = Math.max(1, ...dispatches.map(dispatchBinding));
+  const commandBufferIndices = [];
+  const seenCommandBuffers = new Set();
+  for (const source of [launch?.commandBuffers ?? [], dispatches]) {
+    for (const item of source) {
+      const index = item?.commandBufferIndex;
+      if (!Number.isFinite(index) || seenCommandBuffers.has(index)) continue;
+      seenCommandBuffers.add(index);
+      commandBufferIndices.push(index);
+    }
+  }
+  const commandBufferPositions = new Map(
+    commandBufferIndices.map((index, position) => [index, position + 1]),
+  );
   return Object.freeze(
-    dispatches.map((dispatch, index) =>
-      Object.freeze({
+    dispatches.map((dispatch, index) => {
+      const commandBufferIndex = Number.isFinite(
+        dispatch?.commandBufferIndex,
+      )
+        ? dispatch.commandBufferIndex
+        : null;
+      return Object.freeze({
         index,
         seq: Number.isFinite(dispatch?.seq) ? dispatch.seq : null,
         atNs: Number.isFinite(dispatch?.atNs) ? dispatch.atNs : null,
-        commandBufferIndex: Number.isFinite(dispatch?.commandBufferIndex)
-          ? dispatch.commandBufferIndex
-          : null,
+        elapsedNs:
+          Number.isFinite(dispatch?.atNs) && Number.isFinite(launch?.startNs)
+            ? Math.max(0, dispatch.atNs - launch.startNs)
+            : null,
+        commandBufferIndex,
+        commandBuffer: Object.freeze({
+          index: commandBufferIndex,
+          position:
+            commandBufferIndex === null
+              ? null
+              : (commandBufferPositions.get(commandBufferIndex) ?? null),
+          total:
+            commandBufferIndices.length > 0
+              ? commandBufferIndices.length
+              : null,
+        }),
         kernel: stringValue(dispatch?.kernel) ?? "unnamed kernel",
         family: classifyKernelFamily(dispatch?.kernel),
+        grid: normalizedGrid(dispatch?.grid),
         progress: progressFor(dispatch, index, dispatches.length, launch),
         mathIntensity:
           Math.log1p(dispatchWork(dispatch)) / Math.log1p(maximumWork),
@@ -253,8 +297,8 @@ function buildFrames(dispatches, launch, speculationWidth) {
         ribbonLabel: "binding activity",
         speculativeLane:
           speculationWidth === null ? null : index % speculationWidth,
-      }),
-    ),
+      });
+    }),
   );
 }
 

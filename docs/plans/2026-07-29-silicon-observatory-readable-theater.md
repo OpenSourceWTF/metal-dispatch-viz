@@ -81,7 +81,7 @@ Node test runner, Vite, Playwright/Chromium browser receipts.
 direction, or speculative acceptance. All visual counts remain bounded
 representations with exact recorded geometry shown separately.
 
-- [ ] **Step 1: Write failing scene-model and timing tests**
+- [x] **Step 1: Write failing scene-model and timing tests**
 
 Add assertions that each frame retains normalized geometry and an ordinal
 command-buffer position:
@@ -111,7 +111,7 @@ assert.equal(frameIndexFromProgress({
 }), 9);
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm the new contracts fail**
+- [x] **Step 2: Run the focused tests and confirm the new contracts fail**
 
 Run:
 
@@ -123,7 +123,7 @@ node --test test/observatory-scene-model.test.mjs \
 Expected: FAIL because frames do not retain grid/buffer presentation fields and
 the timing helpers do not exist.
 
-- [ ] **Step 3: Retain construction-time geometry and command-buffer position**
+- [x] **Step 3: Retain construction-time geometry and command-buffer position**
 
 Normalize grids once in `scene-model.js`:
 
@@ -161,7 +161,7 @@ references, then install immutable frame fields:
 
 This occurs in `buildSceneModel()`/`buildFrames()`, not in the animation loop.
 
-- [ ] **Step 4: Add bounded timing helpers**
+- [x] **Step 4: Add bounded timing helpers**
 
 Implement in `scene-timing.js`:
 
@@ -192,7 +192,7 @@ export function frameIndexFromProgress({
 }
 ```
 
-- [ ] **Step 5: Write the failing story-frame tests**
+- [x] **Step 5: Write the failing story-frame tests**
 
 Create `test/observatory-story-frame.test.mjs` with a two-frame fixture and
 assert:
@@ -215,7 +215,7 @@ assert.equal(Object.isFrozen(story), true);
 Also assert deterministic equality for repeated inputs and safe empty-model
 output.
 
-- [ ] **Step 6: Implement `buildStoryFrame()`**
+- [x] **Step 6: Implement `buildStoryFrame()`**
 
 Create `story-frame.js` with these exported constants and function:
 
@@ -261,7 +261,7 @@ The returned contract is:
 }
 ```
 
-- [ ] **Step 7: Run focused tests**
+- [x] **Step 7: Run focused tests**
 
 Run:
 
@@ -273,7 +273,7 @@ node --test test/observatory-scene-model.test.mjs \
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 1**
+- [x] **Step 8: Commit Task 1**
 
 ```sh
 git add src/observatory/scene-model.js \

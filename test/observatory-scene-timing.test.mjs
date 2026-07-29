@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  frameIndexFromProgress,
+  nextObservatoryFrameIndex,
   observatoryFrameStride,
   observatoryPixelRatio,
   shouldAnimateObservatory,
@@ -52,6 +54,40 @@ test("gallery playback samples an entire long launch within its slot", () => {
     }),
     1,
   );
+});
+
+test("playback and scrubbing stay within the captured window", () => {
+  assert.equal(
+    nextObservatoryFrameIndex({
+      current: 8,
+      frameCount: 10,
+      stride: 4,
+    }),
+    9,
+  );
+  assert.equal(
+    nextObservatoryFrameIndex({
+      current: -10,
+      frameCount: 10,
+      stride: 2,
+    }),
+    2,
+  );
+  assert.equal(
+    frameIndexFromProgress({
+      frameCount: 10,
+      progress: 0.5,
+    }),
+    5,
+  );
+  assert.equal(
+    frameIndexFromProgress({
+      frameCount: 10,
+      progress: 2,
+    }),
+    9,
+  );
+  assert.equal(frameIndexFromProgress({ frameCount: 0, progress: 0.5 }), 0);
 });
 
 test("a responsive resize explicitly invalidates a static WebGL frame", async () => {

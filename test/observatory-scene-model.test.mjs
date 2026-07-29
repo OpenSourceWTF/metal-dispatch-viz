@@ -137,6 +137,16 @@ test("scene geometry preserves measured order and labels every inference boundar
   assert.equal(model.parallelism.evidence, "measured command-buffer overlap");
 
   assert.equal(model.frames.length, 3);
+  assert.deepEqual(model.frames[0].grid, [64, 8, 1]);
+  assert.deepEqual(model.frames[0].commandBuffer, {
+    index: 0,
+    position: 1,
+    total: 1,
+  });
+  assert.deepEqual(
+    model.frames.map(({ elapsedNs }) => elapsedNs),
+    [0, 150, 300],
+  );
   assert.deepEqual(
     model.frames.map(({ family }) => family),
     ["projection", "normalization", "routing"],
