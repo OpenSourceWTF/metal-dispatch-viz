@@ -27,46 +27,40 @@ manifest metadata, or a private long-running Express session.
 ## Silicon Observatory
 
 Open `?mode=observatory` for the full-screen Silicon Observatory. Its sample
-gallery discovers Qwen runs from registry metadata rather than fixed trace
-filenames or a fixed showcase count. Previous, play/pause, next, and speed
-controls drive the animation; `.jsonl` and `.ndjson` imports remain local to
-the browser. Long launches are sampled in order across each gallery slot so the
-animation traverses the full selected window instead of replaying only its
-opening dispatches.
+gallery is selected and ordered by each trace's `observatory` manifest config;
+the renderer contains no model-name allowlist or candidate-specific scene
+switch. Move the pointer to summon the world-space playback and export
+instruments. Arrow keys select adjacent gallery traces, Space toggles playback,
+and `I` opens a local trace.
 
-Read the Observatory from left to right:
+The central statue is constructed from checkpoint architecture config:
 
 ```text
-Unified memory → active kernel → representative GPU lanes → derived writeback
+token aperture → exact transformer layer stack → vocabulary aperture
 ```
 
-The progress rail reports position within the captured trace window, including
-the current command buffer and displayed dispatch when those relationships are
-available. An operation's position within measured command-buffer timing is an
-ordered interpolation, not a measured per-operation timestamp, and the UI says
-so explicitly. Cyan identifies the unified-memory presentation, amber
-identifies active math, and dashed violet identifies configured speculation.
-GPU lanes are a bounded visual aggregation of the exact recorded dispatch grid,
-not a claim about physical Apple GPU cores. Missing dispatch geometry remains
-labeled unavailable instead of becoming a synthetic `1 × 1 × 1` measurement.
-Core labels, the progress rail, and a compact evidence qualifier are drawn into
-the WebGL composition, so they remain visible in PNG and MP4 exports. Sampling
-counts and source-verification cautions are prioritized in that export label
-rather than hidden by a generic warning.
+Layer count, alternating attention types, hidden width, dense versus MoE
+topology, configured expert count/top-k, and MTP width come from data in
+`traces/showcase/traces.json`. The two bundled candidates are examples rather
+than code paths. For a local model, first choose its `.jsonl` or `.ndjson`
+profiler trace, then choose the checkpoint's `config.json`; both files remain
+inside the browser. A missing config produces an explicit architecture-
+unavailable state instead of guessing from the model name.
 
-Command-buffer timing and dispatch order are trace evidence. Model mass is
-estimated from manifest model/quantization metadata, while binding flow,
-memory-block activation, and writeback choreography are explicitly derived
-visual encodings. Schema v1 does not contain SSD I/O, tensor identities, exact
-buffer access direction, per-operation execution timestamps, or speculative
-acceptance. SSD therefore stays out of the primary stage and is documented in
-the collapsed **What is measured?** panel. Unassigned dispatches use an
-explicitly labeled ordinal fallback when no launch-owned dispatch is available;
-omissions and deterministic client sampling downgrade the visible evidence
-state.
+The active layer and six-stage transformer choreography are a deterministic
+simulation over trace progress and are marked `SIM` in the composition. Exact
+kernel names, dispatch mode, grid/threadgroup geometry, command-buffer
+transitions, and bind activity come from the trace. The unified-memory halo,
+memory ribbons, representative GPU lanes, and math particles are derived visual
+encodings gated by those facts. Configured speculative branches do not claim
+measured acceptance, configured expert illumination does not claim measured
+routing, and missing dispatch geometry does not become a synthetic
+measurement. Schema v1 has no SSD I/O or exact read/write direction, so neither
+is invented.
 
-Choose **Save PNG** for a still frame or **Record MP4** to capture a silent
-H.264 animation when the browser exposes that `MediaRecorder` codec. Movie
+Use the world-space capture instruments or the accessible controls to save a
+PNG still or record a silent H.264 MP4 when the browser exposes that
+`MediaRecorder` codec. Capture retracts the instruments before rendering. Movie
 export letterboxes the live canvas into a fixed 1280×720 frame, records at 30
 fps, requests an 8 Mbps video bitrate, and automatically saves at 60 seconds
 to bound in-browser recording memory. Those bounds fit [X's published

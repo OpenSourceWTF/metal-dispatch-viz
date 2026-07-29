@@ -126,6 +126,7 @@ export function ObservatoryApp({
 
   const traceInputRef = useRef(null);
   const configInputRef = useRef(null);
+  const captureControllerRef = useRef(null);
   const loadGeneration = useRef(0);
   const selectionRevision = useRef(0);
   const sceneLabelRef = useRef("trace");
@@ -135,7 +136,11 @@ export function ObservatoryApp({
   const handleCanvasReady = useCallback((nextCanvas) => {
     setCanvas(nextCanvas);
   }, []);
+  const handleCaptureController = useCallback((controller) => {
+    captureControllerRef.current = controller;
+  }, []);
   const handleRecorderError = useCallback((reason) => {
+    captureControllerRef.current?.release?.();
     setRecording(false);
     setStatus(
       reason instanceof Error
@@ -144,6 +149,7 @@ export function ObservatoryApp({
     );
   }, []);
   const handleRecorderComplete = useCallback((result) => {
+    captureControllerRef.current?.release?.();
     setRecording(false);
     if (!result?.filename) return;
     setStatus(
@@ -481,6 +487,7 @@ export function ObservatoryApp({
 
   const savePng = useCallback(async () => {
     if (!canvas) return;
+    captureControllerRef.current?.prepare?.();
     try {
       const result = await canvasPngDownloader(canvas, {
         label: sceneLabelRef.current,
@@ -492,6 +499,8 @@ export function ObservatoryApp({
           ? reason.message
           : "The PNG snapshot could not be saved.",
       );
+    } finally {
+      captureControllerRef.current?.release?.();
     }
   }, [canvas, canvasPngDownloader]);
 
@@ -505,16 +514,19 @@ export function ObservatoryApp({
     try {
       if (recording) {
         const result = await canvasRecorder.stop();
+        captureControllerRef.current?.release?.();
         setRecording(false);
         if (result?.filename) {
           setStatus(`${result.filename} saved locally.`);
         }
       } else {
+        captureControllerRef.current?.prepare?.();
         canvasRecorder.start();
         setRecording(true);
         setStatus("Recording locally.");
       }
     } catch (reason) {
+      captureControllerRef.current?.release?.();
       setRecording(false);
       setStatus(
         reason instanceof Error
@@ -532,12 +544,21 @@ export function ObservatoryApp({
         setPlaying((value) => !value);
       }
       if (command === "import" && !recording) {
-        traceInputRef.current?.click();
+        if (
+          activeSource?.kind === "local" &&
+          architectureOverride === null
+        ) {
+          configInputRef.current?.click();
+        } else {
+          traceInputRef.current?.click();
+        }
       }
       if (command === "png") void savePng();
       if (command === "record") void toggleRecording();
     },
     [
+      activeSource?.kind,
+      architectureOverride,
       nextGallery,
       previousGallery,
       recording,
@@ -592,6 +613,7 @@ export function ObservatoryApp({
         reducedMotion={reducedMotion}
         animated={phase === "ready" && playing && !reducedMotion}
         onCanvasReady={handleCanvasReady}
+        onCaptureController={handleCaptureController}
         onCommand={onSceneCommand}
       />
       <div className="observatory-vignette" aria-hidden="true" />

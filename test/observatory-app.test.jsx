@@ -538,6 +538,17 @@ describe("Silicon Observatory process", () => {
   it("exports PNG and H.264 MP4 locally through one recorder lifecycle", async () => {
     const sessions = sessionFactory();
     const pngDownloader = vi.fn(async () => ({ filename: "frame.png" }));
+    const captureController = {
+      prepare: vi.fn(),
+      release: vi.fn(),
+    };
+    function CaptureScene(props) {
+      useEffect(() => {
+        props.onCaptureController?.(captureController);
+        return () => props.onCaptureController?.(null);
+      }, [props.onCaptureController]);
+      return <SceneStub {...props} />;
+    }
     const recorder = {
       supported: true,
       recording: false,
@@ -551,7 +562,7 @@ describe("Silicon Observatory process", () => {
         <ObservatoryApp
           registryLoader={async () => registryResult([DENSE_TRACE])}
           analysisSessionFactory={sessions.factory}
-          SceneComponent={SceneStub}
+          SceneComponent={CaptureScene}
           canvasPngDownloader={pngDownloader}
           canvasRecorderFactory={canvasRecorderFactory}
         />,
@@ -577,6 +588,8 @@ describe("Silicon Observatory process", () => {
       canvas,
       expect.objectContaining({ label: "Dense candidate" }),
     );
+    expect(captureController.prepare).toHaveBeenCalledTimes(1);
+    expect(captureController.release).toHaveBeenCalledTimes(1);
 
     await act(async () =>
       container
@@ -584,6 +597,8 @@ describe("Silicon Observatory process", () => {
         .click(),
     );
     expect(recorder.start).toHaveBeenCalledTimes(1);
+    expect(captureController.prepare).toHaveBeenCalledTimes(2);
+    expect(captureController.release).toHaveBeenCalledTimes(1);
     expect(container.querySelector(".observatory-recording")).not.toBeNull();
     expect(
       container.querySelector(
@@ -597,6 +612,7 @@ describe("Silicon Observatory process", () => {
         .click(),
     );
     expect(recorder.stop).toHaveBeenCalledTimes(1);
+    expect(captureController.release).toHaveBeenCalledTimes(2);
     expect(
       container.querySelector('[role="status"]').textContent,
     ).toMatch(/animation\.mp4 saved locally/i);

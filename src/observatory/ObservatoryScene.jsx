@@ -211,6 +211,7 @@ export function ObservatoryScene({
   reducedMotion = false,
   animated = true,
   onCanvasReady,
+  onCaptureController,
   onCommand,
 }) {
   const presentation = useMemo(
@@ -366,6 +367,7 @@ export function ObservatoryScene({
     let retractTimer = null;
     let hovered = null;
     const showInstruments = () => {
+      if (captureLocked) return;
       instruments.group.visible = true;
       if (retractTimer !== null) clearTimeout(retractTimer);
       retractTimer = setTimeout(() => {
@@ -418,6 +420,7 @@ export function ObservatoryScene({
 
     let animationFrame = null;
     let visible = !globalThis.document?.hidden;
+    let captureLocked = false;
     const startedAt = performance.now();
     const render = (now = performance.now()) => {
       animationFrame = null;
@@ -499,10 +502,22 @@ export function ObservatoryScene({
       scene,
       statue,
     };
+    const captureController = {
+      prepare() {
+        captureLocked = true;
+        instruments.group.visible = false;
+        composer.render();
+      },
+      release() {
+        captureLocked = false;
+      },
+    };
+    onCaptureController?.(captureController);
     renderRequestRef.current();
 
     return () => {
       activityRef.current = null;
+      onCaptureController?.(null);
       renderRequestRef.current = null;
       if (animationFrame !== null) cancelAnimationFrame(animationFrame);
       if (retractTimer !== null) clearTimeout(retractTimer);
@@ -531,7 +546,7 @@ export function ObservatoryScene({
       renderer.domElement.remove();
       onCanvasReady?.(null);
     };
-  }, [onCanvasReady]);
+  }, [onCanvasReady, onCaptureController]);
 
   if (failure) {
     return (
