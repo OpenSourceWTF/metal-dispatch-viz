@@ -141,6 +141,8 @@ test("parameter scale and kernel families are derived from metadata", () => {
   assert.equal(classifyKernelFamily("moe_router_topk"), "routing");
   assert.equal(classifyKernelFamily("silu_gate"), "activation");
   assert.equal(classifyKernelFamily("v_Sigmoidbfloat16bfloat16"), "activation");
+  assert.equal(classifyKernelFamily("vv_Addbfloat16"), "residual");
+  assert.equal(classifyKernelFamily("g2_Addfloat32"), "residual");
   assert.equal(classifyKernelFamily("token_embedding"), "embedding-output");
   assert.equal(classifyKernelFamily("copy_buffer"), "transfer-binding");
   assert.equal(classifyKernelFamily("mystery_kernel"), "other");

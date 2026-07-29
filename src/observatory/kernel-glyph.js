@@ -4,6 +4,7 @@ export const KERNEL_GLYPH_GRAMMARS = Object.freeze({
   normalization: "equalizer-torus",
   routing: "switch-manifold",
   activation: "ignition-chamber",
+  residual: "residual-bridge",
   "embedding-output": "vocabulary-aperture",
   "transfer-binding": "conduit-coupler",
   other: "neutral-capsule",

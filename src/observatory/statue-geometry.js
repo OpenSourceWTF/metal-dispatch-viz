@@ -1,3 +1,5 @@
+import { TRANSFORMER_STAGES } from "./statue-state.js";
+
 const PALETTE = Object.freeze({
   cyan: 0x68e7ff,
   cyanSoft: 0x1b8fa8,
@@ -17,6 +19,7 @@ const GLYPH_FAMILIES = Object.freeze([
   "normalization",
   "routing",
   "activation",
+  "residual",
   "embedding-output",
   "transfer-binding",
   "other",
@@ -245,6 +248,7 @@ function createExpertField(THREE, presentation, bodyHeight) {
   experts.count = count;
   experts.name = "CONFIGURED_EXPERTS";
   const transform = new THREE.Object3D();
+  const positions = [];
   const dormant = new THREE.Color(0x583b82);
   const columns = Math.max(1, Math.min(16, Math.ceil(Math.sqrt(count))));
   const rows = Math.max(1, Math.ceil(count / columns));
@@ -261,6 +265,7 @@ function createExpertField(THREE, presentation, bodyHeight) {
       y,
       Math.sin(angle) * radius,
     );
+    positions.push(transform.position.clone());
     transform.rotation.set(angle, angle * 0.3, -angle);
     transform.scale.setScalar(0.8 + (index % 3) * 0.18);
     transform.updateMatrix();
@@ -273,16 +278,45 @@ function createExpertField(THREE, presentation, bodyHeight) {
 
   const shared = addMesh(
     group,
-    new THREE.TorusKnotGeometry(0.48, 0.035, 96, 8, 2, 3),
+    new THREE.TorusKnotGeometry(0.38, 0.025, 96, 8, 2, 3),
     luminousMaterial(THREE, PALETTE.magenta, {
-      opacity: count > 0 ? 0.42 : 0,
-      emissiveIntensity: 1.8,
+      opacity: count > 0 ? 0.24 : 0,
+      emissiveIntensity: 0.9,
       wireframe: true,
     }),
   );
   shared.name = "SHARED_EXPERT";
-  shared.visible = count > 0;
-  return { group, experts, shared };
+  shared.visible = false;
+  return { group, experts, shared, positions };
+}
+
+function createExpertRouteFan(THREE, presentation, expertPositions) {
+  const group = groupFor(THREE);
+  group.name = "MOE_CONFIGURED_ROUTE_FAN";
+  const fanout =
+    presentation.architecture.feedForward?.kind === "moe"
+      ? presentation.architecture.feedForward.expertsPerToken
+      : 0;
+  const routes = [];
+  for (let index = 0; index < fanout; index += 1) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(6), 3),
+    );
+    const route = new THREE.Line(
+      geometry,
+      lineMaterial(THREE, PALETTE.magenta, 0.34),
+    );
+    route.name = `MOE_CONFIGURED_ROUTE_${index + 1}`;
+    route.visible = false;
+    group.add(route);
+    routes.push(route);
+  }
+  group.visible = false;
+  group.userData.expertPositions = expertPositions;
+  group.userData.routedExpertCount = 0;
+  return { group, routes };
 }
 
 function createMemoryHalo(THREE) {
@@ -298,8 +332,8 @@ function createMemoryHalo(THREE) {
       group,
       new THREE.TorusGeometry(radius, tube, 6, 192),
       luminousMaterial(THREE, index === 1 ? PALETTE.blue : PALETTE.cyan, {
-        opacity: index === 0 ? 0.4 : 0.18,
-        emissiveIntensity: 1.45,
+        opacity: index === 0 ? 0.28 : 0.14,
+        emissiveIntensity: 1.08,
         metalness: 0.1,
         roughness: 0.12,
       }),
@@ -318,8 +352,8 @@ function createHardwareOrbitals(THREE) {
     cpu,
     new THREE.IcosahedronGeometry(0.34, 1),
     luminousMaterial(THREE, PALETTE.white, {
-      opacity: 0.88,
-      emissiveIntensity: 1.2,
+      opacity: 0.68,
+      emissiveIntensity: 0.82,
       wireframe: true,
     }),
   );
@@ -339,8 +373,8 @@ function createHardwareOrbitals(THREE) {
   const lanes = new THREE.InstancedMesh(
     new THREE.BoxGeometry(0.24, 0.24, 0.24),
     luminousMaterial(THREE, PALETTE.amber, {
-      opacity: 0.82,
-      emissiveIntensity: 1.5,
+      opacity: 0.68,
+      emissiveIntensity: 1.08,
       metalness: 0.7,
       roughness: 0.18,
     }),
@@ -445,9 +479,22 @@ function createSpeculationBranches(THREE) {
         0.8 + tier * 0.36,
       ),
     ];
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const material = lineMaterial(THREE, PALETTE.violet, 0.28);
-    const branch = new THREE.Line(geometry, material);
+    const curve = new THREE.CatmullRomCurve3(points);
+    const geometry = new THREE.TubeGeometry(
+      curve,
+      36,
+      0.012,
+      4,
+      false,
+    );
+    const material = luminousMaterial(THREE, PALETTE.violet, {
+      opacity: 0.2,
+      emissiveIntensity: 0.72,
+      metalness: 0.08,
+      roughness: 0.12,
+    });
+    const branch = new THREE.Mesh(geometry, material);
+    branch.name = `CONFIGURED_SPECULATION_BRANCH_${index + 1}`;
     branch.visible = false;
     branch.userData.index = index;
     group.add(branch);
@@ -499,6 +546,29 @@ function matrixGlyph(THREE, color) {
   return group;
 }
 
+function bridgeGlyph(THREE, color) {
+  const group = groupFor(THREE);
+  [
+    [new THREE.BoxGeometry(0.12, 0.82, 0.12), [-0.38, 0, 0]],
+    [new THREE.BoxGeometry(0.12, 0.82, 0.12), [0.38, 0, 0]],
+    [new THREE.BoxGeometry(0.76, 0.1, 0.12), [0, 0, 0]],
+  ].forEach(([geometry, position], index) => {
+    const segment = addMesh(
+      group,
+      geometry,
+      luminousMaterial(THREE, color, {
+        opacity: 0.64,
+        emissiveIntensity: 1.25,
+        metalness: 0.5,
+        roughness: 0.18,
+      }),
+      position,
+    );
+    segment.rotation.y = (index - 1) * 0.12;
+  });
+  return group;
+}
+
 function createKernelGlyphs(THREE) {
   const kernel = groupFor(THREE);
   kernel.name = "ACTIVE_KERNEL_GLYPH";
@@ -531,6 +601,7 @@ function createKernelGlyphs(THREE) {
       flame.rotation.z = Math.PI;
       return group;
     })(),
+    residual: bridgeGlyph(THREE, PALETTE.white),
     "embedding-output": ringGlyph(THREE, PALETTE.violet, 6),
     "transfer-binding": matrixGlyph(THREE, PALETTE.cyan),
     other: (() => {
@@ -624,6 +695,84 @@ function createActivationFlow(THREE, bodyHeight) {
   return { group, path, courier };
 }
 
+function stageNodeGeometry(THREE, stage) {
+  if (stage.includes("norm")) {
+    return new THREE.OctahedronGeometry(0.115, 0);
+  }
+  if (stage === "attention") {
+    return new THREE.TorusGeometry(0.115, 0.028, 5, 18);
+  }
+  if (stage === "feed-forward") {
+    return new THREE.TetrahedronGeometry(0.14, 0);
+  }
+  return new THREE.BoxGeometry(0.17, 0.075, 0.075);
+}
+
+function stageNodeColor(stage) {
+  if (stage.includes("norm")) return PALETTE.cyan;
+  if (stage === "attention") return PALETTE.attention;
+  if (stage === "feed-forward") return PALETTE.amber;
+  return PALETTE.white;
+}
+
+function createTransformerStageCircuit(THREE, dense) {
+  const group = groupFor(THREE);
+  group.name = "ACTIVE_TRANSFORMER_STAGE_CIRCUIT";
+  const radius = dense ? 1.48 : 1.68;
+  const rail = addMesh(
+    group,
+    new THREE.TorusGeometry(radius, 0.018, 4, 96),
+    luminousMaterial(THREE, PALETTE.blue, {
+      opacity: 0.48,
+      emissiveIntensity: 0.82,
+      metalness: 0.2,
+      roughness: 0.18,
+    }),
+  );
+  rail.name = "TRANSFORMER_STAGE_RAIL";
+
+  const nodes = TRANSFORMER_STAGES.map((stage, index) => {
+    const angle =
+      -Math.PI / 2 + index * (Math.PI * 2 / TRANSFORMER_STAGES.length);
+    const node = addMesh(
+      group,
+      stageNodeGeometry(THREE, stage),
+      luminousMaterial(THREE, stageNodeColor(stage), {
+        opacity: 0.16,
+        emissiveIntensity: 0.24,
+        metalness: 0.22,
+        roughness: 0.16,
+      }),
+      [
+        Math.cos(angle) * radius,
+        Math.sin(angle) * radius,
+        0.16,
+      ],
+    );
+    node.name = `TRANSFORMER_STAGE_${stage.toUpperCase()}`;
+    node.rotation.set(angle * 0.1, angle * 0.08, angle);
+    node.userData.stage = stage;
+    node.userData.stageIndex = index;
+    node.userData.active = false;
+    return node;
+  });
+
+  const courier = addMesh(
+    group,
+    new THREE.OctahedronGeometry(0.105, 0),
+    luminousMaterial(THREE, PALETTE.white, {
+      opacity: 0.96,
+      emissiveIntensity: 1.8,
+      metalness: 0.12,
+      roughness: 0.1,
+    }),
+  );
+  courier.name = "ACTIVE_TRANSFORMER_STAGE_COURIER";
+  group.userData.activeStageIndex = null;
+  group.userData.activeStage = null;
+  return { group, rail, nodes, courier };
+}
+
 function updateLayerColors(statue, presentation) {
   const layers = statue.parts.layers;
   const active = new statue.THREE.Color(PALETTE.white);
@@ -642,16 +791,38 @@ function updateLayerColors(statue, presentation) {
   if (layers.instanceColor) layers.instanceColor.needsUpdate = true;
 }
 
-function updateExperts(statue, presentation) {
+function updateExperts(statue, presentation, activationY) {
   const experts = statue.parts.experts;
   if (experts.count === 0) return;
-  const illuminated = new Set(presentation.experts.illuminatedIndices);
+  const routingActive =
+    presentation.activation.stage === "feed-forward";
+  const routedIndices = routingActive
+    ? presentation.experts.illuminatedIndices
+    : [];
+  const illuminated = new Set(routedIndices);
   const active = new statue.THREE.Color(PALETTE.magenta);
   const dormant = new statue.THREE.Color(0x583b82);
   for (let index = 0; index < experts.count; index += 1) {
     experts.setColorAt(index, illuminated.has(index) ? active : dormant);
   }
   if (experts.instanceColor) experts.instanceColor.needsUpdate = true;
+  statue.parts.sharedExpert.visible =
+    routingActive && presentation.experts.sharedExpert;
+  statue.parts.expertRouteFan.visible =
+    routingActive && routedIndices.length > 0;
+  statue.parts.expertRouteFan.userData.routedExpertCount =
+    routingActive ? routedIndices.length : 0;
+  statue.parts.expertRoutes.forEach((route, index) => {
+    const expertIndex = routedIndices[index];
+    const endpoint =
+      statue.parts.expertPositions[expertIndex] ?? null;
+    route.visible = routingActive && endpoint !== null;
+    if (endpoint === null) return;
+    const positions = route.geometry.getAttribute("position");
+    positions.setXYZ(0, 0, activationY, 0);
+    positions.setXYZ(1, endpoint.x, endpoint.y, endpoint.z);
+    positions.needsUpdate = true;
+  });
 }
 
 export function applyStatuePresentation(statue, presentation) {
@@ -674,8 +845,8 @@ export function applyStatuePresentation(statue, presentation) {
       presentation.activation.stageIndex ?? 0
     ];
   updateLayerColors(statue, presentation);
-  updateExperts(statue, presentation);
   const activationY = statue.parts.activeLayer.position.y;
+  updateExperts(statue, presentation, activationY);
   statue.parts.activationCourier.position.y = activationY;
   statue.parts.activationCourier.visible =
     presentation.architecture.available;
@@ -683,6 +854,38 @@ export function applyStatuePresentation(statue, presentation) {
     statue.parts.activationPath.geometry.getAttribute("position");
   activationPositions.setY(1, activationY);
   activationPositions.needsUpdate = true;
+  const activeStageIndex = presentation.activation.stageIndex;
+  const activeStageNode =
+    activeStageIndex === null
+      ? null
+      : statue.parts.stageNodes[activeStageIndex];
+  statue.parts.stageCircuit.position.y = activationY;
+  statue.parts.stageCircuit.position.x = 1.45;
+  statue.parts.stageCircuit.position.z = 1.9;
+  statue.parts.stageCircuit.visible =
+    presentation.architecture.available && activeStageNode !== null;
+  statue.parts.stageCircuit.userData.activeStageIndex =
+    activeStageIndex;
+  statue.parts.stageCircuit.userData.activeStage =
+    presentation.activation.stage;
+  statue.parts.stageNodes.forEach((node, index) => {
+    const active = index === activeStageIndex;
+    const complete =
+      activeStageIndex !== null && index < activeStageIndex;
+    node.userData.active = active;
+    node.userData.complete = complete;
+    node.material.opacity = active ? 0.94 : complete ? 0.54 : 0.26;
+    node.material.emissiveIntensity = active
+      ? 1.55
+      : complete
+        ? 0.82
+        : 0.38;
+    node.scale.setScalar(active ? 1.38 : complete ? 0.98 : 0.82);
+  });
+  statue.parts.stageCourier.visible = activeStageNode !== null;
+  if (activeStageNode !== null) {
+    statue.parts.stageCourier.position.copy(activeStageNode.position);
+  }
 
   statue.parts.memory.userData.active =
     presentation.hardware.memory.active;
@@ -691,8 +894,8 @@ export function applyStatuePresentation(statue, presentation) {
   );
   statue.parts.memoryRings.forEach((ring, index) => {
     ring.material.opacity = presentation.hardware.memory.active
-      ? 0.34 - index * 0.065
-      : 0.08;
+      ? 0.23 - index * 0.04
+      : 0.05;
   });
 
   statue.parts.cpu.userData.dispatchPulse =
@@ -746,6 +949,21 @@ export function animateStatueGeometry(
   statue.parts.kernel.rotation.y = time * 0.08;
   statue.parts.activationCourier.rotation.x = time * 1.7;
   statue.parts.activationCourier.rotation.y = time * 2.1;
+  statue.parts.stageCircuit.rotation.y =
+    0.65 + Math.sin(time * 0.42) * 0.045;
+  statue.parts.stageCourier.rotation.x = time * 2.4;
+  statue.parts.stageCourier.rotation.y = time * 3.1;
+  statue.parts.sharedExpert.rotation.x = time * 0.48;
+  statue.parts.sharedExpert.rotation.y = time * 0.72;
+  statue.parts.expertRoutes.forEach((route, index) => {
+    route.material.opacity =
+      0.2 +
+      Math.max(0, Math.sin(time * 3.4 - index * 0.48)) * 0.32;
+  });
+  const stagePulse = reducedMotion
+    ? 1
+    : 1 + Math.sin(time * 7.2) * 0.16;
+  statue.parts.stageCourier.scale.setScalar(stagePulse);
   statue.parts.speculationBranches.forEach((branch, index) => {
     branch.material.opacity =
       0.18 + Math.max(0, Math.sin(time * 1.8 - index * 0.7)) * 0.34;
@@ -791,6 +1009,11 @@ export function createStatueGeometry(THREE, presentation) {
     presentation,
     body.group.userData.height,
   );
+  const expertRouteFan = createExpertRouteFan(
+    THREE,
+    presentation,
+    expertField.positions,
+  );
   const memory = createMemoryHalo(THREE);
   const hardware = createHardwareOrbitals(THREE);
   const glyph = createKernelGlyphs(THREE);
@@ -801,16 +1024,22 @@ export function createStatueGeometry(THREE, presentation) {
     THREE,
     body.group.userData.height,
   );
+  const stageCircuit = createTransformerStageCircuit(
+    THREE,
+    presentation.architecture.feedForwardKind === "dense",
+  );
 
   root.add(
     body.group,
     expertField.group,
+    expertRouteFan.group,
     memory.group,
     hardware.cpu,
     hardware.gpu,
     glyph.kernel,
     speculation.group,
     activationFlow.group,
+    stageCircuit.group,
     particles,
   );
   for (const ribbon of ribbons) root.add(ribbon.mesh);
@@ -824,6 +1053,9 @@ export function createStatueGeometry(THREE, presentation) {
       attentionAccents: body.attentionAccents,
       experts: expertField.experts,
       sharedExpert: expertField.shared,
+      expertPositions: expertField.positions,
+      expertRouteFan: expertRouteFan.group,
+      expertRoutes: expertRouteFan.routes,
       activeLayer: body.activeLayer,
       bodyHeight: body.group.userData.height,
       memory: memory.group,
@@ -840,6 +1072,10 @@ export function createStatueGeometry(THREE, presentation) {
       speculationBranches: speculation.branches,
       activationPath: activationFlow.path,
       activationCourier: activationFlow.courier,
+      stageCircuit: stageCircuit.group,
+      stageRail: stageCircuit.rail,
+      stageNodes: stageCircuit.nodes,
+      stageCourier: stageCircuit.courier,
       particles,
     },
     geometryIdentities() {

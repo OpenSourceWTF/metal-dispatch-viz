@@ -11,6 +11,7 @@ const KERNEL_FAMILY_PATTERNS = Object.freeze([
   ["normalization", /norm|layernorm|rms/i],
   ["routing", /router|routing|topk|expert|moe/i],
   ["activation", /silu|gelu|relu|sigmoid|activation|gate/i],
+  ["residual", /(?:^|_)(?:v{1,3}n?|g\d+)_?add/i],
   ["embedding-output", /embed|embedding|lm_head|vocab|logit|output/i],
   ["transfer-binding", /copy|blit|buffer|bind|transfer|upload|download/i],
 ]);

@@ -3,7 +3,10 @@ import test from "node:test";
 import * as THREE from "three";
 
 import { normalizeArchitecture } from "../src/observatory/architecture.js";
-import { buildStatueFrame } from "../src/observatory/statue-state.js";
+import {
+  buildStatueFrame,
+  TRANSFORMER_STAGES,
+} from "../src/observatory/statue-state.js";
 import {
   applyStatuePresentation,
   createStatueGeometry,
@@ -45,14 +48,15 @@ function presentation(architectureShape, {
   progress = 0,
   kernel = "exact_kernel",
   family = "attention",
+  frameCount = 1,
+  frameIndex = 0,
 } = {}) {
   return buildStatueFrame(
     {
       label: "Qwen checkpoint",
       architecture: architectureShape,
-      frames: [
-        {
-          index: 0,
+      frames: Array.from({ length: frameCount }, (_, index) => ({
+          index,
           progress,
           kernel,
           family,
@@ -67,8 +71,7 @@ function presentation(architectureShape, {
           bindingIntensity: 0.8,
           mathIntensity: 0.9,
           commandBufferChanged: true,
-        },
-      ],
+        })),
       model: {
         estimatedWeightGigabytes:
           architectureShape?.feedForward?.kind === "moe" ? 17.5 : 13.5,
@@ -79,7 +82,7 @@ function presentation(architectureShape, {
       },
       parallelism: { maxGpuCommandBuffers: 2 },
     },
-    0,
+    frameIndex,
   );
 }
 
@@ -121,6 +124,78 @@ test("frame updates reuse installed geometry and expose hardware activity", () =
   assert.equal(statue.parts.gpu.userData.active, true);
   assert.equal(statue.parts.cpu.userData.dispatchPulse, true);
   assert.equal(statue.parts.kernel.userData.exactName, "another_exact_kernel");
+
+  disposeStatueGeometry(statue);
+});
+
+test("active layer circuit advances through the complete transformer cycle", () => {
+  const shape = architecture({ layers: 64 });
+  const first = presentation(shape, {
+    frameCount: 64 * TRANSFORMER_STAGES.length + 1,
+    frameIndex: 0,
+  });
+  const statue = createStatueGeometry(THREE, first);
+  const identities = statue.geometryIdentities();
+
+  assert.equal(statue.parts.stageNodes.length, TRANSFORMER_STAGES.length);
+  assert.equal(statue.parts.stageCircuit.userData.activeStageIndex, 0);
+  assert.equal(statue.parts.stageNodes[0].userData.active, true);
+
+  const feedForward = presentation(shape, {
+    frameCount: 64 * TRANSFORMER_STAGES.length + 1,
+    frameIndex: 4,
+  });
+  applyStatuePresentation(statue, feedForward);
+
+  assert.deepEqual(statue.geometryIdentities(), identities);
+  assert.equal(statue.parts.stageCircuit.userData.activeStageIndex, 4);
+  assert.equal(statue.parts.stageCircuit.position.y, statue.parts.activeLayer.position.y);
+  assert.equal(statue.parts.stageNodes[0].userData.active, false);
+  assert.equal(statue.parts.stageNodes[4].userData.active, true);
+  assert.deepEqual(
+    statue.parts.stageCourier.position.toArray(),
+    statue.parts.stageNodes[4].position.toArray(),
+  );
+
+  disposeStatueGeometry(statue);
+});
+
+test("MoE routing appears only while feed-forward selects configured experts", () => {
+  const shape = architecture({ layers: 40, experts: 256 });
+  const frameCount = 40 * TRANSFORMER_STAGES.length + 1;
+  const attention = presentation(shape, {
+    frameCount,
+    frameIndex: 1,
+  });
+  const statue = createStatueGeometry(THREE, attention);
+  const identities = statue.geometryIdentities();
+
+  assert.equal(statue.parts.expertRoutes.length, 8);
+  assert.equal(statue.parts.expertRouteFan.visible, false);
+  assert.equal(statue.parts.sharedExpert.visible, false);
+
+  const feedForward = presentation(shape, {
+    frameCount,
+    frameIndex: 4,
+  });
+  applyStatuePresentation(statue, feedForward);
+
+  assert.deepEqual(statue.geometryIdentities(), identities);
+  assert.equal(statue.parts.expertRouteFan.visible, true);
+  assert.equal(statue.parts.expertRouteFan.userData.routedExpertCount, 8);
+  assert.equal(
+    statue.parts.expertRoutes.filter((route) => route.visible).length,
+    8,
+  );
+  assert.equal(statue.parts.sharedExpert.visible, true);
+
+  const residual = presentation(shape, {
+    frameCount,
+    frameIndex: 5,
+  });
+  applyStatuePresentation(statue, residual);
+  assert.equal(statue.parts.expertRouteFan.visible, false);
+  assert.equal(statue.parts.sharedExpert.visible, false);
 
   disposeStatueGeometry(statue);
 });
