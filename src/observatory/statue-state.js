@@ -184,6 +184,68 @@ function expertPresentation(architecture, activation) {
   };
 }
 
+function terminalPresentation(architecture, activation) {
+  if (!architecture.available) {
+    return {
+      phase: "unavailable",
+      input: {
+        visible: false,
+        progress: null,
+        hiddenSize: null,
+        evidence: "unavailable",
+      },
+      output: {
+        visible: false,
+        progress: null,
+        vocabularySize: null,
+        fieldEvidence: "unavailable",
+        selectionEvidence: "unavailable",
+      },
+    };
+  }
+
+  const terminalShare = 0.06;
+  const progress = activation.simulationProgress;
+  const inputVisible = progress <= terminalShare;
+  const outputVisible = progress >= 1 - terminalShare;
+  const vocabularyConfigured =
+    Number.isSafeInteger(architecture.vocabSize) &&
+    architecture.vocabSize > 0;
+  return {
+    phase: inputVisible
+      ? "input"
+      : outputVisible
+        ? "output"
+        : "model",
+    input: {
+      visible: inputVisible,
+      progress: inputVisible
+        ? clamp(progress / terminalShare, 0, 1)
+        : null,
+      hiddenSize: architecture.hiddenSize,
+      evidence: "configured",
+    },
+    output: {
+      visible: outputVisible && vocabularyConfigured,
+      progress:
+        outputVisible && vocabularyConfigured
+          ? clamp(
+              (progress - (1 - terminalShare)) / terminalShare,
+              0,
+              1,
+            )
+          : null,
+      vocabularySize: architecture.vocabSize,
+      fieldEvidence: vocabularyConfigured
+        ? "configured"
+        : "unavailable",
+      selectionEvidence: vocabularyConfigured
+        ? "simulated"
+        : "unavailable",
+    },
+  };
+}
+
 function gpuLaneCount(frame, model) {
   if (frame?.gridAvailable !== true) return 0;
   const grid = Array.isArray(frame.grid) ? frame.grid : [1, 1, 1];
@@ -280,6 +342,7 @@ export function buildStatueFrame(
     frameIndex: boundedIndex,
     architecture,
     activation,
+    terminals: terminalPresentation(architecture, activation),
     kernel,
     experts: expertPresentation(architecture, activation),
     hardware: hardwarePresentation(model, frame),

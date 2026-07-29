@@ -234,6 +234,49 @@ test("short-form playback separates model-depth travel from a readable block cyc
   assert.equal(secondCycle.activation.stageProgress, 0);
 });
 
+test("terminal choreography separates configured shape from a simulated next-token choice", () => {
+  const frames = Array.from({ length: 101 }, (_, index) =>
+    frame({
+      progress: index / 100,
+      index,
+    }),
+  );
+  const denseModel = model(denseArchitecture(), {
+    label: "Dense checkpoint",
+    frames,
+  });
+
+  const input = buildStatueFrame(denseModel, 0, {
+    transformerCycles: 3,
+  });
+  assert.equal(input.terminals.phase, "input");
+  assert.equal(
+    input.terminals.input.hiddenSize,
+    denseArchitecture().hiddenSize,
+  );
+  assert.equal(input.terminals.input.evidence, "configured");
+
+  const middle = buildStatueFrame(denseModel, 50, {
+    transformerCycles: 3,
+  });
+  assert.equal(middle.terminals.phase, "model");
+
+  const output = buildStatueFrame(denseModel, 100, {
+    transformerCycles: 3,
+  });
+  assert.equal(output.terminals.phase, "output");
+  assert.equal(
+    output.terminals.output.vocabularySize,
+    denseArchitecture().vocabSize,
+  );
+  assert.equal(output.terminals.output.fieldEvidence, "configured");
+  assert.equal(output.terminals.output.selectionEvidence, "simulated");
+  assert.doesNotMatch(
+    JSON.stringify(output.terminals),
+    /probability|tokenText|measuredSelection/i,
+  );
+});
+
 test("simulated traversal covers the model even when trace timestamps cluster", () => {
   const frames = Array.from({ length: 65 }, (_, index) =>
     frame({

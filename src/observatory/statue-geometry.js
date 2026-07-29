@@ -882,6 +882,152 @@ function createLayerBody(THREE, presentation) {
   };
 }
 
+function sampledDimensionCount(value, multiplier, minimum, maximum) {
+  if (!Number.isSafeInteger(value) || value <= 0) return 0;
+  return Math.min(
+    maximum,
+    Math.max(minimum, Math.round(Math.log2(value) * multiplier)),
+  );
+}
+
+function createTerminalFlow(
+  THREE,
+  presentation,
+  dimensions,
+  inputY,
+  outputY,
+) {
+  const group = groupFor(THREE);
+  group.name = "MODEL_TERMINAL_CHOREOGRAPHY";
+  const input = groupFor(THREE);
+  input.name = "CONFIGURED_INPUT_EXPANSION";
+  const output = groupFor(THREE);
+  output.name = "CONFIGURED_VOCABULARY_LOGIT_FIELD";
+  const hiddenSize = presentation.architecture.hiddenSize;
+  const vocabularySize = presentation.architecture.vocabSize;
+  const embeddingCount = sampledDimensionCount(
+    hiddenSize,
+    2,
+    12,
+    32,
+  );
+  const logitCount = sampledDimensionCount(
+    vocabularySize,
+    3,
+    24,
+    72,
+  );
+
+  const inputToken = addMesh(
+    input,
+    new THREE.DodecahedronGeometry(0.17, 0),
+    luminousMaterial(THREE, PALETTE.white, {
+      opacity: 0.82,
+      emissiveIntensity: 1.45,
+      metalness: 0.08,
+      roughness: 0.08,
+    }),
+    [0, inputY + 0.9, 0],
+  );
+  inputToken.name = "SIMULATED_INPUT_TOKEN";
+  inputToken.userData.evidence = "simulated";
+  inputToken.material.depthTest = false;
+  inputToken.renderOrder = 10;
+
+  const embeddingSignals = new THREE.InstancedMesh(
+    new THREE.OctahedronGeometry(0.052, 0),
+    luminousMaterial(THREE, PALETTE.cyan, {
+      opacity: 0.56,
+      emissiveIntensity: 0.94,
+      metalness: 0.08,
+      roughness: 0.08,
+    }),
+    Math.max(1, embeddingCount),
+  );
+  embeddingSignals.name = "CONFIGURED_HIDDEN_WIDTH_SAMPLES";
+  embeddingSignals.count = embeddingCount;
+  embeddingSignals.userData.representedDimension = hiddenSize;
+  embeddingSignals.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  embeddingSignals.material.depthTest = false;
+  embeddingSignals.renderOrder = 9;
+
+  const outputLogitSignals = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 0.018, 0.024),
+    luminousMaterial(THREE, PALETTE.amber, {
+      opacity: 0.2,
+      emissiveIntensity: 0.74,
+      metalness: 0.08,
+      roughness: 0.1,
+    }),
+    Math.max(1, logitCount),
+  );
+  outputLogitSignals.name = "CONFIGURED_VOCABULARY_SAMPLES";
+  outputLogitSignals.count = logitCount;
+  outputLogitSignals.userData.representedDimension = vocabularySize;
+  outputLogitSignals.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  outputLogitSignals.material.depthTest = false;
+  outputLogitSignals.renderOrder = 8;
+
+  const selectedToken = addMesh(
+    output,
+    new THREE.DodecahedronGeometry(0.18, 0),
+    luminousMaterial(THREE, PALETTE.white, {
+      opacity: 0.84,
+      emissiveIntensity: 1.5,
+      metalness: 0.08,
+      roughness: 0.08,
+    }),
+    [0, outputY, 0],
+  );
+  selectedToken.name = "SIMULATED_SELECTED_TOKEN";
+  selectedToken.userData.evidence = "simulated";
+  selectedToken.material.depthTest = false;
+  selectedToken.renderOrder = 10;
+
+  const embeddingTransform = new THREE.Object3D();
+  for (let index = 0; index < embeddingCount; index += 1) {
+    embeddingTransform.position.set(0, inputY + 0.9, 0);
+    embeddingTransform.scale.setScalar(0.001);
+    embeddingTransform.updateMatrix();
+    embeddingSignals.setMatrixAt(index, embeddingTransform.matrix);
+  }
+  embeddingSignals.instanceMatrix.needsUpdate = true;
+  const logitTransform = new THREE.Object3D();
+  for (let index = 0; index < logitCount; index += 1) {
+    logitTransform.position.set(0, outputY, 0);
+    logitTransform.scale.setScalar(0.001);
+    logitTransform.updateMatrix();
+    outputLogitSignals.setMatrixAt(index, logitTransform.matrix);
+  }
+  outputLogitSignals.instanceMatrix.needsUpdate = true;
+
+  input.add(embeddingSignals);
+  output.add(outputLogitSignals);
+  input.visible = false;
+  output.visible = false;
+  group.add(input, output);
+  group.userData.hiddenSize = hiddenSize;
+  group.userData.vocabularySize = vocabularySize;
+  group.userData.inputY = inputY;
+  group.userData.outputY = outputY;
+  group.userData.width = dimensions.width;
+  group.userData.inputTargetPhase = 0;
+  group.userData.inputDisplayPhase = 0;
+  group.userData.outputTargetPhase = 0;
+  group.userData.outputDisplayPhase = 0;
+  group.userData.embeddingTransform = embeddingTransform;
+  group.userData.logitTransform = logitTransform;
+  return {
+    group,
+    input,
+    output,
+    inputToken,
+    embeddingSignals,
+    outputLogitSignals,
+    selectedToken,
+  };
+}
+
 function createExpertField(THREE, presentation, dimensions) {
   const group = groupFor(THREE);
   group.name = "MOE_EXPERT_BANDS";
@@ -1701,6 +1847,133 @@ function animateThoughtCycle(
   core.rotation.y = -time * 0.58;
 }
 
+function applyTerminalFlow(statue, presentation) {
+  const flow = statue.parts.terminalFlow;
+  const inputVisible = presentation.terminals.input.visible;
+  const outputVisible = presentation.terminals.output.visible;
+  if (inputVisible && flow.userData.inputVisible !== true) {
+    flow.userData.inputDisplayPhase = 0;
+  }
+  if (outputVisible && flow.userData.outputVisible !== true) {
+    flow.userData.outputDisplayPhase = 0;
+  }
+  flow.userData.inputVisible = inputVisible;
+  flow.userData.outputVisible = outputVisible;
+  flow.userData.inputTargetPhase =
+    presentation.terminals.input.progress ?? 0;
+  flow.userData.outputTargetPhase =
+    presentation.terminals.output.progress ?? 0;
+  statue.parts.inputExpansion.visible = inputVisible;
+  statue.parts.inputToken.visible = inputVisible;
+  statue.parts.embeddingSignals.visible = inputVisible;
+  statue.parts.outputLogits.visible = outputVisible;
+  statue.parts.outputLogitSignals.visible = outputVisible;
+  statue.parts.selectedToken.visible = outputVisible;
+}
+
+function animateTerminalFlow(
+  statue,
+  time,
+  reducedMotion,
+  deltaSeconds,
+) {
+  const flow = statue.parts.terminalFlow;
+  const width = flow.userData.width;
+
+  if (flow.userData.inputVisible) {
+    flow.userData.inputDisplayPhase = reducedMotion
+      ? flow.userData.inputTargetPhase
+      : statue.THREE.MathUtils.damp(
+          flow.userData.inputDisplayPhase,
+          flow.userData.inputTargetPhase,
+          10,
+          deltaSeconds,
+        );
+    const phase = flow.userData.inputDisplayPhase;
+    const eased = phase * phase * (3 - 2 * phase);
+    const inputY = flow.userData.inputY;
+    const token = statue.parts.inputToken;
+    token.position.set(
+      0,
+      inputY + 0.9 - eased * 0.82,
+      0.12 * Math.sin(phase * Math.PI),
+    );
+    token.scale.setScalar(1 - eased * 0.36);
+    token.rotation.x = time * 0.72;
+    token.rotation.y = -time * 0.9;
+    const signals = statue.parts.embeddingSignals;
+    const transform = flow.userData.embeddingTransform;
+    const radius = width * (0.025 + eased * 0.72);
+    for (let index = 0; index < signals.count; index += 1) {
+      const angle = index / Math.max(1, signals.count) * Math.PI * 2;
+      const helix = angle + eased * 0.68;
+      transform.position.set(
+        Math.cos(helix) * radius,
+        inputY + 0.76 - eased * 0.7,
+        Math.sin(helix) * radius * 0.78,
+      );
+      transform.rotation.set(
+        angle + phase * Math.PI,
+        phase * Math.PI * 2 - angle,
+        angle,
+      );
+      transform.scale.setScalar(0.42 + eased * 0.54);
+      transform.updateMatrix();
+      signals.setMatrixAt(index, transform.matrix);
+    }
+    signals.instanceMatrix.needsUpdate = true;
+  }
+
+  if (flow.userData.outputVisible) {
+    flow.userData.outputDisplayPhase = reducedMotion
+      ? flow.userData.outputTargetPhase
+      : statue.THREE.MathUtils.damp(
+          flow.userData.outputDisplayPhase,
+          flow.userData.outputTargetPhase,
+          10,
+          deltaSeconds,
+        );
+    const phase = flow.userData.outputDisplayPhase;
+    const eased = phase * phase * (3 - 2 * phase);
+    const outputY = flow.userData.outputY;
+    const signals = statue.parts.outputLogitSignals;
+    const transform = flow.userData.logitTransform;
+    const length = width * (0.12 + eased * 0.74);
+    for (let index = 0; index < signals.count; index += 1) {
+      const angle = index / Math.max(1, signals.count) * Math.PI * 2;
+      const wave =
+        Math.sin(angle * 3 + phase * Math.PI * 2) * 0.1 * eased;
+      transform.position.set(
+        Math.cos(angle) * length * 0.5,
+        outputY + wave,
+        Math.sin(angle) * length * 0.39,
+      );
+      transform.rotation.set(0, -angle, wave * 0.8);
+      transform.scale.set(length, 0.72 + eased * 0.28, 1);
+      transform.updateMatrix();
+      signals.setMatrixAt(index, transform.matrix);
+    }
+    signals.instanceMatrix.needsUpdate = true;
+
+    const selection = Math.min(
+      1,
+      Math.max(0, (phase - 0.42) / 0.58),
+    );
+    const token = statue.parts.selectedToken;
+    token.position.set(
+      0,
+      outputY - 0.08 - selection * 0.94,
+      0.1 * Math.sin(selection * Math.PI),
+    );
+    token.scale.setScalar(0.36 + selection * 0.82);
+    token.material.opacity = 0.24 + selection * 0.66;
+    token.rotation.x = time * 0.68;
+    token.rotation.y = time * 0.92;
+    signals.material.opacity =
+      0.12 + eased * 0.14 * (1 - selection * 0.48);
+  }
+}
+
 function updateLayerColors(statue, presentation) {
   const layers = statue.parts.layers;
   const activeLayerIndex = presentation.activation.layerIndex;
@@ -1897,6 +2170,7 @@ export function applyStatuePresentation(statue, presentation) {
   updateStageFocus(statue, presentation);
   updateExperts(statue, presentation, activationY);
   applyThoughtCycle(statue, presentation);
+  applyTerminalFlow(statue, presentation);
   statue.parts.activationCourier.position.y = 0;
   statue.parts.activationCourier.visible = false;
 
@@ -1984,6 +2258,7 @@ export function animateStatueGeometry(
   statue.parts.kernel.rotation.z = Math.sin(time * 0.42) * 0.08;
   statue.parts.kernel.rotation.y = time * 0.08;
   animateThoughtCycle(statue, time, reducedMotion, deltaSeconds);
+  animateTerminalFlow(statue, time, reducedMotion, deltaSeconds);
   const activeCurve = statue.parts.activationFlow.userData.activeCurve;
   if (activeCurve && statue.parts.activationCourier.visible) {
     activeCurve.getPoint(
@@ -2040,6 +2315,14 @@ export function createStatueGeometry(THREE, presentation) {
   root.name = "SILICON_OBSERVATORY_STATUE";
 
   const body = createLayerBody(THREE, presentation);
+  const terminalFlow = createTerminalFlow(
+    THREE,
+    presentation,
+    body.group.userData.dimensions,
+    body.input.position.y,
+    body.output.position.y,
+  );
+  body.scrollGroup.add(terminalFlow.group);
   const expertField = createExpertField(
     THREE,
     presentation,
@@ -2115,6 +2398,13 @@ export function createStatueGeometry(THREE, presentation) {
         pendingFull: new THREE.Color(0x252b54),
       },
       residualProgress: body.residualProgress,
+      terminalFlow: terminalFlow.group,
+      inputExpansion: terminalFlow.input,
+      inputToken: terminalFlow.inputToken,
+      embeddingSignals: terminalFlow.embeddingSignals,
+      outputLogits: terminalFlow.output,
+      outputLogitSignals: terminalFlow.outputLogitSignals,
+      selectedToken: terminalFlow.selectedToken,
       bodyHeight: body.group.userData.height,
       bodyDimensions: body.group.userData.dimensions,
       memory: memory.group,

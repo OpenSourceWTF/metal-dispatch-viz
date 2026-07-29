@@ -15,12 +15,16 @@ import {
   disposeStatueGeometry,
 } from "../src/observatory/statue-geometry.js";
 
-function architecture({ layers = 64, experts = null } = {}) {
+function architecture({
+  layers = 64,
+  experts = null,
+  vocabulary = 248320,
+} = {}) {
   return normalizeArchitecture({
     model_type: experts ? "qwen3_5_moe_text" : "qwen3_5_text",
     num_hidden_layers: layers,
     hidden_size: experts ? 2048 : 5120,
-    vocab_size: 248320,
+    vocab_size: vocabulary,
     layer_type_pattern: [
       "linear_attention",
       "linear_attention",
@@ -125,6 +129,75 @@ test("the configured transformer column flows from its top input to bottom outpu
   );
 
   disposeStatueGeometry(statue);
+});
+
+test("the real top and bottom apertures expand one token and condense one vocabulary choice", () => {
+  const shape = architecture({ layers: 64 });
+  const frameCount = 101;
+  const statue = createStatueGeometry(
+    THREE,
+    presentation(shape, { frameCount, frameIndex: 0 }),
+  );
+  const identities = statue.geometryIdentities();
+
+  assert.ok(
+    statue.parts.terminalFlow,
+    "the configured model must install one reusable terminal choreography",
+  );
+  assert.equal(
+    statue.parts.terminalFlow.userData.hiddenSize,
+    shape.hiddenSize,
+  );
+  assert.equal(
+    statue.parts.terminalFlow.userData.vocabularySize,
+    shape.vocabSize,
+  );
+  assert.equal(statue.parts.inputToken.visible, true);
+  assert.equal(statue.parts.outputLogits.visible, false);
+  assert.ok(statue.parts.embeddingSignals.count > 0);
+  assert.ok(
+    statue.parts.outputLogitSignals.count >
+      statue.parts.embeddingSignals.count,
+    "a larger vocabulary must open into a denser sampled output field",
+  );
+
+  applyStatuePresentation(
+    statue,
+    presentation(shape, { frameCount, frameIndex: 50 }),
+  );
+  assert.equal(statue.parts.inputToken.visible, false);
+  assert.equal(statue.parts.outputLogits.visible, false);
+
+  applyStatuePresentation(
+    statue,
+    presentation(shape, {
+      frameCount,
+      frameIndex: frameCount - 1,
+    }),
+  );
+  assert.deepEqual(statue.geometryIdentities(), identities);
+  assert.equal(statue.parts.outputLogits.visible, true);
+  assert.equal(statue.parts.selectedToken.visible, true);
+  assert.equal(
+    statue.parts.selectedToken.userData.evidence,
+    "simulated",
+  );
+
+  const smallerVocabulary = createStatueGeometry(
+    THREE,
+    presentation(
+      architecture({ layers: 64, vocabulary: 32_000 }),
+      { frameCount, frameIndex: frameCount - 1 },
+    ),
+  );
+  assert.ok(
+    smallerVocabulary.parts.outputLogitSignals.count <
+      statue.parts.outputLogitSignals.count,
+    "output density must be derived from configuration rather than a model name",
+  );
+
+  disposeStatueGeometry(statue);
+  disposeStatueGeometry(smallerVocabulary);
 });
 
 test("frame updates reuse installed geometry and expose hardware activity", () => {
