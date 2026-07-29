@@ -185,6 +185,86 @@ test("every layer retains the complete transformer stage sequence while the colu
   disposeStatueGeometry(statue);
 });
 
+test("one focal cross-section opens while the complete transformer column remains quiet context", () => {
+  const shape = architecture({ layers: 64 });
+  const frameCount = 64 * TRANSFORMER_STAGES.length + 1;
+  const statue = createStatueGeometry(
+    THREE,
+    presentation(shape, { frameCount, frameIndex: 0 }),
+  );
+
+  assert.ok(
+    Array.isArray(statue.parts.focalStages),
+    "the active layer must preallocate its stage cross-sections",
+  );
+  assert.equal(statue.parts.focalStages.length, TRANSFORMER_STAGES.length);
+  assert.equal(
+    statue.parts.focalStages.filter(({ group }) => group.visible).length,
+    1,
+  );
+  assert.equal(
+    statue.parts.focalStages.find(({ group }) => group.visible).stage,
+    "pre-attention-norm",
+  );
+
+  const dormant = new THREE.Color();
+  const focused = new THREE.Color();
+  statue.parts.stageBands[0].mesh.getColorAt(20, dormant);
+  statue.parts.stageBands[0].mesh.getColorAt(0, focused);
+  assert.ok(
+    focused.getHSL({}).l > dormant.getHSL({}).l * 2,
+    "the active layer must be materially brighter than distant context",
+  );
+
+  const identities = statue.geometryIdentities();
+  applyStatuePresentation(
+    statue,
+    presentation(shape, { frameCount, frameIndex: 4 }),
+  );
+  assert.deepEqual(statue.geometryIdentities(), identities);
+  assert.equal(
+    statue.parts.focalStages.find(({ group }) => group.visible).stage,
+    "feed-forward",
+  );
+  assert.equal(
+    statue.parts.activationPaths.filter(({ path }) => path.visible).length,
+    1,
+  );
+
+  disposeStatueGeometry(statue);
+});
+
+test("the focal attention cross-section carries exact configured head geometry", () => {
+  const shape = architecture({ layers: 64 });
+  const frameCount = 64 * TRANSFORMER_STAGES.length * 2 + 1;
+  const fullAttentionFrame =
+    (3 * TRANSFORMER_STAGES.length + 1) * 2 + 1;
+  const statue = createStatueGeometry(
+    THREE,
+    presentation(shape, {
+      frameCount,
+      frameIndex: fullAttentionFrame,
+    }),
+  );
+
+  assert.equal(
+    statue.parts.fullAttention.userData.queryHeadCount,
+    shape.attention.queryHeads,
+  );
+  assert.equal(
+    statue.parts.fullAttention.userData.keyValueHeadCount,
+    shape.attention.keyValueHeads,
+  );
+  assert.equal(
+    statue.parts.fullAttention.userData.layerType,
+    "full_attention",
+  );
+  assert.equal(statue.parts.fullAttention.visible, true);
+  assert.equal(statue.parts.linearAttention.visible, false);
+
+  disposeStatueGeometry(statue);
+});
+
 test("MoE routing appears only while feed-forward selects configured experts", () => {
   const shape = architecture({ layers: 40, experts: 256 });
   const stageCount = transformerStagesForArchitecture(shape).length;

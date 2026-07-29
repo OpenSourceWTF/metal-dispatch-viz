@@ -27,6 +27,12 @@ const GLYPH_FAMILIES = Object.freeze([
   "other",
 ]);
 
+const STAGE_FOCUS_COLORS = Object.freeze({
+  dormant: 0x2e3b46,
+  layer: 0x8294a0,
+  active: 0xffffff,
+});
+
 function luminousMaterial(
   THREE,
   color,
@@ -106,7 +112,7 @@ function stageAppearance(stage, feedForwardKind) {
   if (stage.includes("norm")) {
     return {
       color: PALETTE.cyan,
-      opacity: 0.055,
+      opacity: 0.025,
       radius: 0.76,
       tube: 0.008,
     };
@@ -114,7 +120,7 @@ function stageAppearance(stage, feedForwardKind) {
   if (stage === "attention") {
     return {
       color: PALETTE.attention,
-      opacity: 0.18,
+      opacity: 0.09,
       radius: 1.08,
       tube: 0.015,
     };
@@ -122,7 +128,7 @@ function stageAppearance(stage, feedForwardKind) {
   if (stage === "router") {
     return {
       color: PALETTE.magenta,
-      opacity: 0.16,
+      opacity: 0.075,
       radius: 0.96,
       tube: 0.014,
     };
@@ -131,14 +137,14 @@ function stageAppearance(stage, feedForwardKind) {
     return {
       color:
         feedForwardKind === "moe" ? PALETTE.violet : PALETTE.amber,
-      opacity: 0.16,
+      opacity: 0.075,
       radius: feedForwardKind === "moe" ? 1.12 : 1.02,
       tube: 0.015,
     };
   }
   return {
     color: PALETTE.white,
-    opacity: 0.05,
+    opacity: 0.022,
     radius: 0.9,
     tube: 0.007,
   };
@@ -147,6 +153,7 @@ function stageAppearance(stage, feedForwardKind) {
 function createStageBands(THREE, presentation, dimensions) {
   const layerCount = presentation.architecture.layerCount;
   const transform = new THREE.Object3D();
+  const dormant = new THREE.Color(STAGE_FOCUS_COLORS.dormant);
   return dimensions.stages.map((stage, stageIndex) => {
     const appearance = stageAppearance(
       stage,
@@ -161,7 +168,7 @@ function createStageBands(THREE, presentation, dimensions) {
       ),
       luminousMaterial(THREE, appearance.color, {
         opacity: appearance.opacity,
-        emissiveIntensity: stage.includes("residual") ? 0.42 : 0.7,
+        emissiveIntensity: stage.includes("residual") ? 0.04 : 0.08,
         metalness: 0.2,
         roughness: 0.15,
       }),
@@ -189,10 +196,416 @@ function createStageBands(THREE, presentation, dimensions) {
       );
       transform.updateMatrix();
       mesh.setMatrixAt(layerIndex, transform.matrix);
+      mesh.setColorAt(layerIndex, dormant);
     }
     mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) {
+      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceColor.needsUpdate = true;
+    }
     return { mesh, stage, stageIndex };
   });
+}
+
+function createLineSegments(
+  THREE,
+  positions,
+  color,
+  opacity,
+  name,
+) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.BufferAttribute(new Float32Array(positions), 3),
+  );
+  const line = new THREE.LineSegments(
+    geometry,
+    lineMaterial(THREE, color, opacity),
+  );
+  line.name = name;
+  return line;
+}
+
+function createNormCrossSection(THREE, dimensions, name) {
+  const group = groupFor(THREE);
+  group.name = name;
+  [0.62, 0.88].forEach((ratio, index) => {
+    const ring = addMesh(
+      group,
+      new THREE.TorusGeometry(
+        dimensions.width * ratio,
+        index === 0 ? 0.018 : 0.012,
+        6,
+        72,
+      ),
+      luminousMaterial(THREE, PALETTE.white, {
+        opacity: index === 0 ? 0.62 : 0.34,
+        emissiveIntensity: index === 0 ? 1.5 : 0.86,
+        metalness: 0.14,
+        roughness: 0.12,
+      }),
+    );
+    ring.rotation.x = Math.PI / 2;
+  });
+  return group;
+}
+
+function createResidualCrossSection(THREE, dimensions, name) {
+  const group = groupFor(THREE);
+  group.name = name;
+  const radius = dimensions.width * 0.68;
+  const rails = createLineSegments(
+    THREE,
+    [
+      0, 0.58, 0,
+      -radius, 0.2, 0.08,
+      -radius, 0.2, 0.08,
+      0, -0.58, 0,
+      0, 0.58, 0,
+      radius, 0.2, -0.08,
+      radius, 0.2, -0.08,
+      0, -0.58, 0,
+    ],
+    PALETTE.white,
+    0.64,
+    `${name}_RAILS`,
+  );
+  group.add(rails);
+  return group;
+}
+
+function createFullAttentionCrossSection(
+  THREE,
+  presentation,
+  dimensions,
+) {
+  const group = groupFor(THREE);
+  group.name = "FOCAL_FULL_ATTENTION";
+  group.userData.layerType = "full_attention";
+  const queryHeadCount = Math.max(
+    1,
+    presentation.architecture.attention?.queryHeads ?? 1,
+  );
+  const keyValueHeadCount = Math.max(
+    1,
+    presentation.architecture.attention?.keyValueHeads ?? 1,
+  );
+  group.userData.queryHeadCount = queryHeadCount;
+  group.userData.keyValueHeadCount = keyValueHeadCount;
+  const outerRadius = dimensions.width * 0.98;
+  const hubRadius = dimensions.width * 0.34;
+  const positions = [];
+  for (let index = 0; index < queryHeadCount; index += 1) {
+    const queryAngle = index / queryHeadCount * Math.PI * 2;
+    const hubIndex =
+      Math.floor(index * keyValueHeadCount / queryHeadCount);
+    const hubAngle = hubIndex / keyValueHeadCount * Math.PI * 2;
+    positions.push(
+      Math.cos(queryAngle) * outerRadius,
+      0.32,
+      Math.sin(queryAngle) * outerRadius,
+      Math.cos(hubAngle) * hubRadius,
+      -0.28,
+      Math.sin(hubAngle) * hubRadius,
+    );
+  }
+  group.add(
+    createLineSegments(
+      THREE,
+      positions,
+      PALETTE.attention,
+      0.66,
+      "CONFIGURED_QUERY_HEAD_STRANDS",
+    ),
+  );
+  const hubs = new THREE.InstancedMesh(
+    new THREE.OctahedronGeometry(0.065, 0),
+    luminousMaterial(THREE, PALETTE.white, {
+      opacity: 0.72,
+      emissiveIntensity: 1.6,
+      metalness: 0.12,
+      roughness: 0.1,
+    }),
+    keyValueHeadCount,
+  );
+  hubs.count = keyValueHeadCount;
+  hubs.name = "CONFIGURED_KV_HEAD_HUBS";
+  const transform = new THREE.Object3D();
+  for (let index = 0; index < keyValueHeadCount; index += 1) {
+    const angle = index / keyValueHeadCount * Math.PI * 2;
+    transform.position.set(
+      Math.cos(angle) * hubRadius,
+      -0.28,
+      Math.sin(angle) * hubRadius,
+    );
+    transform.updateMatrix();
+    hubs.setMatrixAt(index, transform.matrix);
+  }
+  hubs.instanceMatrix.needsUpdate = true;
+  group.add(hubs);
+  const ring = addMesh(
+    group,
+    new THREE.TorusGeometry(outerRadius, 0.018, 6, 96),
+    luminousMaterial(THREE, PALETTE.attention, {
+      opacity: 0.5,
+      emissiveIntensity: 1.2,
+      metalness: 0.15,
+      roughness: 0.12,
+    }),
+  );
+  ring.rotation.x = Math.PI / 2;
+  return group;
+}
+
+function directionalHeadSegments(
+  count,
+  outerRadius,
+  innerRadius,
+  direction,
+) {
+  const positions = [];
+  for (let index = 0; index < count; index += 1) {
+    const angle = index / count * Math.PI * 2;
+    const shifted = angle + direction * 0.42;
+    positions.push(
+      Math.cos(angle) * outerRadius,
+      direction > 0 ? 0.36 : 0.08,
+      Math.sin(angle) * outerRadius,
+      Math.cos(shifted) * innerRadius,
+      direction > 0 ? -0.08 : -0.36,
+      Math.sin(shifted) * innerRadius,
+    );
+  }
+  return positions;
+}
+
+function createLinearAttentionCrossSection(
+  THREE,
+  presentation,
+  dimensions,
+) {
+  const group = groupFor(THREE);
+  group.name = "FOCAL_LINEAR_ATTENTION";
+  group.userData.layerType = "linear_attention";
+  const keyHeadCount = Math.max(
+    1,
+    presentation.architecture.linearAttention?.keyHeads ?? 1,
+  );
+  const valueHeadCount = Math.max(
+    1,
+    presentation.architecture.linearAttention?.valueHeads ?? 1,
+  );
+  group.userData.keyHeadCount = keyHeadCount;
+  group.userData.valueHeadCount = valueHeadCount;
+  const outerRadius = dimensions.width * 0.94;
+  const innerRadius = dimensions.width * 0.28;
+  group.add(
+    createLineSegments(
+      THREE,
+      directionalHeadSegments(
+        keyHeadCount,
+        outerRadius,
+        innerRadius,
+        1,
+      ),
+      PALETTE.cyan,
+      0.6,
+      "CONFIGURED_LINEAR_KEY_HEADS",
+    ),
+    createLineSegments(
+      THREE,
+      directionalHeadSegments(
+        valueHeadCount,
+        innerRadius,
+        outerRadius,
+        -1,
+      ),
+      PALETTE.blue,
+      0.42,
+      "CONFIGURED_LINEAR_VALUE_HEADS",
+    ),
+  );
+  const ring = addMesh(
+    group,
+    new THREE.TorusGeometry(outerRadius, 0.016, 6, 96),
+    luminousMaterial(THREE, PALETTE.cyan, {
+      opacity: 0.42,
+      emissiveIntensity: 1.1,
+      metalness: 0.12,
+      roughness: 0.1,
+    }),
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.rotation.z = 0.18;
+  return group;
+}
+
+function createRouterCrossSection(THREE, presentation, dimensions) {
+  const group = groupFor(THREE);
+  group.name = "FOCAL_ROUTER";
+  const fanout = Math.max(
+    0,
+    presentation.architecture.feedForward?.expertsPerToken ?? 0,
+  );
+  group.userData.configuredFanout = fanout;
+  const radius = dimensions.width * 0.72;
+  const positions = [];
+  for (let index = 0; index < fanout; index += 1) {
+    const angle = index / fanout * Math.PI * 2;
+    positions.push(
+      0, 0.28, 0,
+      Math.cos(angle) * radius, -0.24, Math.sin(angle) * radius,
+    );
+  }
+  group.add(
+    createLineSegments(
+      THREE,
+      positions,
+      PALETTE.magenta,
+      0.68,
+      "CONFIGURED_ROUTER_GATES",
+    ),
+  );
+  const ring = addMesh(
+    group,
+    new THREE.TorusGeometry(radius, 0.024, 6, 72),
+    luminousMaterial(THREE, PALETTE.magenta, {
+      opacity: 0.54,
+      emissiveIntensity: 1.4,
+      metalness: 0.12,
+      roughness: 0.1,
+    }),
+  );
+  ring.rotation.x = Math.PI / 2;
+  return group;
+}
+
+function createFeedForwardCrossSection(
+  THREE,
+  presentation,
+  dimensions,
+) {
+  const group = groupFor(THREE);
+  group.name = "FOCAL_FEED_FORWARD";
+  const dense =
+    presentation.architecture.feedForward?.kind !== "moe";
+  group.userData.kind = dense ? "dense" : "moe";
+  const hiddenSize = Math.max(
+    1,
+    presentation.architecture.hiddenSize ?? 1,
+  );
+  const intermediateSize = Math.max(
+    1,
+    presentation.architecture.feedForward?.intermediateSize ?? hiddenSize,
+  );
+  const expansionRatio = intermediateSize / hiddenSize;
+  group.userData.expansionRatio = expansionRatio;
+  const lobeScale = Math.min(
+    1.34,
+    Math.max(0.72, 0.72 + Math.log2(expansionRatio + 1) * 0.18),
+  );
+  const color = dense ? PALETTE.amber : PALETTE.violet;
+  [-1, 1].forEach((side) => {
+    const lobe = addMesh(
+      group,
+      new THREE.SphereGeometry(
+        dimensions.width * 0.34,
+        Math.max(12, dimensions.facets),
+        8,
+      ),
+      luminousMaterial(THREE, color, {
+        opacity: dense ? 0.3 : 0.24,
+        emissiveIntensity: 1.1,
+        metalness: 0.2,
+        roughness: 0.14,
+        wireframe: true,
+      }),
+      [side * dimensions.width * 0.48, 0, 0],
+    );
+    lobe.scale.set(lobeScale, 0.72, 0.72);
+  });
+  group.add(
+    createLineSegments(
+      THREE,
+      [
+        0, 0.58, 0,
+        -dimensions.width * 0.48, 0.12, 0,
+        0, 0.58, 0,
+        dimensions.width * 0.48, 0.12, 0,
+        -dimensions.width * 0.48, -0.12, 0,
+        0, -0.58, 0,
+        dimensions.width * 0.48, -0.12, 0,
+        0, -0.58, 0,
+      ],
+      color,
+      0.62,
+      "FEED_FORWARD_GATE_UP_DOWN",
+    ),
+  );
+  return group;
+}
+
+function createFocalStageCrossSections(
+  THREE,
+  presentation,
+  dimensions,
+  activeLayer,
+) {
+  const fullAttention = createFullAttentionCrossSection(
+    THREE,
+    presentation,
+    dimensions,
+  );
+  const linearAttention = createLinearAttentionCrossSection(
+    THREE,
+    presentation,
+    dimensions,
+  );
+  const attention = groupFor(THREE);
+  attention.name = "FOCAL_ATTENTION";
+  attention.add(fullAttention, linearAttention);
+  const byStage = {
+    "pre-attention-norm": () =>
+      createNormCrossSection(
+        THREE,
+        dimensions,
+        "FOCAL_PRE_ATTENTION_NORM",
+      ),
+    attention: () => attention,
+    "attention-residual": () =>
+      createResidualCrossSection(
+        THREE,
+        dimensions,
+        "FOCAL_ATTENTION_RESIDUAL",
+      ),
+    "pre-feed-forward-norm": () =>
+      createNormCrossSection(
+        THREE,
+        dimensions,
+        "FOCAL_PRE_FEED_FORWARD_NORM",
+      ),
+    router: () =>
+      createRouterCrossSection(THREE, presentation, dimensions),
+    "feed-forward": () =>
+      createFeedForwardCrossSection(THREE, presentation, dimensions),
+    "feed-forward-residual": () =>
+      createResidualCrossSection(
+        THREE,
+        dimensions,
+        "FOCAL_FEED_FORWARD_RESIDUAL",
+      ),
+  };
+  const focalStages = dimensions.stages.map((stage) => {
+    const group = byStage[stage]();
+    group.visible = false;
+    group.userData.stage = stage;
+    activeLayer.add(group);
+    return { stage, group };
+  });
+  fullAttention.visible = false;
+  linearAttention.visible = false;
+  return { focalStages, fullAttention, linearAttention };
 }
 
 function createLayerBody(THREE, presentation) {
@@ -211,8 +624,8 @@ function createLayerBody(THREE, presentation) {
     1,
   );
   const material = luminousMaterial(THREE, PALETTE.cyan, {
-    opacity: 0.018,
-    emissiveIntensity: 0.26,
+    opacity: 0.026,
+    emissiveIntensity: 0.2,
     metalness: 0.58,
     roughness: 0.18,
   });
@@ -237,8 +650,8 @@ function createLayerBody(THREE, presentation) {
       1,
     ),
     luminousMaterial(THREE, PALETTE.attention, {
-      opacity: 0.065,
-      emissiveIntensity: 0.34,
+      opacity: 0.04,
+      emissiveIntensity: 0.14,
       metalness: 0.28,
       roughness: 0.16,
     }),
@@ -291,8 +704,8 @@ function createLayerBody(THREE, presentation) {
   );
 
   const coreMaterial = luminousMaterial(THREE, PALETTE.blue, {
-    opacity: 0.055,
-    emissiveIntensity: 0.48,
+    opacity: 0.07,
+    emissiveIntensity: 0.42,
     metalness: 0.8,
     roughness: 0.18,
     wireframe: true,
@@ -341,6 +754,12 @@ function createLayerBody(THREE, presentation) {
   );
   scannerRing.rotation.x = Math.PI / 2;
   scannerRing.name = "ACTIVE_SCANNING_RING";
+  const focal = createFocalStageCrossSections(
+    THREE,
+    presentation,
+    dimensions,
+    activeLayer,
+  );
   group.add(activeLayer);
 
   const input = addMesh(
@@ -394,6 +813,9 @@ function createLayerBody(THREE, presentation) {
     stageBands,
     core,
     activeLayer,
+    focalStages: focal.focalStages,
+    fullAttention: focal.fullAttention,
+    linearAttention: focal.linearAttention,
     input,
     output,
   };
@@ -415,8 +837,8 @@ function createExpertField(THREE, presentation, dimensions) {
     0.085,
   );
   const material = luminousMaterial(THREE, PALETTE.violet, {
-    opacity: 0.1,
-    emissiveIntensity: 0.36,
+    opacity: 0.045,
+    emissiveIntensity: 0.12,
     metalness: 0.25,
     roughness: 0.28,
   });
@@ -681,16 +1103,16 @@ function createSpeculationBranches(THREE) {
     const side = index % 2 === 0 ? 1 : -1;
     const tier = Math.floor(index / 2);
     const points = [
-      new THREE.Vector3(0, 4.2, 0),
+      new THREE.Vector3(0, 0.46, 0),
       new THREE.Vector3(
-        side * (1.2 + tier * 0.35),
-        4.9 + tier * 0.18,
-        0.4 + tier * 0.24,
+        side * (0.3 + tier * 0.12),
+        0.08 + tier * 0.04,
+        0.12 + tier * 0.08,
       ),
       new THREE.Vector3(
-        side * (2.2 + tier * 0.52),
-        5.65 + tier * 0.28,
-        0.8 + tier * 0.36,
+        side * (0.62 + tier * 0.16),
+        -0.42 - tier * 0.06,
+        0.24 + tier * 0.1,
       ),
     ];
     const curve = new THREE.CatmullRomCurve3(points);
@@ -873,26 +1295,81 @@ function createParticleField(THREE) {
   return points;
 }
 
-function createActivationFlow(THREE) {
+function activationCurvePoints(THREE, stage, width) {
+  const radius = width * 0.64;
+  const coordinates = {
+    "pre-attention-norm": [
+      [0, 0.72, 0],
+      [0.08, 0.18, 0],
+      [0, -0.72, 0],
+    ],
+    attention: [
+      [0, 0.72, 0],
+      [-radius * 0.42, 0.34, 0.16],
+      [-radius * 0.68, 0, 0.24],
+      [radius * 0.38, -0.34, 0.14],
+      [0, -0.72, 0],
+    ],
+    "attention-residual": [
+      [0, 0.72, 0],
+      [radius * 0.58, 0.28, -0.06],
+      [radius * 0.58, -0.28, -0.06],
+      [0, -0.72, 0],
+    ],
+    "pre-feed-forward-norm": [
+      [0, 0.72, 0],
+      [-0.08, 0.18, 0],
+      [0, -0.72, 0],
+    ],
+    router: [
+      [0, 0.72, 0],
+      [0, 0.28, 0],
+      [radius * 0.32, 0, 0.14],
+      [0, -0.28, 0],
+      [0, -0.72, 0],
+    ],
+    "feed-forward": [
+      [0, 0.72, 0],
+      [-radius * 0.7, 0.28, 0.14],
+      [-radius * 0.58, -0.24, -0.12],
+      [0, -0.72, 0],
+    ],
+    "feed-forward-residual": [
+      [0, 0.72, 0],
+      [-radius * 0.58, 0.28, 0.06],
+      [-radius * 0.58, -0.28, 0.06],
+      [0, -0.72, 0],
+    ],
+  };
+  return coordinates[stage].map(
+    ([x, y, z]) => new THREE.Vector3(x, y, z),
+  );
+}
+
+function createActivationFlow(THREE, dimensions) {
   const group = groupFor(THREE);
   group.name = "ACTIVATION_FOCAL_FLOW";
-  const positions = new Float32Array([
-    0,
-    0.7,
-    0,
-    0,
-    -0.7,
-    0,
-  ]);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new THREE.BufferAttribute(positions, 3),
-  );
-  const material = lineMaterial(THREE, PALETTE.cyan, 0.78);
-  const path = new THREE.Line(geometry, material);
-  path.name = "ACTIVATION_PATH";
-  group.add(path);
+  const paths = dimensions.stages.map((stage) => {
+    const curve = new THREE.CatmullRomCurve3(
+      activationCurvePoints(THREE, stage, dimensions.width),
+      false,
+      "centripetal",
+    );
+    const path = addMesh(
+      group,
+      new THREE.TubeGeometry(curve, 48, 0.018, 5, false),
+      luminousMaterial(THREE, PALETTE.white, {
+        opacity: 0.58,
+        emissiveIntensity: 1.8,
+        metalness: 0.08,
+        roughness: 0.08,
+      }),
+    );
+    path.name = `ACTIVATION_PATH_${stage.toUpperCase()}`;
+    path.visible = false;
+    path.userData.stage = stage;
+    return { stage, path, curve };
+  });
 
   const courier = addMesh(
     group,
@@ -906,7 +1383,13 @@ function createActivationFlow(THREE) {
     [0, 0, 0],
   );
   courier.name = "ACTIVE_TENSOR_COURIER";
-  return { group, path, courier };
+  group.userData.activeCurve = paths[0]?.curve ?? null;
+  return {
+    group,
+    paths,
+    path: paths[0]?.path ?? null,
+    courier,
+  };
 }
 
 function updateLayerColors(statue, presentation) {
@@ -925,6 +1408,67 @@ function updateLayerColors(statue, presentation) {
     );
   }
   if (layers.instanceColor) layers.instanceColor.needsUpdate = true;
+}
+
+function updateStageFocus(statue, presentation) {
+  const activeLayerIndex = presentation.activation.layerIndex;
+  const activeStageIndex = presentation.activation.stageIndex;
+  const available =
+    presentation.architecture.available &&
+    Number.isInteger(activeLayerIndex) &&
+    Number.isInteger(activeStageIndex);
+  const { dormant, layer, active } = statue.parts.stageFocus.colors;
+  const previousLayerIndex = statue.parts.stageFocus.layerIndex;
+
+  if (
+    Number.isInteger(previousLayerIndex) &&
+    previousLayerIndex >= 0 &&
+    previousLayerIndex < statue.parts.layers.count
+  ) {
+    for (const { mesh } of statue.parts.stageBands) {
+      mesh.setColorAt(previousLayerIndex, dormant);
+    }
+  }
+  if (
+    available &&
+    activeLayerIndex >= 0 &&
+    activeLayerIndex < statue.parts.layers.count
+  ) {
+    for (const { mesh } of statue.parts.stageBands) {
+      mesh.setColorAt(activeLayerIndex, layer);
+    }
+    statue.parts.stageBands[activeStageIndex]?.mesh.setColorAt(
+      activeLayerIndex,
+      active,
+    );
+  }
+  for (const { mesh } of statue.parts.stageBands) {
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }
+
+  for (const { stage, group } of statue.parts.focalStages) {
+    group.visible = available && stage === presentation.activation.stage;
+  }
+  const attentionActive =
+    available && presentation.activation.stage === "attention";
+  statue.parts.fullAttention.visible =
+    attentionActive &&
+    presentation.activation.layerType === "full_attention";
+  statue.parts.linearAttention.visible =
+    attentionActive &&
+    presentation.activation.layerType === "linear_attention";
+
+  let activeCurve = null;
+  for (const entry of statue.parts.activationPaths) {
+    entry.path.visible =
+      available && entry.stage === presentation.activation.stage;
+    if (entry.path.visible) activeCurve = entry.curve;
+  }
+  statue.parts.activationFlow.userData.activeCurve = activeCurve;
+  statue.parts.stageFocus.layerIndex =
+    available ? activeLayerIndex : null;
+  statue.parts.stageFocus.stageIndex =
+    available ? activeStageIndex : null;
 }
 
 function updateExperts(statue, presentation, activationY) {
@@ -951,8 +1495,8 @@ function updateExperts(statue, presentation, activationY) {
   }
   experts.userData.activeInstances = activeInstances;
   if (experts.instanceColor) experts.instanceColor.needsUpdate = true;
-  experts.material.opacity = routingActive ? 0.24 : 0.08;
-  experts.material.emissiveIntensity = routingActive ? 0.72 : 0.22;
+  experts.material.opacity = routingActive ? 0.16 : 0.035;
+  experts.material.emissiveIntensity = routingActive ? 0.58 : 0.08;
   statue.parts.sharedExpert.position.y = activationY;
   statue.parts.sharedExpert.visible =
     presentation.activation.stage === "feed-forward" &&
@@ -1008,6 +1552,7 @@ export function applyStatuePresentation(statue, presentation) {
   statue.parts.activeLayer.userData.stageScale =
     0.88 + activeStageAppearance.radius * 0.12;
   updateLayerColors(statue, presentation);
+  updateStageFocus(statue, presentation);
   updateExperts(statue, presentation, activationY);
   statue.parts.activationCourier.position.y = 0;
   statue.parts.activationCourier.visible =
@@ -1096,9 +1641,13 @@ export function animateStatueGeometry(
   statue.parts.gpu.rotation.y = -time * 0.31;
   statue.parts.kernel.rotation.z = Math.sin(time * 0.42) * 0.08;
   statue.parts.kernel.rotation.y = time * 0.08;
-  statue.parts.activationCourier.position.y = reducedMotion
-    ? 0
-    : 0.45 - ((time * 0.7) % 1) * 0.9;
+  const activeCurve = statue.parts.activationFlow.userData.activeCurve;
+  if (activeCurve) {
+    activeCurve.getPoint(
+      reducedMotion ? 0.5 : (time * 0.42) % 1,
+      statue.parts.activationCourier.position,
+    );
+  }
   statue.parts.activationCourier.rotation.x = time * 1.7;
   statue.parts.activationCourier.rotation.y = time * 2.1;
   statue.parts.sharedExpert.rotation.x = time * 0.48;
@@ -1165,7 +1714,10 @@ export function createStatueGeometry(THREE, presentation) {
   const ribbons = createRibbons(THREE);
   const speculation = createSpeculationBranches(THREE);
   const particles = createParticleField(THREE);
-  const activationFlow = createActivationFlow(THREE);
+  const activationFlow = createActivationFlow(
+    THREE,
+    body.group.userData.dimensions,
+  );
   root.add(
     body.group,
     memory.group,
@@ -1193,6 +1745,18 @@ export function createStatueGeometry(THREE, presentation) {
       expertRouteFan: expertRouteFan.group,
       expertRoutes: expertRouteFan.routes,
       activeLayer: body.activeLayer,
+      focalStages: body.focalStages,
+      fullAttention: body.fullAttention,
+      linearAttention: body.linearAttention,
+      stageFocus: {
+        layerIndex: null,
+        stageIndex: null,
+        colors: {
+          dormant: new THREE.Color(STAGE_FOCUS_COLORS.dormant),
+          layer: new THREE.Color(STAGE_FOCUS_COLORS.layer),
+          active: new THREE.Color(STAGE_FOCUS_COLORS.active),
+        },
+      },
       bodyHeight: body.group.userData.height,
       bodyDimensions: body.group.userData.dimensions,
       memory: memory.group,
@@ -1207,6 +1771,8 @@ export function createStatueGeometry(THREE, presentation) {
       ribbons,
       speculation: speculation.group,
       speculationBranches: speculation.branches,
+      activationFlow: activationFlow.group,
+      activationPaths: activationFlow.paths,
       activationPath: activationFlow.path,
       activationCourier: activationFlow.courier,
       particles,
