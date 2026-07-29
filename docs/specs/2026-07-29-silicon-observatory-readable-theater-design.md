@@ -1,6 +1,6 @@
 # Silicon Observatory Readable Theater Design
 
-**Status:** Approved direction; written-spec review pending  
+**Status:** Approved
 **Date:** 2026-07-29  
 **Branch:** `agent/silicon-observatory`
 
