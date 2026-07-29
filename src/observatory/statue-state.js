@@ -82,6 +82,7 @@ function activationPresentation(
   architecture,
   frame,
   simulationProgress,
+  transformerCycles,
 ) {
   if (!architecture.available) {
     return {
@@ -96,6 +97,7 @@ function activationPresentation(
       stage: null,
       stageIndex: null,
       stageCount: 0,
+      stageProgress: null,
     };
   }
 
@@ -108,10 +110,26 @@ function activationPresentation(
   const layerFraction =
     progress === 1 ? 1 : layerPosition - layerIndex;
   const stages = transformerStagesForArchitecture(architecture);
-  const stageIndex = Math.min(
-    stages.length - 1,
-    Math.floor(layerFraction * stages.length),
-  );
+  const readableCycleCount =
+    Number.isSafeInteger(transformerCycles) && transformerCycles > 0
+      ? transformerCycles
+      : null;
+  const rawStagePosition =
+    readableCycleCount === null
+      ? layerFraction * stages.length
+      : progress * stages.length * readableCycleCount;
+  const nearestStageBoundary = Math.round(rawStagePosition);
+  const stagePosition =
+    Math.abs(rawStagePosition - nearestStageBoundary) < 1e-9
+      ? nearestStageBoundary
+      : rawStagePosition;
+  const completedStages = Math.floor(stagePosition);
+  const stageIndex =
+    progress === 1
+      ? stages.length - 1
+      : completedStages % stages.length;
+  const stageProgress =
+    progress === 1 ? 1 : stagePosition - completedStages;
 
   return {
     evidence: "simulated",
@@ -125,6 +143,7 @@ function activationPresentation(
     stage: stages[stageIndex],
     stageIndex,
     stageCount: stages.length,
+    stageProgress,
   };
 }
 
@@ -231,7 +250,11 @@ function speculationPresentation(model) {
   };
 }
 
-export function buildStatueFrame(model, frameIndex) {
+export function buildStatueFrame(
+  model,
+  frameIndex,
+  { transformerCycles } = {},
+) {
   const frames = Array.isArray(model?.frames) ? model.frames : [];
   const boundedIndex =
     frames.length === 0
@@ -249,6 +272,7 @@ export function buildStatueFrame(model, frameIndex) {
     architecture,
     frame,
     simulationProgress,
+    transformerCycles,
   );
   const kernel = buildKernelGlyphDescriptor(frame);
 

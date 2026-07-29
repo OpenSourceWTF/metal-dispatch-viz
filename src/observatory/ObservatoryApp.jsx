@@ -97,6 +97,7 @@ export function ObservatoryApp({
   canvasPngDownloader = downloadCanvasPng,
   canvasRecorderFactory = createCanvasRecorder,
   galleryDurationMs = 18_000,
+  transformerCycles = 3,
   reducedMotion: forcedReducedMotion,
   baseUrl = globalThis.document?.baseURI,
 }) {
@@ -613,8 +614,11 @@ export function ObservatoryApp({
   }, [nextGallery, previousGallery, recording, reducedMotion]);
 
   const presentation = useMemo(
-    () => buildStatueFrame(sceneModel, frameIndex),
-    [frameIndex, sceneModel],
+    () =>
+      buildStatueFrame(sceneModel, frameIndex, {
+        transformerCycles,
+      }),
+    [frameIndex, sceneModel, transformerCycles],
   );
 
   return (

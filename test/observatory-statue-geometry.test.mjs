@@ -9,6 +9,7 @@ import {
   transformerStagesForArchitecture,
 } from "../src/observatory/statue-state.js";
 import {
+  animateStatueGeometry,
   applyStatuePresentation,
   createStatueGeometry,
   disposeStatueGeometry,
@@ -330,6 +331,99 @@ test("the focal attention cross-section carries exact configured head geometry",
   assert.equal(statue.parts.linearAttention.visible, false);
 
   disposeStatueGeometry(statue);
+});
+
+test("one preallocated thought cycle gives every transformer stage a causal motion", () => {
+  const denseShape = architecture({ layers: 64 });
+  const denseStageCount =
+    transformerStagesForArchitecture(denseShape).length;
+  const denseFrameCount = 64 * denseStageCount * 2 + 1;
+  const denseAttention = presentation(denseShape, {
+    frameCount: denseFrameCount,
+    frameIndex: (3 * denseStageCount + 1) * 2 + 1,
+  });
+  const dense = createStatueGeometry(THREE, denseAttention);
+  const denseIdentities = dense.geometryIdentities();
+
+  assert.ok(
+    dense.parts.thoughtCycle,
+    "the active aperture must install one reusable causal signal system",
+  );
+  assert.equal(dense.parts.thoughtCycle.userData.mode, "gather");
+  assert.equal(
+    dense.parts.thoughtSignals.count,
+    denseShape.attention.queryHeads,
+    "attention must gather the configured query-head strands",
+  );
+
+  animateStatueGeometry(dense, 0);
+  const attentionStart = new THREE.Matrix4();
+  dense.parts.thoughtSignals.getMatrixAt(0, attentionStart);
+  const attentionStartPosition = new THREE.Vector3().setFromMatrixPosition(
+    attentionStart,
+  );
+  animateStatueGeometry(dense, 0.8);
+  const attentionGathered = new THREE.Matrix4();
+  dense.parts.thoughtSignals.getMatrixAt(0, attentionGathered);
+  const attentionGatheredPosition =
+    new THREE.Vector3().setFromMatrixPosition(attentionGathered);
+  assert.ok(
+    Math.hypot(attentionGatheredPosition.x, attentionGatheredPosition.z) <
+      Math.hypot(attentionStartPosition.x, attentionStartPosition.z),
+    "attention signals must visibly gather from the head ring into context",
+  );
+
+  applyStatuePresentation(
+    dense,
+    presentation(denseShape, {
+      frameCount: denseFrameCount,
+      frameIndex: 3,
+    }),
+  );
+  assert.equal(dense.parts.thoughtCycle.userData.mode, "recurrent-mix");
+  assert.equal(
+    dense.parts.thoughtSignals.count,
+    denseShape.linearAttention.keyHeads +
+      denseShape.linearAttention.valueHeads,
+    "linear attention must retain both configured state-mixing fields",
+  );
+
+  const feedForward = presentation(denseShape, {
+    frameCount: denseFrameCount,
+    frameIndex: 9,
+  });
+  applyStatuePresentation(dense, feedForward);
+  assert.deepEqual(dense.geometryIdentities(), denseIdentities);
+  assert.equal(dense.parts.thoughtCycle.userData.mode, "transform");
+  assert.equal(dense.parts.thoughtSignals.count, 2);
+
+  const moeShape = architecture({ layers: 40, experts: 256 });
+  const moeStageCount = transformerStagesForArchitecture(moeShape).length;
+  const moeFrameCount = 40 * moeStageCount * 2 + 1;
+  const router = presentation(moeShape, {
+    frameCount: moeFrameCount,
+    frameIndex: 9,
+  });
+  const moe = createStatueGeometry(THREE, router);
+  assert.equal(moe.parts.thoughtCycle.userData.mode, "select");
+  assert.equal(
+    moe.parts.thoughtSignals.count,
+    moeShape.feedForward.expertsPerToken,
+    "routing must split into the configured top-k expert fan-out",
+  );
+
+  applyStatuePresentation(
+    moe,
+    presentation(moeShape, {
+      frameCount: moeFrameCount,
+      frameIndex: 13,
+    }),
+  );
+  assert.equal(moe.parts.thoughtCycle.userData.mode, "release");
+  assert.equal(moe.parts.thoughtSignals.count, 1);
+
+  disposeStatueGeometry(dense);
+  disposeStatueGeometry(moe);
 });
 
 test("MoE routing appears only while feed-forward selects configured experts", () => {

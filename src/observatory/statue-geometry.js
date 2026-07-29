@@ -613,10 +613,10 @@ function createResidualProgressSpine(THREE, dimensions) {
   group.name = "RESIDUAL_STREAM_PROGRESS";
   const completed = addMesh(
     group,
-    new THREE.CylinderGeometry(0.055, 0.055, 1, 8, 1),
+    new THREE.CylinderGeometry(0.042, 0.042, 1, 8, 1),
     luminousMaterial(THREE, PALETTE.cyan, {
-      opacity: 0.88,
-      emissiveIntensity: 2,
+      opacity: 0.8,
+      emissiveIntensity: 1.55,
       metalness: 0.08,
       roughness: 0.08,
     }),
@@ -1418,10 +1418,10 @@ function createActivationFlow(THREE, dimensions) {
     );
     const path = addMesh(
       group,
-      new THREE.TubeGeometry(curve, 48, 0.018, 5, false),
+      new THREE.TubeGeometry(curve, 48, 0.013, 5, false),
       luminousMaterial(THREE, PALETTE.white, {
-        opacity: 0.58,
-        emissiveIntensity: 1.8,
+        opacity: 0.34,
+        emissiveIntensity: 1,
         metalness: 0.08,
         roughness: 0.08,
       }),
@@ -1451,6 +1451,254 @@ function createActivationFlow(THREE, dimensions) {
     path: paths[0]?.path ?? null,
     courier,
   };
+}
+
+function createThoughtCycle(THREE, presentation, dimensions) {
+  const group = groupFor(THREE);
+  group.name = "LLM_THOUGHT_CYCLE";
+  const architecture = presentation.architecture;
+  const capacity = Math.max(
+    2,
+    architecture.attention?.queryHeads ?? 0,
+    (architecture.linearAttention?.keyHeads ?? 0) +
+      (architecture.linearAttention?.valueHeads ?? 0),
+    architecture.feedForward?.expertsPerToken ?? 0,
+  );
+  const signals = new THREE.InstancedMesh(
+    new THREE.OctahedronGeometry(0.082, 0),
+    luminousMaterial(THREE, PALETTE.white, {
+      opacity: 0.7,
+      emissiveIntensity: 1.25,
+      metalness: 0.08,
+      roughness: 0.08,
+    }),
+    capacity,
+  );
+  signals.name = "CAUSAL_TRANSFORMER_SIGNALS";
+  signals.count = 0;
+  signals.material.depthTest = false;
+  signals.renderOrder = 9;
+  signals.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const transform = new THREE.Object3D();
+  for (let index = 0; index < capacity; index += 1) {
+    transform.position.set(0, 0, 0);
+    transform.scale.setScalar(0.001);
+    transform.updateMatrix();
+    signals.setMatrixAt(index, transform.matrix);
+  }
+  signals.instanceMatrix.needsUpdate = true;
+
+  const core = addMesh(
+    group,
+    new THREE.IcosahedronGeometry(0.13, 1),
+    luminousMaterial(THREE, PALETTE.white, {
+      opacity: 0.22,
+      emissiveIntensity: 0.95,
+      metalness: 0.08,
+      roughness: 0.06,
+      wireframe: true,
+    }),
+  );
+  core.name = "THOUGHT_CYCLE_CONTEXT_CORE";
+  core.material.depthTest = false;
+  core.renderOrder = 8;
+  group.add(signals);
+  group.position.z = 0.28;
+  group.userData.mode = "idle";
+  group.userData.stage = null;
+  group.userData.targetPhase = 0;
+  group.userData.displayPhase = 0;
+  group.userData.signalCapacity = capacity;
+  group.userData.width = dimensions.width;
+  group.userData.keyHeadCount = 0;
+  group.userData.transform = transform;
+  return { group, signals, core };
+}
+
+function applyThoughtCycle(statue, presentation) {
+  const cycle = statue.parts.thoughtCycle;
+  const signals = statue.parts.thoughtSignals;
+  const stage = presentation.activation.stage;
+  if (cycle.userData.stage !== stage) {
+    cycle.userData.stage = stage;
+    cycle.userData.displayPhase = 0;
+  }
+  cycle.userData.targetPhase =
+    presentation.activation.stageProgress ?? 0;
+
+  let mode = "idle";
+  let count = 0;
+  let color = PALETTE.white;
+  if (presentation.architecture.available) {
+    if (stage === "attention") {
+      const fullAttention =
+        presentation.activation.layerType === "full_attention";
+      const keyHeads =
+        presentation.architecture.linearAttention?.keyHeads ?? 0;
+      const valueHeads =
+        presentation.architecture.linearAttention?.valueHeads ?? 0;
+      mode = fullAttention ? "gather" : "recurrent-mix";
+      count = fullAttention
+        ? presentation.architecture.attention?.queryHeads ?? 1
+        : keyHeads + valueHeads;
+      cycle.userData.keyHeadCount = fullAttention ? 0 : keyHeads;
+      color = PALETTE.attention;
+    } else if (stage === "router") {
+      mode = "select";
+      count =
+        presentation.architecture.feedForward?.expertsPerToken ?? 0;
+      color = PALETTE.magenta;
+    } else if (stage === "feed-forward") {
+      mode = "transform";
+      count = 2;
+      color =
+        presentation.architecture.feedForwardKind === "moe"
+          ? PALETTE.violet
+          : PALETTE.amber;
+    } else if (stage === "attention-residual") {
+      mode = "merge";
+      count = 2;
+    } else if (stage === "feed-forward-residual") {
+      mode = "release";
+      count = 1;
+    } else if (stage?.includes("norm")) {
+      mode = "normalize";
+      count = 1;
+      color = PALETTE.cyan;
+    }
+  }
+
+  cycle.visible = presentation.architecture.available;
+  cycle.userData.mode = mode;
+  signals.count = Math.min(cycle.userData.signalCapacity, count);
+  signals.material.color.setHex(color);
+  signals.material.emissive.setHex(color);
+  statue.parts.thoughtCore.material.color.setHex(color);
+  statue.parts.thoughtCore.material.emissive.setHex(color);
+}
+
+function animateThoughtCycle(
+  statue,
+  time,
+  reducedMotion,
+  deltaSeconds,
+) {
+  const cycle = statue.parts.thoughtCycle;
+  const signals = statue.parts.thoughtSignals;
+  const core = statue.parts.thoughtCore;
+  if (!cycle.visible || signals.count === 0) return;
+
+  cycle.userData.displayPhase = reducedMotion
+    ? cycle.userData.targetPhase
+    : statue.THREE.MathUtils.damp(
+        cycle.userData.displayPhase,
+        cycle.userData.targetPhase,
+        12,
+        deltaSeconds,
+      );
+  const phase = cycle.userData.displayPhase;
+  const eased = phase * phase * (3 - 2 * phase);
+  const width = cycle.userData.width;
+  const transform = cycle.userData.transform;
+  const mode = cycle.userData.mode;
+  const count = signals.count;
+  let coreScale = 0.82;
+  let coreOpacity = 0.24;
+
+  for (let index = 0; index < count; index += 1) {
+    const angle = index / Math.max(1, count) * Math.PI * 2;
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    let scale = 1;
+
+    if (mode === "gather") {
+      const radius =
+        width * (0.9 - eased * 0.76);
+      const spiral = angle + eased * 0.48;
+      x = Math.cos(spiral) * radius;
+      y = 0.34 - eased * 0.56;
+      z = Math.sin(spiral) * radius * 0.78;
+      scale = 0.56 + eased * 0.56;
+      coreScale = 0.74 + eased * 0.72;
+      coreOpacity = 0.2 + eased * 0.34;
+    } else if (mode === "recurrent-mix") {
+      const keySignal = index < cycle.userData.keyHeadCount;
+      const localIndex = keySignal
+        ? index
+        : index - cycle.userData.keyHeadCount;
+      const localCount = keySignal
+        ? cycle.userData.keyHeadCount
+        : count - cycle.userData.keyHeadCount;
+      const localAngle =
+        localIndex / Math.max(1, localCount) * Math.PI * 2;
+      const radius = keySignal
+        ? width * (0.86 - eased * 0.68)
+        : width * (0.18 + eased * 0.68);
+      const spiral =
+        localAngle + (keySignal ? eased : -eased) * 0.7;
+      x = Math.cos(spiral) * radius;
+      y = keySignal
+        ? 0.32 - eased * 0.48
+        : -0.16 + eased * 0.48;
+      z = Math.sin(spiral) * radius * 0.76;
+      scale = keySignal
+        ? 0.58 + eased * 0.42
+        : 1 - eased * 0.34;
+      coreScale = 0.9 + Math.sin(phase * Math.PI) * 0.42;
+      coreOpacity = 0.26 + Math.sin(phase * Math.PI) * 0.28;
+    } else if (mode === "select") {
+      const radius = width * (0.08 + eased * 0.7);
+      x = Math.cos(angle) * radius;
+      y = 0.22 - eased * 0.42;
+      z = Math.sin(angle) * radius * 0.76;
+      scale = 1.12 - eased * 0.28;
+      coreScale = 1.22 - eased * 0.52;
+      coreOpacity = 0.48 - eased * 0.22;
+    } else if (mode === "transform") {
+      const side = index === 0 ? -1 : 1;
+      const excursion = Math.sin(phase * Math.PI);
+      x = side * width * 0.52 * excursion;
+      y = 0.42 - phase * 0.84;
+      z = side * 0.08 * Math.sin(phase * Math.PI * 2);
+      scale = 0.82 + excursion * 0.54;
+      coreScale = 0.76 + (1 - excursion) * 0.52;
+      coreOpacity = 0.2 + (1 - excursion) * 0.28;
+    } else if (mode === "merge") {
+      const side = index === 0 ? -1 : 1;
+      x = side * width * 0.62 * (1 - eased);
+      y = 0.3 - eased * 0.42;
+      z = side * 0.1 * (1 - eased);
+      scale = 0.7 + eased * 0.5;
+      coreScale = 0.72 + eased * 0.68;
+      coreOpacity = 0.18 + eased * 0.42;
+    } else if (mode === "release") {
+      y = 0.62 - eased * 1.28;
+      scale = 0.72 + Math.sin(phase * Math.PI) * 0.54;
+      coreScale = 1.28 - eased * 0.56;
+      coreOpacity = 0.5 - eased * 0.3;
+    } else {
+      y = 0.58 - eased * 1.16;
+      scale = 0.68 + Math.sin(phase * Math.PI) * 0.5;
+      coreScale = 0.86 + Math.sin(phase * Math.PI) * 0.32;
+      coreOpacity = 0.22 + Math.sin(phase * Math.PI) * 0.22;
+    }
+
+    transform.position.set(x, y, z);
+    transform.rotation.set(
+      phase * Math.PI * 2 + angle,
+      phase * Math.PI * 3 - angle,
+      angle,
+    );
+    transform.scale.setScalar(scale);
+    transform.updateMatrix();
+    signals.setMatrixAt(index, transform.matrix);
+  }
+  signals.instanceMatrix.needsUpdate = true;
+  core.scale.setScalar(coreScale);
+  core.material.opacity = coreOpacity;
+  core.rotation.x = time * 0.42;
+  core.rotation.y = -time * 0.58;
 }
 
 function updateLayerColors(statue, presentation) {
@@ -1648,9 +1896,9 @@ export function applyStatuePresentation(statue, presentation) {
   updateLayerColors(statue, presentation);
   updateStageFocus(statue, presentation);
   updateExperts(statue, presentation, activationY);
+  applyThoughtCycle(statue, presentation);
   statue.parts.activationCourier.position.y = 0;
-  statue.parts.activationCourier.visible =
-    presentation.architecture.available;
+  statue.parts.activationCourier.visible = false;
 
   statue.parts.memory.userData.active =
     presentation.hardware.memory.active;
@@ -1735,8 +1983,9 @@ export function animateStatueGeometry(
   statue.parts.gpu.rotation.y = -time * 0.31;
   statue.parts.kernel.rotation.z = Math.sin(time * 0.42) * 0.08;
   statue.parts.kernel.rotation.y = time * 0.08;
+  animateThoughtCycle(statue, time, reducedMotion, deltaSeconds);
   const activeCurve = statue.parts.activationFlow.userData.activeCurve;
-  if (activeCurve) {
+  if (activeCurve && statue.parts.activationCourier.visible) {
     activeCurve.getPoint(
       reducedMotion ? 0.5 : (time * 0.42) % 1,
       statue.parts.activationCourier.position,
@@ -1812,6 +2061,11 @@ export function createStatueGeometry(THREE, presentation) {
     THREE,
     body.group.userData.dimensions,
   );
+  const thoughtCycle = createThoughtCycle(
+    THREE,
+    presentation,
+    body.group.userData.dimensions,
+  );
   root.add(
     body.group,
     memory.group,
@@ -1820,6 +2074,7 @@ export function createStatueGeometry(THREE, presentation) {
     glyph.kernel,
     speculation.group,
     activationFlow.group,
+    thoughtCycle.group,
     particles,
   );
   for (const ribbon of ribbons) root.add(ribbon.mesh);
@@ -1878,6 +2133,9 @@ export function createStatueGeometry(THREE, presentation) {
       activationPaths: activationFlow.paths,
       activationPath: activationFlow.path,
       activationCourier: activationFlow.courier,
+      thoughtCycle: thoughtCycle.group,
+      thoughtSignals: thoughtCycle.signals,
+      thoughtCore: thoughtCycle.core,
       particles,
     },
     geometryIdentities() {

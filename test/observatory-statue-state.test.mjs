@@ -199,6 +199,41 @@ test("uses the complete transformer choreography in causal order", () => {
   );
 });
 
+test("short-form playback separates model-depth travel from a readable block cycle", () => {
+  const frameCount = 1_801;
+  const frames = Array.from({ length: frameCount }, (_, index) =>
+    frame({
+      progress: index / (frameCount - 1),
+      index,
+    }),
+  );
+  const denseModel = model(denseArchitecture(), {
+    label: "Dense checkpoint",
+    frames,
+  });
+
+  const firstQuarterCycle = buildStatueFrame(
+    denseModel,
+    300,
+    { transformerCycles: 3 },
+  );
+  assert.equal(firstQuarterCycle.activation.layerIndex, 10);
+  assert.equal(
+    firstQuarterCycle.activation.stage,
+    "pre-feed-forward-norm",
+  );
+  assert.equal(firstQuarterCycle.activation.stageProgress, 0);
+
+  const secondCycle = buildStatueFrame(
+    denseModel,
+    600,
+    { transformerCycles: 3 },
+  );
+  assert.equal(secondCycle.activation.layerIndex, 21);
+  assert.equal(secondCycle.activation.stage, "pre-attention-norm");
+  assert.equal(secondCycle.activation.stageProgress, 0);
+});
+
 test("simulated traversal covers the model even when trace timestamps cluster", () => {
   const frames = Array.from({ length: 65 }, (_, index) =>
     frame({
