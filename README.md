@@ -11,7 +11,7 @@ instrument, modify, or upload traces.
 ## Hosted quick start
 
 Open **[mlx-profiler.opensource.wtf](https://mlx-profiler.opensource.wtf)** and
-choose one of the five curated public captures. No installation is required.
+choose a curated public capture. No installation is required.
 
 The hosted application cannot open a file or folder from your computer and does
 not provide an upload endpoint. To inspect a private or arbitrary JSONL while
@@ -72,8 +72,8 @@ npm run build
 ```
 
 Vite first emits a clean staging client. The hosted builder then atomically
-publishes `dist/client`, the generated browser registry, the five public
-showcase traces, and the separate hosting artifacts.
+publishes `dist/client`, the generated browser registry, every
+manifest-authorized public showcase trace, and the separate hosting artifacts.
 
 Start the built React application through Express with:
 
@@ -110,7 +110,7 @@ file and dependency before committing it.
 
 ## Bundled showcase
 
-The default folder contains curated, referentially closed windows from five
+The default folder contains curated, referentially closed windows from
 authentic profiler captures:
 
 - Hy3 2q — oQ2e, MTP K2
@@ -430,8 +430,9 @@ fi
 ```
 
 The test command runs both the Node integration suite and Vitest React suite.
-The build and verifier must each report five traces, the audit must report no
-known vulnerabilities, and the final scan must find no implementation stubs.
+The build and verifier must report the manifest-authorized traces, the audit
+must report no known vulnerabilities, and the final scan must find no
+implementation stubs.
 
 ## License
 

@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  huggingFaceRepoUrl,
   LEGACY_SHOWCASE_FILENAMES,
   validateRunFilename,
 } from "../public/run-identity.js";
@@ -10,68 +11,47 @@ import {
 const showcaseUrl = new URL("../traces/showcase/", import.meta.url);
 const manifestUrl = new URL("traces.json", showcaseUrl);
 
-const EXPECTED_TRACES = new Map([
-  ["glm52-q1t-t158-mtp-k3.jsonl", "GLM-5.2 1.58q"],
-  ["hy3-oq2e-mtp-k2.jsonl", "Hy3 2q"],
-  ["laguna-s21-oq4e-ar.jsonl", "Laguna 2.1 S"],
-  ["qwen36-27b-mtp-k3.jsonl", "Qwen3.6 27B"],
-  ["qwen36-35b-a3b-k1.jsonl", "Qwen3.6 35B"],
-]);
-
-const EXPECTED_HUGGING_FACE = new Map([
-  ["hy3-oq2e-mtp-k2.jsonl", {
-    field: "huggingface_repo",
-    repository: "mlx-community/Hy3-oQ2e",
-  }],
-  ["qwen36-27b-mtp-k3.jsonl", {
-    field: "huggingface_repo",
-    repository: "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed",
-  }],
-  ["qwen36-35b-a3b-k1.jsonl", {
-    field: "huggingface_repo",
-    repository: "Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed",
-  }],
-  ["glm52-q1t-t158-mtp-k3.jsonl", {
-    field: "huggingface_source_repo",
-    repository: "zai-org/GLM-5.2",
-  }],
-  ["laguna-s21-oq4e-ar.jsonl", {
-    field: "huggingface_repo",
-    repository: "mlx-community/Laguna-S-2.1-oQ4e",
-  }],
-]);
-
 function countRecords(rows, record) {
   return rows.filter((row) => row?.record === record).length;
 }
 
-test("bundled showcase is an exact five-trace manifest-to-folder bijection", async () => {
+test("bundled showcase is an exact manifest-to-folder bijection", async () => {
   const manifestText = await readFile(manifestUrl, "utf8");
   const manifest = JSON.parse(manifestText);
   const files = (await readdir(showcaseUrl))
     .filter((name) => name.endsWith(".jsonl"))
     .sort();
   const manifestFiles = Object.keys(manifest.traces).sort();
-  const expectedFiles = [...EXPECTED_TRACES.keys()].sort();
 
   assert.equal(manifest.schema_version, 1);
-  assert.deepEqual(files, expectedFiles);
-  assert.deepEqual(manifestFiles, expectedFiles);
-  assert.deepEqual(LEGACY_SHOWCASE_FILENAMES, expectedFiles);
+  assert.deepEqual(files, manifestFiles);
   assert.doesNotMatch(manifestText, /\/Users\//);
 
-  for (const [filename, expectedLabel] of EXPECTED_TRACES) {
-    const metadata = manifest.traces[filename];
-    const huggingFace = EXPECTED_HUGGING_FACE.get(filename);
-    assert.equal(metadata.label, expectedLabel);
-    assert.equal(
-      metadata[huggingFace.field],
-      huggingFace.repository,
-      `${filename}: honest Hugging Face provenance`,
+  for (const legacyFilename of LEGACY_SHOWCASE_FILENAMES) {
+    assert.ok(
+      Object.hasOwn(manifest.traces, legacyFilename),
+      `${legacyFilename}: grandfathered path remains published`,
     );
-    if (huggingFace.field === "huggingface_source_repo") {
+  }
+
+  for (const [filename, metadata] of Object.entries(manifest.traces)) {
+    assert.equal(typeof metadata.label, "string", `${filename}: label`);
+    assert.ok(metadata.label.length > 0, `${filename}: non-empty label`);
+    const exactRepository = metadata.huggingface_repo;
+    const sourceRepository = metadata.huggingface_source_repo;
+    assert.notEqual(
+      Boolean(exactRepository),
+      Boolean(sourceRepository),
+      `${filename}: exactly one Hugging Face provenance field`,
+    );
+    const repository = exactRepository ?? sourceRepository;
+    assert.ok(
+      huggingFaceRepoUrl(repository),
+      `${filename}: valid Hugging Face provenance`,
+    );
+    if (sourceRepository) {
       assert.equal(
-        metadata.huggingface_repo,
+        exactRepository,
         undefined,
         `${filename}: local derivative is not mislabeled as a public checkpoint`,
       );
@@ -100,7 +80,7 @@ test("future showcase paths must use the model-contributor-date contract", async
 test("every bundled window terminates in a count-exact standard v1 summary", async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
 
-  for (const filename of EXPECTED_TRACES.keys()) {
+  for (const filename of Object.keys(manifest.traces)) {
     const text = await readFile(new URL(filename, showcaseUrl), "utf8");
     const rows = text.trimEnd().split("\n").map(JSON.parse);
     const summary = rows.at(-1);
