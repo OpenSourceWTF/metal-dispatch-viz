@@ -30,6 +30,18 @@
   isolation: isolate;
 }
 
+.observatory,
+.observatory *,
+.observatory *::before,
+.observatory *::after,
+.observatory-skip-link {
+  box-sizing: border-box;
+}
+
+.observatory > * {
+  min-width: 0;
+}
+
 .observatory::before {
   position: absolute;
   z-index: 0;
@@ -60,8 +72,8 @@
   top: 8px;
   left: 8px;
   padding: 10px 14px;
-  color: var(--obs-canvas);
-  background: var(--obs-measured);
+  color: var(--obs-canvas, #050608);
+  background: var(--obs-measured, #56e5ff);
   transform: translateY(-160%);
 }
 
@@ -416,6 +428,24 @@
   border-color: rgb(255 180 94 / 32%);
 }
 
+.observatory-evidence[data-evidence-level="verified"] [data-slot="badge"] {
+  color: var(--obs-measured);
+  border-color: rgb(86 229 255 / 32%);
+}
+
+.evidence-status {
+  padding: 8px 10px;
+  border-left: 2px solid var(--obs-derived);
+  color: var(--obs-text);
+  background: rgb(255 180 94 / 7%);
+  font: 500 0.64rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.observatory-evidence[data-evidence-level="verified"] .evidence-status {
+  border-left-color: var(--obs-measured);
+  background: rgb(86 229 255 / 6%);
+}
+
 .observatory-evidence dl {
   display: grid;
   margin: 0;
@@ -455,15 +485,22 @@
     max(16px, env(safe-area-inset-left));
   border-top: 1px solid var(--obs-line);
   background: var(--obs-surface-solid);
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: auto auto auto minmax(0, 1fr);
   gap: 16px;
 }
 
 .transport-primary,
-.transport-speed {
+.transport-speed,
+.transport-export {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.transport-export span {
+  max-width: 15ch;
+  color: var(--obs-dim);
+  font: 500 0.58rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .transport-status {
@@ -516,6 +553,8 @@
 @media (max-width: 767px) {
   .observatory-header {
     align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
   }
 
   .observatory-identity {
@@ -526,13 +565,22 @@
     margin-bottom: 4px;
   }
 
-  .observatory-actions [data-slot="button"]:first-child,
-  .observatory-actions [data-slot="button"]:last-child {
-    display: none;
+  .observatory-actions {
+    display: grid;
+    min-width: 0;
+    width: auto;
+    max-width: 100%;
+    align-self: stretch;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
   }
 
   .observatory-actions [data-slot="button"] {
-    padding-inline: 12px;
+    min-width: 44px;
+    width: 100%;
+    padding-inline: 5px;
+    font-size: 0.64rem;
+    gap: 4px;
   }
 
   .observatory-stage {
@@ -557,11 +605,16 @@
   }
 
   .observatory-evidence {
-    overflow-x: auto;
+    max-width: 100vw;
+    overflow: hidden;
   }
 
   .observatory-evidence dl {
-    width: 740px;
+    width: 100%;
+    overflow-x: auto;
+    grid-auto-columns: minmax(190px, 1fr);
+    grid-auto-flow: column;
+    grid-template-columns: none;
   }
 
   .observatory-transport {
@@ -570,6 +623,10 @@
 
   .transport-speed {
     justify-self: end;
+  }
+
+  .transport-export {
+    grid-column: 1 / -1;
   }
 
   .transport-status {

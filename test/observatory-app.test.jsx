@@ -90,13 +90,21 @@ function sessionFactory({ loadImpl = async () => ({ dataset: dataset() }) } = {}
   return { factory, sessions };
 }
 
-function SceneStub({ model, frameIndex, reducedMotion }) {
+function SceneStub({
+  model,
+  frameIndex,
+  reducedMotion,
+  animated,
+  onCanvasReady,
+}) {
   return (
-    <div
+    <canvas
+      ref={onCanvasReady}
       data-testid="scene"
       data-label={model?.label ?? ""}
       data-frame={frameIndex}
       data-reduced-motion={String(reducedMotion)}
+      data-animated={String(animated)}
     />
   );
 }
@@ -167,6 +175,9 @@ describe("Silicon Observatory", () => {
     expect(container.textContent).toMatch(/SSD activity is not present/i);
     expect(container.textContent).toMatch(/MTP K3 configured/i);
     expect(container.textContent).toMatch(/measured command-buffer timing/i);
+    expect(
+      container.querySelector('[data-evidence-level="verified"]'),
+    ).not.toBeNull();
     expect(container.querySelector('[aria-live="polite"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
       "Qwen3.6 27B",
@@ -225,6 +236,35 @@ describe("Silicon Observatory", () => {
     );
   });
 
+  it("retries a failed registry without requiring a page reload", async () => {
+    const sessions = sessionFactory();
+    const registryLoader = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Registry is temporarily unavailable"))
+      .mockResolvedValueOnce(registryResult([QWEN_27]));
+    await act(async () => {
+      root.render(
+        <ObservatoryApp
+          registryLoader={registryLoader}
+          analysisSessionFactory={sessions.factory}
+          SceneComponent={SceneStub}
+        />,
+      );
+    });
+    await settle();
+    expect(container.textContent).toMatch(/Registry is temporarily unavailable/i);
+    await act(async () =>
+      container
+        .querySelector('button[aria-label="Retry trace registry"]')
+        .click(),
+    );
+    await settle();
+    expect(registryLoader).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
+      "Qwen3.6 27B",
+    );
+  });
+
   it("cycles the metadata gallery, pauses, and respects reduced motion", async () => {
     vi.useFakeTimers();
     const sessions = sessionFactory();
@@ -247,9 +287,17 @@ describe("Silicon Observatory", () => {
     expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
       "Qwen3.6 35B",
     );
+    expect(container.textContent).toMatch(/legacy unverifiable/i);
+    expect(
+      container.querySelector('[data-evidence-level="warning"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toMatch(/source completeness unverifiable/i);
 
     await act(async () =>
       container.querySelector('button[aria-label="Pause animation"]').click(),
+    );
+    expect(container.querySelector('[data-testid="scene"]').dataset.animated).toBe(
+      "false",
     );
     await act(async () => vi.advanceTimersByTime(2_000));
     expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
@@ -285,6 +333,9 @@ describe("Silicon Observatory", () => {
     expect(
       container.querySelector('[data-testid="scene"]').dataset.reducedMotion,
     ).toBe("true");
+    expect(container.querySelector('[data-testid="scene"]').dataset.animated).toBe(
+      "false",
+    );
   });
 
   it("loads one local trace, releases its URL, and terminates worker sessions", async () => {
@@ -335,5 +386,200 @@ describe("Silicon Observatory", () => {
         ({ terminate }) => terminate.mock.calls.length === 1,
       ),
     ).toBe(true);
+  });
+
+  it("does not let a late registry response overwrite a local trace selection", async () => {
+    let resolveRegistry;
+    const pendingRegistry = new Promise((resolve) => {
+      resolveRegistry = resolve;
+    });
+    const sessions = sessionFactory();
+    const localTraceSourceFactory = vi.fn((file) => ({
+      kind: "local",
+      url: "blob:local-during-registry",
+      trace: {
+        id: "local-pending",
+        label: file.name,
+        source_evidence_status: "browser-local",
+      },
+      release: vi.fn(),
+    }));
+    await act(async () => {
+      root.render(
+        <ObservatoryApp
+          registryLoader={() => pendingRegistry}
+          analysisSessionFactory={sessions.factory}
+          localTraceSourceFactory={localTraceSourceFactory}
+          SceneComponent={SceneStub}
+        />,
+      );
+    });
+    const input = container.querySelector('input[type="file"]');
+    const file = new File(["{}\n"], "chosen-locally.jsonl");
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file],
+    });
+    await act(async () =>
+      input.dispatchEvent(new Event("change", { bubbles: true })),
+    );
+    await settle();
+    expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
+      "chosen-locally.jsonl",
+    );
+
+    await act(async () => resolveRegistry(registryResult()));
+    await settle();
+    expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
+      "chosen-locally.jsonl",
+    );
+  });
+
+  it("exports PNG and X-compatible MP4 locally and explains unsupported recording", async () => {
+    const sessions = sessionFactory();
+    const pngDownloader = vi.fn(async () => ({ filename: "frame.png" }));
+    const recorder = {
+      supported: true,
+      recording: false,
+      start: vi.fn(),
+      stop: vi.fn(async () => ({ filename: "animation.mp4" })),
+      destroy: vi.fn(),
+    };
+    const canvasRecorderFactory = vi.fn(() => recorder);
+    await act(async () => {
+      root.render(
+        <ObservatoryApp
+          registryLoader={async () => registryResult([QWEN_27])}
+          analysisSessionFactory={sessions.factory}
+          SceneComponent={SceneStub}
+          canvasPngDownloader={pngDownloader}
+          canvasRecorderFactory={canvasRecorderFactory}
+        />,
+      );
+    });
+    await settle();
+
+    const canvas = container.querySelector('[data-testid="scene"]');
+    expect(canvasRecorderFactory).toHaveBeenCalledWith(
+      canvas,
+      expect.objectContaining({
+        label: expect.any(Function),
+        onError: expect.any(Function),
+      }),
+    );
+    expect(canvasRecorderFactory.mock.calls.at(-1)[1].label()).toBe(
+      "Qwen3.6 27B",
+    );
+    expect(container.textContent).toMatch(/X-ready · H\.264 · 720p/i);
+    await act(async () =>
+      container.querySelector('button[aria-label="Save PNG frame"]').click(),
+    );
+    expect(pngDownloader).toHaveBeenCalledWith(
+      canvas,
+      expect.objectContaining({ label: "Qwen3.6 27B" }),
+    );
+
+    await act(async () =>
+      container.querySelector('button[aria-label="Record MP4 animation"]').click(),
+    );
+    expect(recorder.start).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector('button[aria-label="Stop MP4 recording"]'),
+    ).not.toBeNull();
+    expect(
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent.includes("Workbench"))
+        .disabled,
+    ).toBe(true);
+    expect(
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent.includes("Open trace"))
+        .disabled,
+    ).toBe(true);
+    expect(container.textContent).toMatch(
+      /Stop recording before leaving the Observatory/i,
+    );
+
+    await act(async () =>
+      canvasRecorderFactory.mock.calls
+        .at(-1)[1]
+        .onError(new Error("Browser encoder stopped unexpectedly")),
+    );
+    expect(
+      container.querySelector('button[aria-label="Record MP4 animation"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toMatch(
+      /Browser encoder stopped unexpectedly/i,
+    );
+
+    await act(async () =>
+      container.querySelector('button[aria-label="Record MP4 animation"]').click(),
+    );
+    await act(async () =>
+      container.querySelector('button[aria-label="Stop MP4 recording"]').click(),
+    );
+    expect(recorder.stop).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toMatch(/animation\.mp4 saved locally/i);
+
+    await act(async () => {
+      root.render(
+        <ObservatoryApp
+          registryLoader={async () => registryResult([QWEN_27])}
+          analysisSessionFactory={sessions.factory}
+          SceneComponent={SceneStub}
+          canvasPngDownloader={pngDownloader}
+          canvasRecorderFactory={() => ({
+            ...recorder,
+            supported: false,
+          })}
+        />,
+      );
+    });
+    await settle();
+    expect(container.textContent).toMatch(/H\.264 MP4 recording unavailable/i);
+    expect(
+      container.querySelector('button[aria-label="Record MP4 animation"]')
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("keeps one recording alive while the gallery advances", async () => {
+    vi.useFakeTimers();
+    const sessions = sessionFactory();
+    const recorder = {
+      supported: true,
+      recording: false,
+      start: vi.fn(),
+      stop: vi.fn(async () => ({ filename: "gallery.mp4" })),
+      destroy: vi.fn(),
+    };
+    await act(async () => {
+      root.render(
+        <ObservatoryApp
+          registryLoader={async () => registryResult()}
+          analysisSessionFactory={sessions.factory}
+          SceneComponent={SceneStub}
+          galleryDurationMs={1_000}
+          canvasRecorderFactory={() => recorder}
+        />,
+      );
+    });
+    await settle();
+    await act(async () =>
+      container.querySelector('button[aria-label="Record MP4 animation"]').click(),
+    );
+    expect(
+      container.querySelector('button[aria-label="Stop MP4 recording"]'),
+    ).not.toBeNull();
+
+    await act(async () => vi.advanceTimersByTime(1_000));
+    await settle();
+    expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
+      "Qwen3.6 35B",
+    );
+    expect(
+      container.querySelector('button[aria-label="Stop MP4 recording"]'),
+    ).not.toBeNull();
+    expect(recorder.destroy).not.toHaveBeenCalled();
   });
 });

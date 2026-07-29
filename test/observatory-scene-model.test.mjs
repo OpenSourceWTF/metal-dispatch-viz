@@ -53,6 +53,7 @@ function qwenDataset() {
     },
     {
       record: "summary",
+      schema_version: 1,
       final: true,
       complete: true,
       ops_total: 3,
@@ -204,4 +205,119 @@ test("untimed dispatches retain source order with ordinal visual progress", () =
     [0, 1],
   );
   assert.equal(model.evidence.timing, "ordinal fallback");
+});
+
+test("evidence health distinguishes source provenance from trace-window damage", () => {
+  const legacy = buildSceneModel({
+    trace: {
+      label: "Legacy Qwen",
+      artifact_status: "curated-window",
+      source_complete: null,
+      valid_evidence: false,
+      source_evidence_status: "legacy-unverifiable",
+    },
+    dataset: {
+      ...qwenDataset(),
+      health: {
+        validEvidence: true,
+        sourceCompleteness: "complete",
+        malformedRows: 0,
+        droppedRows: 0,
+      },
+    },
+  });
+  assert.equal(legacy.evidenceHealth.level, "warning");
+  assert.equal(legacy.evidenceHealth.windowLabel, "Curated window");
+  assert.equal(legacy.evidenceHealth.windowCompleteness, "complete");
+  assert.equal(legacy.evidenceHealth.sourceCompleteness, "unverifiable");
+  assert.match(legacy.evidenceHealth.summary, /source completeness unverifiable/i);
+
+  for (const [health, expected] of [
+    [
+      {
+        validEvidence: false,
+        sourceCompleteness: "incomplete",
+        malformedRows: 0,
+        droppedRows: 0,
+      },
+      /incomplete trace window/i,
+    ],
+    [
+      {
+        validEvidence: false,
+        sourceCompleteness: "complete",
+        malformedRows: 0,
+        droppedRows: 7,
+      },
+      /7 dropped rows/i,
+    ],
+    [
+      {
+        validEvidence: false,
+        sourceCompleteness: "complete",
+        malformedRows: 3,
+        droppedRows: 0,
+      },
+      /3 malformed rows/i,
+    ],
+  ]) {
+    const model = buildSceneModel({
+      trace: {
+        label: "Damaged capture",
+        source_evidence_status: "verified-complete",
+      },
+      dataset: { ...qwenDataset(), health },
+    });
+    assert.equal(model.evidenceHealth.level, "warning");
+    assert.match(model.evidenceHealth.summary, expected);
+  }
+});
+
+test("complete traces visualize orphaned dispatches without claiming full coverage", () => {
+  const dataset = buildDataset([
+    {
+      record: "op",
+      seq: 0,
+      command_buffer_index: 99,
+      kernel_name: "orphaned_gemm",
+      grid: [8, 1, 1],
+    },
+    {
+      record: "cb",
+      command_buffer_index: 0,
+      op_count: 0,
+      encode_start_ns: 100,
+      encode_end_ns: 200,
+      gpu_start_ns: 150,
+      gpu_end_ns: 190,
+    },
+    {
+      record: "summary",
+      schema_version: 1,
+      final: true,
+      complete: true,
+      ops_total: 1,
+      cbs_total: 1,
+      dropped_rows: 0,
+    },
+  ]);
+  assert.equal(dataset.health.validEvidence, true);
+  assert.equal(dataset.unassignedDispatches.length, 1);
+
+  const model = buildSceneModel({
+    trace: {
+      label: "Complete source with orphan",
+      source_evidence_status: "verified-complete",
+    },
+    dataset,
+  });
+
+  assert.equal(model.frames.length, 1);
+  assert.equal(model.frames[0].kernel, "orphaned_gemm");
+  assert.equal(model.evidence.dispatch, "unassigned ordinal fallback");
+  assert.equal(model.evidenceHealth.level, "warning");
+  assert.match(
+    model.evidenceHealth.summary,
+    /1 unassigned dispatch shown with ordinal fallback/i,
+  );
 });

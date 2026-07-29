@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
+import {
+  observatoryPixelRatio,
+  shouldAnimateObservatory,
+} from "./scene-timing.js";
+
 const SCENE_COLORS = Object.freeze({
   background: 0x050608,
   graphite: 0x20262d,
@@ -57,16 +62,21 @@ export function ObservatoryScene({
   model,
   frameIndex = 0,
   reducedMotion = false,
+  animated = true,
+  onCanvasReady,
 }) {
   const mountRef = useRef(null);
   const activityRef = useRef(null);
   const frameRef = useRef(null);
   const modelRef = useRef(model);
   const reducedMotionRef = useRef(reducedMotion);
+  const animatedRef = useRef(animated);
+  const renderRequestRef = useRef(null);
   const [failure, setFailure] = useState(null);
 
   useEffect(() => {
     frameRef.current = model?.frames?.[frameIndex] ?? null;
+    renderRequestRef.current?.();
   }, [frameIndex, model]);
 
   useEffect(() => {
@@ -78,11 +88,18 @@ export function ObservatoryScene({
     activityRef.current.speculation.forEach((line, index) => {
       line.visible = index < width;
     });
+    renderRequestRef.current?.();
   }, [model]);
 
   useEffect(() => {
     reducedMotionRef.current = reducedMotion;
+    renderRequestRef.current?.();
   }, [reducedMotion]);
+
+  useEffect(() => {
+    animatedRef.current = animated;
+    renderRequestRef.current?.();
+  }, [animated]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -105,7 +122,6 @@ export function ObservatoryScene({
     }
 
     renderer.setClearColor(SCENE_COLORS.background, 0);
-    renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.domElement.className = "observatory-canvas";
     renderer.domElement.setAttribute("role", "img");
@@ -114,6 +130,7 @@ export function ObservatoryScene({
       "Abstract trace-driven view of unified memory, CPU command encoding, GPU kernels, and model geometry",
     );
     mount.append(renderer.domElement);
+    onCanvasReady?.(renderer.domElement);
 
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(SCENE_COLORS.background, 0.035);
@@ -325,9 +342,17 @@ export function ObservatoryScene({
     const resize = () => {
       const width = Math.max(1, mount.clientWidth || 960);
       const height = Math.max(1, mount.clientHeight || 640);
+      renderer.setPixelRatio(
+        observatoryPixelRatio({
+          devicePixelRatio: globalThis.devicePixelRatio,
+          width,
+          height,
+        }),
+      );
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+      renderRequestRef.current?.();
     };
     resize();
     if (typeof globalThis.ResizeObserver === "function") {
@@ -339,12 +364,13 @@ export function ObservatoryScene({
 
     const onVisibility = () => {
       visible = !globalThis.document?.hidden;
+      if (visible) renderRequestRef.current?.();
     };
     globalThis.document?.addEventListener("visibilitychange", onVisibility);
 
     const startedAt = performance.now();
     const render = (now) => {
-      animationFrame = globalThis.requestAnimationFrame(render);
+      animationFrame = null;
       if (!visible) return;
       const activity = activityRef.current;
       const frame = frameRef.current;
@@ -383,10 +409,28 @@ export function ObservatoryScene({
         : Math.sin(time * 0.12) * 0.35;
       camera.lookAt(0, -0.4, 0);
       renderer.render(scene, camera);
+      if (
+        shouldAnimateObservatory({
+          active: animatedRef.current,
+          reducedMotion: reducedMotionRef.current,
+          visible,
+        })
+      ) {
+        requestRender();
+      }
     };
-    animationFrame = globalThis.requestAnimationFrame(render);
+    const requestRender = () => {
+      if (animationFrame === null) {
+        animationFrame = globalThis.requestAnimationFrame(render);
+      }
+    };
+    renderRequestRef.current = requestRender;
+    requestRender();
 
     return () => {
+      if (renderRequestRef.current === requestRender) {
+        renderRequestRef.current = null;
+      }
       if (animationFrame !== null) {
         globalThis.cancelAnimationFrame(animationFrame);
       }
@@ -397,11 +441,12 @@ export function ObservatoryScene({
         onVisibility,
       );
       activityRef.current = null;
+      onCanvasReady?.(null);
       disposeScene(scene);
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, []);
+  }, [onCanvasReady]);
 
   if (failure) {
     return (

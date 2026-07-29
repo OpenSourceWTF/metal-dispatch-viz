@@ -2,6 +2,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Cpu,
+  Download,
+  Film,
   Gauge,
   HardDrive,
   Pause,
@@ -23,7 +25,9 @@ import { Badge } from "../components/ui/badge.jsx";
 import { Button } from "../components/ui/button.jsx";
 import { Progress } from "../components/ui/progress.jsx";
 import { buildSceneModel } from "./scene-model.js";
+import { createCanvasRecorder, downloadCanvasPng } from "./export.js";
 import { ObservatoryScene } from "./ObservatoryScene.jsx";
+import { observatoryFrameStride } from "./scene-timing.js";
 import {
   createGalleryTraceSource,
   createLocalTraceSource,
@@ -76,16 +80,48 @@ function traceWorkbenchHref(source) {
     : "?";
 }
 
+function displayEvidence(value) {
+  return typeof value === "string" && value.trim() !== ""
+    ? value.replaceAll("-", " ")
+    : "unspecified";
+}
+
 function EvidenceRail({ model }) {
   const configuredWidth = model?.speculation?.configuredWidth;
   const modelMass = model?.model?.estimatedWeightGigabytes;
+  const health = model?.evidenceHealth;
   return (
-    <aside className="observatory-evidence" aria-label="Visual evidence key">
+    <aside
+      className="observatory-evidence"
+      aria-label="Visual evidence key"
+      data-evidence-level={health?.level ?? "pending"}
+    >
       <div className="evidence-heading">
         <span>Signal key</span>
-        <Badge variant="outline">schema v1</Badge>
+        <Badge variant="outline">
+          {health?.level === "verified"
+            ? "evidence verified"
+            : "evidence caution"}
+        </Badge>
       </div>
+      <p className="evidence-status">
+        {health?.summary ?? "Evidence health is resolved with the trace."}
+      </p>
       <dl>
+        <div>
+          <dt>Source provenance</dt>
+          <dd>
+            {displayEvidence(health?.sourceStatus ?? model?.sourceEvidence)}
+          </dd>
+        </div>
+        <div>
+          <dt>Source completeness</dt>
+          <dd>{displayEvidence(health?.sourceCompleteness)}</dd>
+        </div>
+        <div>
+          <dt>{health?.windowLabel ?? "Trace window"}</dt>
+          <dd>{displayEvidence(health?.windowCompleteness)}</dd>
+        </div>
         <div>
           <dt>Timing</dt>
           <dd>{model?.evidence?.timing ?? "awaiting trace"}</dd>
@@ -93,6 +129,14 @@ function EvidenceRail({ model }) {
         <div>
           <dt>Dispatch</dt>
           <dd>{model?.evidence?.dispatch ?? "awaiting trace"}</dd>
+        </div>
+        <div>
+          <dt>Frame coverage</dt>
+          <dd>
+            {model?.dispatchCoverage
+              ? `${model.dispatchCoverage.displayed.toLocaleString()} of ${model.dispatchCoverage.total.toLocaleString()} launch dispatches`
+              : "awaiting trace"}
+          </dd>
         </div>
         <div>
           <dt>Model mass</dt>
@@ -149,6 +193,8 @@ export function ObservatoryApp({
   analysisSessionFactory = createAnalysisSession,
   localTraceSourceFactory = createLocalTraceSource,
   SceneComponent = ObservatoryScene,
+  canvasPngDownloader = downloadCanvasPng,
+  canvasRecorderFactory = createCanvasRecorder,
   galleryDurationMs = 18_000,
   reducedMotion: forcedReducedMotion,
   baseUrl = globalThis.document?.baseURI,
@@ -166,16 +212,51 @@ export function ObservatoryApp({
   const [playing, setPlaying] = useState(!reducedMotion);
   const [speed, setSpeed] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
+  const [registryReloadKey, setRegistryReloadKey] = useState(0);
   const [status, setStatus] = useState("Opening the trace registry.");
+  const [canvas, setCanvas] = useState(null);
+  const [canvasRecorder, setCanvasRecorder] = useState(null);
+  const [recording, setRecording] = useState(false);
   const fileInputRef = useRef(null);
   const loadGeneration = useRef(0);
+  const selectionRevision = useRef(0);
+  const sceneLabelRef = useRef("trace");
+  sceneLabelRef.current =
+    sceneModel?.label ?? activeSource?.trace?.label ?? "trace";
+  const handleCanvasReady = useCallback((nextCanvas) => {
+    setCanvas(nextCanvas);
+  }, []);
+  const handleRecorderError = useCallback((reason) => {
+    setRecording(false);
+    setStatus(
+      reason instanceof Error
+        ? reason.message
+        : "The browser stopped recording unexpectedly.",
+    );
+  }, []);
 
   useEffect(() => {
     if (reducedMotion) setPlaying(false);
   }, [reducedMotion]);
 
   useEffect(() => {
+    if (!canvas) {
+      setCanvasRecorder(null);
+      setRecording(false);
+      return undefined;
+    }
+    const nextRecorder = canvasRecorderFactory(canvas, {
+      label: () => sceneLabelRef.current,
+      onError: handleRecorderError,
+    });
+    setCanvasRecorder(nextRecorder);
+    setRecording(false);
+    return () => nextRecorder.destroy();
+  }, [canvas, canvasRecorderFactory, handleRecorderError]);
+
+  useEffect(() => {
     let current = true;
+    const revisionAtStart = selectionRevision.current;
     setPhase("registry-loading");
     setError(null);
     void Promise.resolve(registryLoader({ baseUrl })).then(
@@ -187,6 +268,7 @@ export function ObservatoryApp({
         setGallery(nextGallery);
         setHosted(Boolean(loaded?.hosted));
         setGalleryIndex(0);
+        if (selectionRevision.current !== revisionAtStart) return;
         if (nextGallery.length === 0) {
           setActiveSource(null);
           setPhase("empty");
@@ -202,7 +284,9 @@ export function ObservatoryApp({
         );
       },
       (reason) => {
-        if (!current) return;
+        if (!current || selectionRevision.current !== revisionAtStart) {
+          return;
+        }
         setError(
           reason instanceof Error
             ? reason
@@ -215,7 +299,7 @@ export function ObservatoryApp({
     return () => {
       current = false;
     };
-  }, [baseUrl, registryLoader]);
+  }, [baseUrl, registryLoader, registryReloadKey]);
 
   useEffect(() => {
     if (!activeSource) return undefined;
@@ -284,6 +368,7 @@ export function ObservatoryApp({
     (requestedIndex) => {
       const nextIndex = wrapIndex(requestedIndex, gallery.length);
       if (nextIndex === null) return;
+      selectionRevision.current += 1;
       setGalleryIndex(nextIndex);
       setActiveSource(
         createGalleryTraceSource({
@@ -315,11 +400,25 @@ export function ObservatoryApp({
       return undefined;
     }
     const delay = Math.max(48, 140 / speed);
+    const stride = observatoryFrameStride({
+      frameCount: sceneModel.frames.length,
+      frameDelayMs: delay,
+      galleryDurationMs: galleryDurationMs / speed,
+    });
     const timer = setInterval(() => {
-      setFrameIndex((index) => (index + 1) % sceneModel.frames.length);
+      setFrameIndex(
+        (index) => (index + stride) % sceneModel.frames.length,
+      );
     }, delay);
     return () => clearInterval(timer);
-  }, [phase, playing, reducedMotion, sceneModel, speed]);
+  }, [
+    galleryDurationMs,
+    phase,
+    playing,
+    reducedMotion,
+    sceneModel,
+    speed,
+  ]);
 
   useEffect(() => {
     if (
@@ -369,6 +468,7 @@ export function ObservatoryApp({
     if (!file) return;
     try {
       const source = localTraceSourceFactory(file);
+      selectionRevision.current += 1;
       setActiveSource(source);
       setError(null);
       setStatus(`${file.name} remains local to this browser.`);
@@ -380,6 +480,51 @@ export function ObservatoryApp({
       );
       setPhase("error");
       setStatus("Local trace import failed.");
+    }
+  };
+
+  const savePng = async () => {
+    if (!canvas) return;
+    try {
+      const result = await canvasPngDownloader(canvas, {
+        label: sceneModel?.label ?? selectedTrace?.label ?? "trace",
+      });
+      setStatus(`${result.filename} saved locally.`);
+    } catch (reason) {
+      setStatus(
+        reason instanceof Error
+          ? reason.message
+          : "The PNG snapshot could not be saved.",
+      );
+    }
+  };
+
+  const toggleRecording = async () => {
+    if (!canvasRecorder?.supported) {
+      setStatus(
+        "H.264 MP4 recording unavailable; PNG snapshots remain available.",
+      );
+      return;
+    }
+    try {
+      if (recording) {
+        const result = await canvasRecorder.stop();
+        setRecording(false);
+        if (result?.filename) setStatus(`${result.filename} saved locally.`);
+      } else {
+        canvasRecorder.start();
+        setRecording(true);
+        setStatus(
+          "Recording locally. Stop recording before leaving the Observatory.",
+        );
+      }
+    } catch (reason) {
+      setRecording(false);
+      setStatus(
+        reason instanceof Error
+          ? reason.message
+          : "The MP4 recording could not be saved.",
+      );
     }
   };
 
@@ -413,9 +558,20 @@ export function ObservatoryApp({
             <h1>Silicon Observatory</h1>
           </div>
           <nav className="observatory-actions" aria-label="Observatory modes">
-            <Button asChild variant="outline">
-              <a href="?">Workbench</a>
-            </Button>
+            {recording ? (
+              <Button
+                variant="outline"
+                type="button"
+                disabled
+                title="Stop recording before leaving the Observatory."
+              >
+                Workbench
+              </Button>
+            ) : (
+              <Button asChild variant="outline">
+                <a href="?">Workbench</a>
+              </Button>
+            )}
             <Button
               variant="outline"
               type="button"
@@ -432,9 +588,20 @@ export function ObservatoryApp({
               aria-label="Import local MLX profiler trace"
               onChange={handleLocalTrace}
             />
-            <Button asChild variant="outline">
-              <a href={traceWorkbenchHref(activeSource)}>Open trace</a>
-            </Button>
+            {recording ? (
+              <Button
+                variant="outline"
+                type="button"
+                disabled
+                title="Stop recording before leaving the Observatory."
+              >
+                Open trace
+              </Button>
+            ) : (
+              <Button asChild variant="outline">
+                <a href={traceWorkbenchHref(activeSource)}>Open trace</a>
+              </Button>
+            )}
           </nav>
         </header>
 
@@ -443,6 +610,8 @@ export function ObservatoryApp({
             model={sceneModel}
             frameIndex={frameIndex}
             reducedMotion={reducedMotion}
+            animated={phase === "ready" && playing && !reducedMotion}
+            onCanvasReady={handleCanvasReady}
           />
           <div className="observatory-vignette" aria-hidden="true" />
           <div className="observatory-zones" aria-hidden="true">
@@ -494,6 +663,18 @@ export function ObservatoryApp({
                   >
                     <RotateCcw aria-hidden="true" />
                     Retry
+                  </Button>
+                )}
+                {!activeSource && (
+                  <Button
+                    type="button"
+                    aria-label="Retry trace registry"
+                    onClick={() =>
+                      setRegistryReloadKey((value) => value + 1)
+                    }
+                  >
+                    <RotateCcw aria-hidden="true" />
+                    Retry registry
                   </Button>
                 )}
                 <Button
@@ -597,6 +778,37 @@ export function ObservatoryApp({
                 {value}×
               </Button>
             ))}
+          </div>
+          <div className="transport-export" aria-label="Local export controls">
+            <Button
+              type="button"
+              variant="outline"
+              aria-label="Save PNG frame"
+              disabled={!canvas || !sceneModel}
+              onClick={savePng}
+            >
+              <Download aria-hidden="true" />
+              Save PNG
+            </Button>
+            <Button
+              type="button"
+              variant={recording ? "secondary" : "outline"}
+              aria-label={
+                recording
+                  ? "Stop MP4 recording"
+                  : "Record MP4 animation"
+              }
+              disabled={!sceneModel || !canvasRecorder?.supported}
+              onClick={toggleRecording}
+            >
+              <Film aria-hidden="true" />
+              {recording ? "Stop recording" : "Record MP4"}
+            </Button>
+            {canvasRecorder?.supported ? (
+              <span>X-ready · H.264 · 720p</span>
+            ) : (
+              canvasRecorder && <span>H.264 MP4 recording unavailable</span>
+            )}
           </div>
           <p className="transport-status" aria-live="polite">
             {status}

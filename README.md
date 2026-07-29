@@ -24,6 +24,37 @@ local workbench: no remapping or preprocessing step is required. Use the local
 trace-folder workflow below when you want recursive folder discovery, stable
 manifest metadata, or a private long-running Express session.
 
+## Silicon Observatory
+
+Open `?mode=observatory` for the full-screen Silicon Observatory. Its sample
+gallery discovers Qwen runs from registry metadata rather than fixed trace
+filenames or a fixed showcase count. Previous, play/pause, next, and speed
+controls drive the animation; `.jsonl` and `.ndjson` imports remain local to
+the browser. Long launches are sampled in order across each gallery slot so the
+animation traverses the full selected window instead of replaying only its
+opening dispatches.
+
+The Observatory uses one unified-memory landscape shared by the CPU encode and
+GPU kernel regions. The separate SSD form is contextual: schema v1 has no SSD
+I/O events, so it does not light up as measured activity. Command-buffer timing
+and dispatch order are trace evidence. Model mass is estimated from manifest
+model/quantization metadata, while binding ribbons and particle choreography
+are derived visual encodings. Schema v1 does not contain tensor identities,
+exact buffer access direction, or per-operation execution timestamps.
+Unassigned dispatches use an explicitly labeled ordinal fallback when no
+launch-owned dispatch is available; omissions and deterministic client
+sampling downgrade the evidence state and are disclosed in the signal rail.
+
+Choose **Save PNG** for a still frame or **Record MP4** to capture a silent
+H.264 animation when the browser exposes that `MediaRecorder` codec. Movie
+export letterboxes the live canvas into a fixed 1280×720 frame, records at 30
+fps, and requests an 8 Mbps video bitrate. Those bounds fit [X's published
+video guidance](https://help.x.com/en/using-x/media-studio-faqs); WebM is
+intentionally not presented as X-ready. Both exports are generated locally and
+downloaded through temporary object URLs that are revoked after use. Workbench
+navigation is locked while a recording is live so an unmount cannot discard
+it. The visualizer does not upload traces or rendered media.
+
 ## Quick local start
 
 ```sh

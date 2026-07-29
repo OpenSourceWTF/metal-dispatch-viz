@@ -114,11 +114,27 @@ function selectedLaunch(dataset) {
   const windows = Array.isArray(dataset?.launchWindows)
     ? dataset.launchWindows
     : [];
+  const populated = windows.find(
+    (window) =>
+      Array.isArray(window?.dispatches) && window.dispatches.length > 0,
+  );
+  if (populated) return populated;
+
+  const unassigned = Array.isArray(dataset?.unassignedDispatches)
+    ? dataset.unassignedDispatches
+    : [];
+  if (unassigned.length > 0) {
+    return {
+      startNs: null,
+      endNs: null,
+      dispatches: unassigned,
+      commandBuffers: [],
+      omissions: windows[0]?.omissions,
+      observatoryUnassignedFallback: true,
+    };
+  }
+
   return (
-    windows.find(
-      (window) =>
-        Array.isArray(window?.dispatches) && window.dispatches.length > 0,
-    ) ??
     windows[0] ?? {
       startNs: dataset?.startNs ?? null,
       endNs: dataset?.endNs ?? null,
@@ -251,6 +267,126 @@ function hasMeasuredPlacement(dispatches, launch) {
   );
 }
 
+function dispatchCoverage(dataset, launch) {
+  const displayed = Array.isArray(launch?.dispatches)
+    ? launch.dispatches.length
+    : 0;
+  const sampledTotal = Number.isSafeInteger(
+    launch?.renderSampling?.dispatches?.total,
+  )
+    ? launch.renderSampling.dispatches.total
+    : displayed;
+  const exactUnassigned = Number.isSafeInteger(
+    launch?.omissions?.unplacedDispatches,
+  )
+    ? launch.omissions.unplacedDispatches
+    : 0;
+  const availableUnassigned = Array.isArray(dataset?.unassignedDispatches)
+    ? dataset.unassignedDispatches.length
+    : 0;
+  return Object.freeze({
+    displayed,
+    total: Math.max(displayed, sampledTotal),
+    unassigned: Math.max(exactUnassigned, availableUnassigned),
+    unassignedFallback: launch?.observatoryUnassignedFallback === true,
+  });
+}
+
+function evidenceHealth(trace, health, coverage) {
+  const sourceStatus =
+    stringValue(trace?.source_evidence_status) ??
+    stringValue(trace?.evidence) ??
+    "unspecified";
+  const sourceCompleteness =
+    trace?.source_complete === true || sourceStatus === "verified-complete"
+      ? "complete"
+      : trace?.source_complete === false
+        ? "incomplete"
+        : trace?.source_complete === null ||
+            sourceStatus === "legacy-unverifiable"
+          ? "unverifiable"
+          : "not declared";
+  const windowCompleteness =
+    stringValue(health?.sourceCompleteness) ??
+    (health?.validEvidence === true ? "complete" : "not declared");
+  const droppedRows = Number.isFinite(health?.droppedRows)
+    ? Math.max(0, health.droppedRows)
+    : 0;
+  const malformedRows = Number.isFinite(health?.malformedRows)
+    ? Math.max(0, health.malformedRows)
+    : 0;
+  const issues = [];
+
+  if (sourceCompleteness === "unverifiable") {
+    issues.push("source completeness unverifiable");
+  } else if (sourceCompleteness === "incomplete") {
+    issues.push("source capture incomplete");
+  } else if (
+    sourceCompleteness === "not declared" ||
+    trace?.valid_evidence === false
+  ) {
+    issues.push("source provenance is not verified");
+  }
+  if (windowCompleteness !== "complete") {
+    issues.push(`${windowCompleteness} trace window`);
+  }
+  if (droppedRows > 0) {
+    issues.push(
+      `${droppedRows.toLocaleString("en-US")} dropped ${
+        droppedRows === 1 ? "row" : "rows"
+      }`,
+    );
+  }
+  if (malformedRows > 0) {
+    issues.push(
+      `${malformedRows.toLocaleString("en-US")} malformed ${
+        malformedRows === 1 ? "row" : "rows"
+      }`,
+    );
+  }
+  if (health?.validEvidence === false && issues.length === 0) {
+    issues.push("trace window is not valid evidence");
+  }
+  if (coverage.unassigned > 0) {
+    const count = coverage.unassigned.toLocaleString("en-US");
+    const dispatchLabel =
+      coverage.unassigned === 1 ? "dispatch" : "dispatches";
+    issues.push(
+      coverage.unassignedFallback
+        ? `${count} unassigned ${dispatchLabel} shown with ordinal fallback`
+        : `${count} unassigned ${dispatchLabel} omitted from this launch view`,
+    );
+  }
+  if (coverage.total > coverage.displayed) {
+    issues.push(
+      `${coverage.displayed.toLocaleString("en-US")} of ${coverage.total.toLocaleString(
+        "en-US",
+      )} launch dispatches shown by deterministic sampling`,
+    );
+  }
+
+  const verified =
+    sourceStatus === "verified-complete" &&
+    health?.validEvidence === true &&
+    issues.length === 0;
+  return Object.freeze({
+    level: verified ? "verified" : "warning",
+    sourceStatus,
+    sourceCompleteness,
+    windowLabel:
+      trace?.artifact_status === "curated-window"
+        ? "Curated window"
+        : "Trace window",
+    windowCompleteness,
+    validEvidence: verified,
+    droppedRows,
+    malformedRows,
+    summary: verified
+      ? "Verified source · complete trace window"
+      : issues.join(" · ") || "Evidence status is not declared",
+  });
+}
+
 export function buildSceneModel({ trace = {}, dataset = {} } = {}) {
   const launch = selectedLaunch(dataset);
   const dispatches = Array.isArray(launch?.dispatches)
@@ -269,6 +405,7 @@ export function buildSceneModel({ trace = {}, dataset = {} } = {}) {
   const measuredPlacement = hasMeasuredPlacement(dispatches, launch);
   const geometrySource =
     parameterBillions === null ? "trace topology" : "manifest metadata";
+  const coverage = dispatchCoverage(dataset, launch);
 
   return Object.freeze({
     id: stableTraceIdentity(trace),
@@ -301,11 +438,14 @@ export function buildSceneModel({ trace = {}, dataset = {} } = {}) {
     }),
     kernelFamilies: kernelFamilyCensus(dispatches),
     frames: buildFrames(dispatches, launch, configuredWidth),
+    dispatchCoverage: coverage,
     evidence: Object.freeze({
       timing: measuredPlacement
         ? "measured command-buffer timing"
         : "ordinal fallback",
-      dispatch: "measured order",
+      dispatch: launch?.observatoryUnassignedFallback
+        ? "unassigned ordinal fallback"
+        : "measured order",
       memory:
         parameterBillions === null
           ? "architecture metadata unavailable"
@@ -313,6 +453,7 @@ export function buildSceneModel({ trace = {}, dataset = {} } = {}) {
       binding: "derived binding activity",
       storage: "unavailable in schema v1",
     }),
+    evidenceHealth: evidenceHealth(trace, dataset?.health, coverage),
     health: dataset?.health ?? null,
   });
 }
