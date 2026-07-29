@@ -94,30 +94,35 @@ function qwenDenseArchitecture() {
 test("gallery discovery is metadata-driven and stable without fixed filenames or counts", () => {
   const registry = {
     traces: [
-      { id: "x", model: "GLM-5.2", relativePath: "glm.jsonl" },
+      {
+        id: "x",
+        model: "Unselected 1B",
+        relativePath: "x.jsonl",
+      },
       {
         id: "a",
-        model: "Qwen3.6 35B-A3B",
+        model: "Mixture 35B",
         relativePath: "anything-a.jsonl",
-        mode: "MTP K1",
+        observatory: { enabled: true, order: 2 },
       },
       {
         id: "b",
-        label: "Qwen3.6 27B",
+        label: "Dense 27B",
         relativePath: "anything-b.jsonl",
-        mode: "MTP K3",
+        observatory: { enabled: true, order: 1 },
       },
       {
         id: "c",
-        checkpoint: "example/Qwen-7B",
+        checkpoint: "example/7B",
         relativePath: "anything-c.jsonl",
+        observatory: { enabled: true },
       },
     ],
   };
 
   assert.deepEqual(
     discoverObservatoryGallery(registry).map(({ id }) => id),
-    ["c", "b", "a"],
+    ["b", "a", "c"],
   );
   assert.deepEqual(discoverObservatoryGallery({ traces: [] }), []);
   assert.deepEqual(discoverObservatoryGallery(null), []);

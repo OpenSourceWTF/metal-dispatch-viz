@@ -42,14 +42,6 @@ function stableTraceIdentity(trace) {
   );
 }
 
-function traceSearchText(trace) {
-  return [trace?.model, trace?.label, trace?.checkpoint]
-    .map(stringValue)
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
 export function parseParameterCountBillions(modelLabel) {
   const match = PARAMETER_COUNT_PATTERN.exec(stringValue(modelLabel) ?? "");
   if (!match) return null;
@@ -67,9 +59,16 @@ function traceParameterCount(trace) {
 export function discoverObservatoryGallery(registry) {
   const traces = Array.isArray(registry?.traces) ? registry.traces : [];
   return traces
-    .filter((trace) => traceSearchText(trace).includes("qwen"))
+    .filter((trace) => trace?.observatory?.enabled === true)
     .slice()
     .sort((left, right) => {
+      const leftOrder = Number.isSafeInteger(left?.observatory?.order)
+        ? left.observatory.order
+        : Number.POSITIVE_INFINITY;
+      const rightOrder = Number.isSafeInteger(right?.observatory?.order)
+        ? right.observatory.order
+        : Number.POSITIVE_INFINITY;
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
       const leftCount = traceParameterCount(left);
       const rightCount = traceParameterCount(right);
       if (leftCount !== null && rightCount !== null && leftCount !== rightCount) {

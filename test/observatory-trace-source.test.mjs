@@ -8,24 +8,26 @@ import {
   readLocalArchitectureConfig,
 } from "../src/observatory/trace-source.js";
 
-test("registry loading returns a metadata-discovered Qwen gallery", async () => {
+test("registry loading returns only config-enabled Observatory traces", async () => {
   const requests = [];
   const registry = {
     traces: [
       {
-        id: "q35",
-        model: "Qwen3.6 35B-A3B",
-        relativePath: "q35.jsonl",
+        id: "second",
+        model: "Configured mixture",
+        relativePath: "second.jsonl",
+        observatory: { enabled: true, order: 2 },
       },
       {
-        id: "glm",
-        model: "GLM-5.2",
-        relativePath: "glm.jsonl",
+        id: "not-selected",
+        model: "Unselected model",
+        relativePath: "other.jsonl",
       },
       {
-        id: "q27",
-        model: "Qwen3.6 27B",
-        relativePath: "q27.jsonl",
+        id: "first",
+        model: "Configured dense",
+        relativePath: "first.jsonl",
+        observatory: { enabled: true, order: 1 },
       },
     ],
   };
@@ -47,7 +49,7 @@ test("registry loading returns a metadata-discovered Qwen gallery", async () => 
   assert.equal(result.registry, registry);
   assert.deepEqual(
     result.gallery.map(({ id }) => id),
-    ["q27", "q35"],
+    ["first", "second"],
   );
 });
 

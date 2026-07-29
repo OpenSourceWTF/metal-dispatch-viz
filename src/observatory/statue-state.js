@@ -162,7 +162,7 @@ function hardwarePresentation(model, frame) {
     cpu: {
       dispatchPulse: frame?.commandBufferChanged === true,
       commandBuffer: frame?.commandBuffer ?? null,
-      evidence: "measured",
+      evidence: frame?.commandBuffer ? "measured" : "unavailable",
     },
     gpu: {
       active: gpuActive,

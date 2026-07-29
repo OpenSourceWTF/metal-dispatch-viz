@@ -1,41 +1,23 @@
-import {
-  ChevronLeft,
-  ChevronRight,
-  Download,
-  Film,
-  Pause,
-  Play,
-  RotateCcw,
-  Upload,
-} from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createAnalysisSession } from "../ProfilerApp.jsx";
-import { Badge } from "../components/ui/badge.jsx";
 import { Button } from "../components/ui/button.jsx";
-import { Progress } from "../components/ui/progress.jsx";
-import { buildSceneModel } from "./scene-model.js";
 import {
   createCanvasRecorder,
   downloadCanvasPng,
-  MAX_RECORDING_DURATION_MS,
 } from "./export.js";
 import { ObservatoryScene } from "./ObservatoryScene.jsx";
+import { buildSceneModel } from "./scene-model.js";
 import {
   nextObservatoryFrameIndex,
   observatoryFrameStride,
 } from "./scene-timing.js";
-import { buildStoryFrame } from "./story-frame.js";
+import { buildStatueFrame } from "./statue-state.js";
 import {
   createGalleryTraceSource,
   createLocalTraceSource,
   loadObservatoryRegistry,
+  readLocalArchitectureConfig,
 } from "./trace-source.js";
 import "./observatory.css";
 
@@ -51,7 +33,9 @@ function useReducedMotion(forcedValue) {
       setPreferred(forcedValue);
       return undefined;
     }
-    const query = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const query = globalThis.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    );
     if (!query) return undefined;
     const update = () => setPreferred(query.matches);
     update();
@@ -63,14 +47,16 @@ function useReducedMotion(forcedValue) {
 }
 
 function progressPercent(progress) {
+  if (progress?.done) return 100;
   const bytes = Number.isFinite(progress?.sourceBytes)
     ? progress.sourceBytes
     : 0;
   const total = Number.isFinite(progress?.totalBytes)
     ? progress.totalBytes
     : 0;
-  if (progress?.done) return 100;
-  return total > 0 ? Math.min(99, Math.round((bytes / total) * 100)) : 0;
+  return total > 0
+    ? Math.min(99, Math.round((bytes / total) * 100))
+    : 0;
 }
 
 function wrapIndex(index, length) {
@@ -84,119 +70,23 @@ function traceWorkbenchHref(source) {
     : "?";
 }
 
-function displayEvidence(value) {
-  return typeof value === "string" && value.trim() !== ""
-    ? value.replaceAll("-", " ")
-    : "unspecified";
-}
-
-const REGION_EXPLANATIONS = Object.freeze({
-  memory:
-    "Aggregated model blocks in unified memory. Illumination is a derived binding presentation, not an allocation map.",
-  kernel:
-    "The active kernel family and recorded dispatch grid. Math particles appear only while this operation is active.",
-  gpu:
-    "Representative lanes, not physical cores. The exact recorded dispatch grid remains visible beside the aggregation.",
-});
-
-function EvidenceDetails({ activeFrame, model }) {
-  const configuredWidth = model?.speculation?.configuredWidth;
-  const modelMass = model?.model?.estimatedWeightGigabytes;
-  const health = model?.evidenceHealth;
-  return (
-    <div className="evidence-details">
-      <div className="evidence-heading">
-        <span>Signal key</span>
-        <Badge variant="outline">
-          {health?.level === "verified"
-            ? "evidence verified"
-            : "evidence caution"}
-        </Badge>
-      </div>
-      <p className="evidence-status">
-        {health?.summary ?? "Evidence health is resolved with the trace."}
-      </p>
-      <dl>
-        <div>
-          <dt>Source provenance</dt>
-          <dd>
-            {displayEvidence(health?.sourceStatus ?? model?.sourceEvidence)}
-          </dd>
-        </div>
-        <div>
-          <dt>Source completeness</dt>
-          <dd>{displayEvidence(health?.sourceCompleteness)}</dd>
-        </div>
-        <div>
-          <dt>{health?.windowLabel ?? "Trace window"}</dt>
-          <dd>{displayEvidence(health?.windowCompleteness)}</dd>
-        </div>
-        <div>
-          <dt>Timing</dt>
-          <dd>{model?.evidence?.timing ?? "awaiting trace"}</dd>
-        </div>
-        <div>
-          <dt>Dispatch</dt>
-          <dd>{model?.evidence?.dispatch ?? "awaiting trace"}</dd>
-        </div>
-        <div>
-          <dt>Current kernel</dt>
-          <dd>{activeFrame?.kernel ?? "awaiting trace"}</dd>
-        </div>
-        <div>
-          <dt>Frame coverage</dt>
-          <dd>
-            {model?.dispatchCoverage
-              ? `${model.dispatchCoverage.displayed.toLocaleString()} of ${model.dispatchCoverage.total.toLocaleString()} launch dispatches`
-              : "awaiting trace"}
-          </dd>
-        </div>
-        <div>
-          <dt>Model mass</dt>
-          <dd>
-            {modelMass === null || modelMass === undefined
-              ? "architecture metadata unavailable"
-              : `~${modelMass} GB manifest estimate`}
-          </dd>
-        </div>
-        <div>
-          <dt>Speculation</dt>
-          <dd>
-            {configuredWidth
-              ? `MTP K${configuredWidth} configured; acceptance not measured`
-              : "not declared by trace metadata"}
-          </dd>
-        </div>
-        <div>
-          <dt>Memory ribbons</dt>
-          <dd>Binding activity is derived from bind and setBytes counts.</dd>
-        </div>
-        <div>
-          <dt>Storage</dt>
-          <dd>SSD activity is not present in profiler schema v1.</dd>
-        </div>
-      </dl>
-    </div>
-  );
-}
-
 function Loader({ progress }) {
   const percent = progressPercent(progress);
   return (
     <section className="observatory-loader" aria-busy="true">
-      <div className="loader-orbit" aria-hidden="true">
+      <div className="loader-sculpture" aria-hidden="true">
         <span />
         <span />
         <span />
+        <i />
       </div>
-      <p className="observatory-kicker">Trace cartography</p>
-      <strong>Mapping unified memory</strong>
-      <span>
-        {progress?.parsedRows
-          ? `${progress.parsedRows.toLocaleString()} records resolved`
-          : "Locating command buffers and kernel families"}
-      </span>
-      <Progress value={percent} aria-label="Trace loading progress" />
+      <p>CALIBRATING ARCHITECTURE</p>
+      <strong>{percent.toString().padStart(2, "0")}</strong>
+      <progress
+        value={percent}
+        max="100"
+        aria-label="Trace loading progress"
+      />
     </section>
   );
 }
@@ -205,6 +95,7 @@ export function ObservatoryApp({
   registryLoader = loadObservatoryRegistry,
   analysisSessionFactory = createAnalysisSession,
   localTraceSourceFactory = createLocalTraceSource,
+  localArchitectureReader = readLocalArchitectureConfig,
   SceneComponent = ObservatoryScene,
   canvasPngDownloader = downloadCanvasPng,
   canvasRecorderFactory = createCanvasRecorder,
@@ -217,26 +108,30 @@ export function ObservatoryApp({
   const [hosted, setHosted] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [activeSource, setActiveSource] = useState(null);
+  const [architectureOverride, setArchitectureOverride] = useState(null);
+  const [datasetState, setDatasetState] = useState(null);
+  const [sceneModel, setSceneModel] = useState(null);
   const [phase, setPhase] = useState("registry-loading");
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState(null);
-  const [sceneModel, setSceneModel] = useState(null);
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(!reducedMotion);
   const [speed, setSpeed] = useState(1);
-  const [explainedRegion, setExplainedRegion] = useState("kernel");
   const [reloadKey, setReloadKey] = useState(0);
   const [registryReloadKey, setRegistryReloadKey] = useState(0);
-  const [status, setStatus] = useState("Opening the trace registry.");
+  const [status, setStatus] = useState("Opening trace registry.");
   const [canvas, setCanvas] = useState(null);
   const [canvasRecorder, setCanvasRecorder] = useState(null);
   const [recording, setRecording] = useState(false);
-  const fileInputRef = useRef(null);
+
+  const traceInputRef = useRef(null);
+  const configInputRef = useRef(null);
   const loadGeneration = useRef(0);
   const selectionRevision = useRef(0);
   const sceneLabelRef = useRef("trace");
   sceneLabelRef.current =
     sceneModel?.label ?? activeSource?.trace?.label ?? "trace";
+
   const handleCanvasReady = useCallback((nextCanvas) => {
     setCanvas(nextCanvas);
   }, []);
@@ -253,7 +148,7 @@ export function ObservatoryApp({
     if (!result?.filename) return;
     setStatus(
       result.reason === "duration-limit"
-        ? `${result.filename} saved at the 60-second recording limit.`
+        ? `${result.filename} saved at the recording limit.`
         : `${result.filename} saved locally.`,
     );
   }, []);
@@ -301,9 +196,10 @@ export function ObservatoryApp({
         if (nextGallery.length === 0) {
           setActiveSource(null);
           setPhase("empty");
-          setStatus("No Qwen gallery traces were found.");
+          setStatus("No Observatory gallery traces were configured.");
           return;
         }
+        setArchitectureOverride(null);
         setActiveSource(
           createGalleryTraceSource({
             trace: nextGallery[0],
@@ -322,7 +218,6 @@ export function ObservatoryApp({
             : new Error("The trace registry could not be opened."),
         );
         setPhase("error");
-        setStatus("The trace registry could not be opened.");
       },
     );
     return () => {
@@ -343,6 +238,7 @@ export function ObservatoryApp({
     setPhase("trace-loading");
     setError(null);
     setProgress(null);
+    setDatasetState(null);
     setSceneModel(null);
     setFrameIndex(0);
     setStatus(`Loading ${activeSource.trace?.label ?? "trace"}.`);
@@ -358,24 +254,8 @@ export function ObservatoryApp({
       void session.load(activeSource.url).then(
         (loaded) => {
           if (!current || generation !== loadGeneration.current) return;
-          try {
-            const model = buildSceneModel({
-              trace: activeSource.trace,
-              dataset: loaded?.dataset,
-            });
-            setSceneModel(model);
-            setProgress((previous) => ({ ...previous, done: true }));
-            setPhase("ready");
-            setStatus(`${model.label} is ready.`);
-          } catch (reason) {
-            setError(
-              reason instanceof Error
-                ? reason
-                : new Error("The selected trace could not be visualized."),
-            );
-            setPhase("error");
-            setStatus("Trace visualization failed.");
-          }
+          setProgress((previous) => ({ ...previous, done: true }));
+          setDatasetState({ value: loaded?.dataset });
         },
         (reason) => {
           if (!current || generation !== loadGeneration.current) return;
@@ -385,7 +265,6 @@ export function ObservatoryApp({
               : new Error("The selected trace could not be loaded."),
           );
           setPhase("error");
-          setStatus("Trace loading failed.");
         },
       );
     } catch (reason) {
@@ -403,12 +282,42 @@ export function ObservatoryApp({
     };
   }, [activeSource, analysisSessionFactory, reloadKey]);
 
+  useEffect(() => {
+    if (!activeSource || datasetState === null) return;
+    try {
+      const trace = architectureOverride
+        ? {
+            ...activeSource.trace,
+            architecture: architectureOverride,
+          }
+        : activeSource.trace;
+      const model = buildSceneModel({
+        trace,
+        dataset: datasetState.value,
+      });
+      setSceneModel(model);
+      setFrameIndex(0);
+      setPhase("ready");
+      setError(null);
+      setStatus(`${model.label} is ready.`);
+    } catch (reason) {
+      setSceneModel(null);
+      setError(
+        reason instanceof Error
+          ? reason
+          : new Error("The selected trace could not be visualized."),
+      );
+      setPhase("error");
+    }
+  }, [activeSource, architectureOverride, datasetState]);
+
   const activateGallery = useCallback(
     (requestedIndex) => {
       const nextIndex = wrapIndex(requestedIndex, gallery.length);
       if (nextIndex === null) return;
       selectionRevision.current += 1;
       setGalleryIndex(nextIndex);
+      setArchitectureOverride(null);
       setActiveSource(
         createGalleryTraceSource({
           trace: gallery[nextIndex],
@@ -419,7 +328,6 @@ export function ObservatoryApp({
     },
     [baseUrl, gallery, hosted],
   );
-
   const nextGallery = useCallback(
     () => activateGallery(galleryIndex + 1),
     [activateGallery, galleryIndex],
@@ -429,38 +337,38 @@ export function ObservatoryApp({
     [activateGallery, galleryIndex],
   );
 
+  const frameCount = sceneModel?.frames?.length ?? 0;
   useEffect(() => {
     if (
       phase !== "ready" ||
       !playing ||
       reducedMotion ||
-      sceneModel?.frames?.length < 2
+      frameCount < 2
     ) {
       return undefined;
     }
     const delay = Math.max(48, 140 / speed);
     const stride = observatoryFrameStride({
-      frameCount: sceneModel.frames.length,
+      frameCount,
       frameDelayMs: delay,
       galleryDurationMs: galleryDurationMs / speed,
     });
     const timer = setInterval(() => {
-      setFrameIndex(
-        (index) =>
-          nextObservatoryFrameIndex({
-            current: index,
-            frameCount: sceneModel.frames.length,
-            stride,
-          }),
+      setFrameIndex((index) =>
+        nextObservatoryFrameIndex({
+          current: index,
+          frameCount,
+          stride,
+        }),
       );
     }, delay);
     return () => clearInterval(timer);
   }, [
+    frameCount,
     galleryDurationMs,
     phase,
     playing,
     reducedMotion,
-    sceneModel,
     speed,
   ]);
 
@@ -477,7 +385,7 @@ export function ObservatoryApp({
     const timer = setTimeout(nextGallery, galleryDurationMs / speed);
     return () => clearTimeout(timer);
   }, [
-    activeSource,
+    activeSource?.kind,
     gallery.length,
     galleryDurationMs,
     nextGallery,
@@ -487,99 +395,6 @@ export function ObservatoryApp({
     speed,
   ]);
 
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      const tagName = event.target?.tagName?.toLowerCase();
-      if (["input", "select", "textarea", "button", "a"].includes(tagName)) {
-        return;
-      }
-      if (event.key === "ArrowRight") {
-        nextGallery();
-      } else if (event.key === "ArrowLeft") {
-        previousGallery();
-      } else if (event.key === " ") {
-        event.preventDefault();
-        if (!reducedMotion) setPlaying((value) => !value);
-      }
-    };
-    globalThis.addEventListener?.("keydown", onKeyDown);
-    return () => globalThis.removeEventListener?.("keydown", onKeyDown);
-  }, [nextGallery, previousGallery, reducedMotion]);
-
-  const handleLocalTrace = (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    try {
-      const source = localTraceSourceFactory(file);
-      selectionRevision.current += 1;
-      setActiveSource(source);
-      setError(null);
-      setStatus(`${file.name} remains local to this browser.`);
-    } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason
-          : new Error("The selected file is not a profiler trace."),
-      );
-      setPhase("error");
-      setStatus("Local trace import failed.");
-    }
-  };
-
-  const savePng = async () => {
-    if (!canvas) return;
-    try {
-      const result = await canvasPngDownloader(canvas, {
-        label: sceneModel?.label ?? selectedTrace?.label ?? "trace",
-      });
-      setStatus(`${result.filename} saved locally.`);
-    } catch (reason) {
-      setStatus(
-        reason instanceof Error
-          ? reason.message
-          : "The PNG snapshot could not be saved.",
-      );
-    }
-  };
-
-  const toggleRecording = async () => {
-    if (!canvasRecorder?.supported) {
-      setStatus(
-        "H.264 MP4 recording unavailable; PNG snapshots remain available.",
-      );
-      return;
-    }
-    try {
-      if (recording) {
-        const result = await canvasRecorder.stop();
-        setRecording(false);
-        if (result?.filename) setStatus(`${result.filename} saved locally.`);
-      } else {
-        canvasRecorder.start();
-        setRecording(true);
-        setStatus(
-          "Recording locally. Stop recording before leaving the Observatory.",
-        );
-      }
-    } catch (reason) {
-      setRecording(false);
-      setStatus(
-        reason instanceof Error
-          ? reason.message
-          : "The MP4 recording could not be saved.",
-      );
-    }
-  };
-
-  const selectedTrace = activeSource?.trace;
-  const galleryPosition =
-    activeSource?.kind === "gallery" ? galleryIndex + 1 : null;
-  const storyFrame = useMemo(
-    () => buildStoryFrame(sceneModel, frameIndex),
-    [frameIndex, sceneModel],
-  );
-  const frameCount = sceneModel?.frames?.length ?? 0;
   useEffect(() => {
     const hasGalleryTransition =
       activeSource?.kind === "gallery" && gallery.length > 1;
@@ -600,6 +415,45 @@ export function ObservatoryApp({
     phase,
     playing,
   ]);
+
+  const handleLocalTrace = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || recording) return;
+    try {
+      const source = localTraceSourceFactory(file);
+      selectionRevision.current += 1;
+      setArchitectureOverride(null);
+      setActiveSource(source);
+      setError(null);
+      setStatus(`${file.name} remains local to this browser.`);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason
+          : new Error("The selected file is not a profiler trace."),
+      );
+      setPhase("error");
+    }
+  };
+
+  const handleLocalConfig = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || recording) return;
+    try {
+      const architecture = await localArchitectureReader(file);
+      setArchitectureOverride(architecture);
+      setStatus(`${file.name} installed locally for the active trace.`);
+    } catch (reason) {
+      setStatus(
+        reason instanceof Error
+          ? reason.message
+          : "The checkpoint configuration could not be read.",
+      );
+    }
+  };
+
   const seekFrame = useCallback(
     (nextIndex) => {
       setPlaying(false);
@@ -624,393 +478,317 @@ export function ObservatoryApp({
     },
     [frameCount],
   );
-  const title = sceneModel?.label ?? selectedTrace?.label ?? "Silicon Observatory";
-  const metadataLine = [
-    selectedTrace?.model,
-    selectedTrace?.mode,
-    selectedTrace?.quantization,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+
+  const savePng = useCallback(async () => {
+    if (!canvas) return;
+    try {
+      const result = await canvasPngDownloader(canvas, {
+        label: sceneLabelRef.current,
+      });
+      setStatus(`${result.filename} saved locally.`);
+    } catch (reason) {
+      setStatus(
+        reason instanceof Error
+          ? reason.message
+          : "The PNG snapshot could not be saved.",
+      );
+    }
+  }, [canvas, canvasPngDownloader]);
+
+  const toggleRecording = useCallback(async () => {
+    if (!canvasRecorder?.supported) {
+      setStatus(
+        "H.264 MP4 recording unavailable; PNG snapshots remain available.",
+      );
+      return;
+    }
+    try {
+      if (recording) {
+        const result = await canvasRecorder.stop();
+        setRecording(false);
+        if (result?.filename) {
+          setStatus(`${result.filename} saved locally.`);
+        }
+      } else {
+        canvasRecorder.start();
+        setRecording(true);
+        setStatus("Recording locally.");
+      }
+    } catch (reason) {
+      setRecording(false);
+      setStatus(
+        reason instanceof Error
+          ? reason.message
+          : "The MP4 recording could not be saved.",
+      );
+    }
+  }, [canvasRecorder, recording]);
+
+  const onSceneCommand = useCallback(
+    (command) => {
+      if (command === "previous") previousGallery();
+      if (command === "next") nextGallery();
+      if (command === "toggle" && !reducedMotion) {
+        setPlaying((value) => !value);
+      }
+      if (command === "import" && !recording) {
+        traceInputRef.current?.click();
+      }
+      if (command === "png") void savePng();
+      if (command === "record") void toggleRecording();
+    },
+    [
+      nextGallery,
+      previousGallery,
+      recording,
+      reducedMotion,
+      savePng,
+      toggleRecording,
+    ],
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      const tagName = event.target?.tagName?.toLowerCase();
+      if (
+        ["input", "select", "textarea", "button", "a"].includes(
+          tagName,
+        )
+      ) {
+        return;
+      }
+      if (event.key === "ArrowRight") nextGallery();
+      if (event.key === "ArrowLeft") previousGallery();
+      if (event.key === " " && !reducedMotion) {
+        event.preventDefault();
+        setPlaying((value) => !value);
+      }
+      if (event.key.toLowerCase() === "i" && !recording) {
+        traceInputRef.current?.click();
+      }
+    };
+    globalThis.addEventListener?.("keydown", onKeyDown);
+    return () =>
+      globalThis.removeEventListener?.("keydown", onKeyDown);
+  }, [nextGallery, previousGallery, recording, reducedMotion]);
+
+  const presentation = useMemo(
+    () => buildStatueFrame(sceneModel, frameIndex),
+    [frameIndex, sceneModel],
+  );
 
   return (
-    <>
-      <a className="observatory-skip-link" href="#observatory-stage">
-        Skip to observatory
-      </a>
-      <main
-        id="observatory-stage"
-        className="observatory"
-        data-phase={phase}
-        tabIndex="-1"
-      >
-        <header className="observatory-header">
-          <div className="observatory-identity">
-            <p className="observatory-kicker">Metal Dispatch Visualizer</p>
-            <h1>Silicon Observatory</h1>
-          </div>
-          <nav className="observatory-actions" aria-label="Observatory modes">
-            {recording ? (
-              <Button
-                variant="outline"
-                type="button"
-                disabled
-                title="Stop recording before leaving the Observatory."
-              >
-                Workbench
-              </Button>
-            ) : (
-              <Button asChild variant="outline">
-                <a href="?">Workbench</a>
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload aria-hidden="true" />
-              Import trace
-            </Button>
-            <input
-              ref={fileInputRef}
-              className="observatory-file-input"
-              type="file"
-              accept=".jsonl,.ndjson"
-              aria-label="Import local MLX profiler trace"
-              onChange={handleLocalTrace}
-            />
-            {recording ? (
-              <Button
-                variant="outline"
-                type="button"
-                disabled
-                title="Stop recording before leaving the Observatory."
-              >
-                Open trace
-              </Button>
-            ) : (
-              <Button asChild variant="outline">
-                <a href={traceWorkbenchHref(activeSource)}>Open trace</a>
-              </Button>
-            )}
-          </nav>
-        </header>
+    <main
+      id="observatory-stage"
+      className="observatory"
+      data-phase={phase}
+    >
+      <h1 className="observatory-sr-only">Silicon Observatory</h1>
 
-        <section className="observatory-stage" aria-label="Trace animation">
-          <SceneComponent
-            model={sceneModel}
-            storyFrame={storyFrame}
-            frameIndex={frameIndex}
-            reducedMotion={reducedMotion}
-            animated={phase === "ready" && playing && !reducedMotion}
-            onCanvasReady={handleCanvasReady}
-          />
-          <div className="observatory-vignette" aria-hidden="true" />
+      <SceneComponent
+        model={sceneModel}
+        presentation={presentation}
+        frameIndex={frameIndex}
+        reducedMotion={reducedMotion}
+        animated={phase === "ready" && playing && !reducedMotion}
+        onCanvasReady={handleCanvasReady}
+        onCommand={onSceneCommand}
+      />
+      <div className="observatory-vignette" aria-hidden="true" />
+      <div className="observatory-scanline" aria-hidden="true" />
 
-          {(phase === "registry-loading" || phase === "trace-loading") && (
-            <Loader progress={progress} />
-          )}
+      {(phase === "registry-loading" || phase === "trace-loading") && (
+        <Loader progress={progress} />
+      )}
 
-          {phase === "empty" && (
-            <section className="observatory-state-card">
-              <p className="observatory-kicker">Gallery empty</p>
-              <h2>No Qwen gallery traces</h2>
-              <p>
-                Import a local MLX profiler trace to map its kernel topology.
-              </p>
-              <Button type="button" onClick={() => fileInputRef.current?.click()}>
-                <Upload aria-hidden="true" />
-                Import local trace
-              </Button>
-            </section>
-          )}
-
-          {phase === "error" && (
-            <section className="observatory-state-card" role="alert">
-              <p className="observatory-kicker">Signal interrupted</p>
-              <h2>{error?.message ?? "Trace loading failed"}</h2>
-              <p>
-                {activeSource
-                  ? "Try loading this trace again, or import another capture."
-                  : "Retry the registry or import a local profiler trace."}
-              </p>
-              <div>
-                {activeSource && (
-                  <Button
-                    type="button"
-                    aria-label="Retry trace loading"
-                    onClick={() => setReloadKey((value) => value + 1)}
-                  >
-                    <RotateCcw aria-hidden="true" />
-                    Retry
-                  </Button>
-                )}
-                {!activeSource && (
-                  <Button
-                    type="button"
-                    aria-label="Retry trace registry"
-                    onClick={() =>
-                      setRegistryReloadKey((value) => value + 1)
-                    }
-                  >
-                    <RotateCcw aria-hidden="true" />
-                    Retry registry
-                  </Button>
-                )}
-                <Button
-                  variant="outline"
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload aria-hidden="true" />
-                  Import trace
-                </Button>
-              </div>
-            </section>
-          )}
-
-          <section className="observatory-story-hud" aria-label="Active trace">
-            <div className="observatory-trace-title">
-              <p className="observatory-kicker">
-                {galleryPosition
-                  ? `Gallery ${galleryPosition} / ${gallery.length}`
-                  : "Local trace"}
-              </p>
-              <h2>{title}</h2>
-              <p>{metadataLine || "Architecture metadata unavailable"}</p>
-            </div>
-
-            <section
-              className="observatory-progress"
-              aria-label="Captured trace progress"
-            >
-              <div className="progress-copy">
-                <span>{storyFrame.progress.capturedWindowLabel}</span>
-                <strong>{storyFrame.progress.percent}%</strong>
-                <span>Buffer {storyFrame.progress.bufferLabel}</span>
-                <span>Dispatch {storyFrame.progress.dispatchLabel}</span>
-                <span>{storyFrame.progress.positionLabel}</span>
-                {storyFrame.progress.measuredDurationLabel ? (
-                  <span>{storyFrame.progress.measuredDurationLabel}</span>
-                ) : null}
-              </div>
-              <input
-                aria-label="Captured window position"
-                type="range"
-                min="0"
-                max={Math.max(0, frameCount - 1)}
-                step="1"
-                value={Math.min(frameIndex, Math.max(0, frameCount - 1))}
-                disabled={frameCount < 2}
-                onInput={(event) =>
-                  seekFrame(Number(event.currentTarget.value))
-                }
-              />
-            </section>
-
-            <section
-              className="active-operation"
-              aria-label="Active kernel operation"
-            >
-              <p className="observatory-kicker">Active kernel</p>
-              <h3>{storyFrame.active.family}</h3>
-              <span>{storyFrame.active.shapeLabel}</span>
-              <code>{storyFrame.active.kernel}</code>
-            </section>
-
-            <div
-              className="observatory-legend"
-              aria-label="Animation legend"
-            >
-              <span data-signal="memory">
-                <i aria-hidden="true" /> Unified memory
-              </span>
-              <span data-signal="math">
-                <i aria-hidden="true" /> Active math
-              </span>
-              <span data-signal="speculation">
-                <i aria-hidden="true" /> Configured speculation
-              </span>
-            </div>
-
-            <div
-              className="observatory-evidence-chip"
-              data-evidence-level={
-                sceneModel?.evidenceHealth?.level ?? "pending"
-              }
-            >
-              <Badge variant="outline">
-                {sceneModel?.evidenceHealth?.level === "verified"
-                  ? "Measured trace"
-                  : "Evidence caution"}
-              </Badge>
-              <span className="evidence-chip-summary">
-                {storyFrame.evidence.summary}
-              </span>
-            </div>
-          </section>
-
-          <section className="observatory-region-guide">
-            <nav aria-label="Explain stage regions">
-              {[
-                ["memory", "Unified memory"],
-                ["kernel", "Active kernel"],
-                ["gpu", "GPU lanes"],
-              ].map(([region, label]) => (
-                <button
-                  key={region}
-                  type="button"
-                  aria-pressed={explainedRegion === region}
-                  onFocus={() => setExplainedRegion(region)}
-                  onPointerEnter={() => setExplainedRegion(region)}
-                  onClick={() => setExplainedRegion(region)}
-                >
-                  {label}
-                </button>
-              ))}
-            </nav>
-            <p aria-live="polite">
-              {REGION_EXPLANATIONS[explainedRegion]}
-            </p>
-          </section>
+      {phase === "empty" && (
+        <section className="observatory-state-card">
+          <p>NO CONFIGURED SIGNAL</p>
+          <Button
+            type="button"
+            onClick={() => traceInputRef.current?.click()}
+          >
+            OPEN TRACE
+          </Button>
         </section>
+      )}
 
-        <details
-          className="observatory-evidence"
-          aria-label="What is measured?"
-          data-evidence-level={
-            sceneModel?.evidenceHealth?.level ?? "pending"
-          }
-        >
-          <summary>What is measured?</summary>
-          <EvidenceDetails
-            model={sceneModel}
-            activeFrame={storyFrame.active}
-          />
-        </details>
-
-        <footer
-          className="observatory-transport"
-          aria-label="Observatory playback controls"
-        >
-          <div className="transport-primary">
-            <Button
-              variant="outline"
-              size="icon-lg"
-              type="button"
-              aria-label="Previous gallery trace"
-              disabled={gallery.length < 2}
-              onClick={previousGallery}
-            >
-              <ChevronLeft aria-hidden="true" />
-            </Button>
-            <Button
-              size="icon-lg"
-              type="button"
-              aria-label={
-                reducedMotion
-                  ? "Animation disabled by reduced motion"
-                  : playing
-                    ? "Pause animation"
-                    : "Play animation"
-              }
-              aria-pressed={playing}
-              disabled={reducedMotion}
-              title={
-                reducedMotion
-                  ? "Reduced motion is active; use the dispatch step controls."
-                  : undefined
-              }
-              onClick={() => setPlaying((value) => !value)}
-            >
-              {playing ? (
-                <Pause aria-hidden="true" />
-              ) : (
-                <Play aria-hidden="true" />
-              )}
-            </Button>
-            <Button
-              variant="outline"
-              size="icon-lg"
-              type="button"
-              aria-label="Next gallery trace"
-              disabled={gallery.length < 2}
-              onClick={nextGallery}
-            >
-              <ChevronRight aria-hidden="true" />
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              aria-label="Step backward one dispatch"
-              disabled={frameCount < 2 || frameIndex <= 0}
-              onClick={() => stepFrame(-1)}
-            >
-              Step −
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              aria-label="Step forward one dispatch"
-              disabled={frameCount < 2 || frameIndex >= frameCount - 1}
-              onClick={() => stepFrame(1)}
-            >
-              Step +
-            </Button>
-          </div>
-          <div className="transport-speed" aria-label="Playback speed">
-            {[0.5, 1, 2].map((value) => (
+      {phase === "error" && (
+        <section className="observatory-state-card" role="alert">
+          <p>SIGNAL INTERRUPTED</p>
+          <strong>{error?.message ?? "Trace loading failed"}</strong>
+          <div>
+            {activeSource ? (
               <Button
-                key={value}
                 type="button"
-                variant={speed === value ? "secondary" : "ghost"}
-                aria-pressed={speed === value}
-                onClick={() => setSpeed(value)}
+                aria-label="Retry trace loading"
+                onClick={() => setReloadKey((value) => value + 1)}
               >
-                {value}×
+                RETRY
               </Button>
-            ))}
-          </div>
-          <div className="transport-export" aria-label="Local export controls">
+            ) : (
+              <Button
+                type="button"
+                aria-label="Retry trace registry"
+                onClick={() =>
+                  setRegistryReloadKey((value) => value + 1)
+                }
+              >
+                RETRY
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
-              aria-label="Save PNG frame"
-              disabled={!canvas || !sceneModel}
-              onClick={savePng}
+              onClick={() => traceInputRef.current?.click()}
             >
-              <Download aria-hidden="true" />
-              Save PNG
+              OPEN TRACE
             </Button>
-            <Button
-              type="button"
-              variant={recording ? "secondary" : "outline"}
-              aria-label={
-                recording
-                  ? "Stop MP4 recording"
-                  : "Record MP4 animation"
-              }
-              disabled={!sceneModel || !canvasRecorder?.supported}
-              onClick={toggleRecording}
-            >
-              <Film aria-hidden="true" />
-              {recording ? "Stop recording" : "Record MP4"}
-            </Button>
-            {canvasRecorder?.supported ? (
-              <span>
-                X-ready · H.264 · 720p ·{" "}
-                {MAX_RECORDING_DURATION_MS / 1_000}s max
-              </span>
-            ) : (
-              canvasRecorder && <span>H.264 MP4 recording unavailable</span>
-            )}
           </div>
-          <p className="transport-status" aria-live="polite">
-            {status}
-          </p>
-        </footer>
-      </main>
-    </>
+        </section>
+      )}
+
+      {recording && (
+        <div className="observatory-recording" aria-hidden="true" />
+      )}
+
+      <section
+        className="observatory-accessible-controls"
+        aria-label="Observatory playback controls"
+      >
+        <a href={traceWorkbenchHref(activeSource)}>Open in workbench</a>
+        <button
+          type="button"
+          aria-label="Previous gallery trace"
+          disabled={gallery.length < 2}
+          onClick={previousGallery}
+        >
+          Previous trace
+        </button>
+        <button
+          type="button"
+          aria-label={
+            reducedMotion
+              ? "Animation disabled by reduced motion"
+              : playing
+                ? "Pause animation"
+                : "Play animation"
+          }
+          disabled={reducedMotion}
+          onClick={() => setPlaying((value) => !value)}
+        >
+          Toggle playback
+        </button>
+        <button
+          type="button"
+          aria-label="Next gallery trace"
+          disabled={gallery.length < 2}
+          onClick={nextGallery}
+        >
+          Next trace
+        </button>
+        <button
+          type="button"
+          aria-label="Step backward one dispatch"
+          disabled={frameCount < 2 || frameIndex <= 0}
+          onClick={() => stepFrame(-1)}
+        >
+          Step backward
+        </button>
+        <button
+          type="button"
+          aria-label="Step forward one dispatch"
+          disabled={frameCount < 2 || frameIndex >= frameCount - 1}
+          onClick={() => stepFrame(1)}
+        >
+          Step forward
+        </button>
+        <label>
+          Captured window position
+          <input
+            aria-label="Captured window position"
+            type="range"
+            min="0"
+            max={Math.max(0, frameCount - 1)}
+            step="1"
+            value={Math.min(frameIndex, Math.max(0, frameCount - 1))}
+            disabled={frameCount < 2}
+            onInput={(event) =>
+              seekFrame(Number(event.currentTarget.value))
+            }
+          />
+        </label>
+        <label>
+          Playback speed
+          <select
+            aria-label="Playback speed"
+            value={speed}
+            onChange={(event) => setSpeed(Number(event.target.value))}
+          >
+            <option value="0.5">0.5×</option>
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          aria-label="Import local MLX profiler trace"
+          disabled={recording}
+          onClick={() => traceInputRef.current?.click()}
+        >
+          Import trace
+        </button>
+        <input
+          ref={traceInputRef}
+          type="file"
+          accept=".jsonl,.ndjson"
+          aria-label="Choose local MLX profiler trace"
+          onChange={handleLocalTrace}
+        />
+        <button
+          type="button"
+          aria-label="Import checkpoint architecture config"
+          disabled={recording}
+          onClick={() => configInputRef.current?.click()}
+        >
+          Import config
+        </button>
+        <input
+          ref={configInputRef}
+          type="file"
+          accept=".json,application/json"
+          aria-label="Choose checkpoint config"
+          onChange={handleLocalConfig}
+        />
+        <button
+          type="button"
+          aria-label="Save PNG frame"
+          disabled={!canvas || !sceneModel}
+          onClick={savePng}
+        >
+          Save PNG
+        </button>
+        <button
+          type="button"
+          aria-label={
+            recording
+              ? "Stop MP4 recording"
+              : "Record MP4 animation"
+          }
+          disabled={!sceneModel || !canvasRecorder?.supported}
+          onClick={toggleRecording}
+        >
+          {recording ? "Stop recording" : "Record MP4"}
+        </button>
+      </section>
+
+      <p
+        className="observatory-sr-only"
+        role="status"
+        aria-live="polite"
+      >
+        {status}
+      </p>
+    </main>
   );
 }

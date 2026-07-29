@@ -104,17 +104,14 @@ test("a responsive resize explicitly invalidates a static WebGL frame", async ()
   );
 });
 
-test("the readable theater uses a fixed orthographic camera", async () => {
+test("the sculpture uses real perspective space without a floor grid", async () => {
   const source = await readFile(
     new URL("../src/observatory/ObservatoryScene.jsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /new THREE\.OrthographicCamera\(/);
-  assert.doesNotMatch(source, /new THREE\.PerspectiveCamera\(/);
-  assert.doesNotMatch(
-    source,
-    /camera\.position\.x\s*=\s*Math\.sin/,
-  );
+  assert.match(source, /new THREE\.PerspectiveCamera\(/);
+  assert.doesNotMatch(source, /new THREE\.OrthographicCamera\(/);
+  assert.doesNotMatch(source, /new THREE\.GridHelper\(/);
 });
 
 test("runtime WebGL loss switches to the structured fallback and cleans up", async () => {
@@ -122,7 +119,10 @@ test("runtime WebGL loss switches to the structured fallback and cleans up", asy
     new URL("../src/observatory/ObservatoryScene.jsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /addEventListener\("webglcontextlost", onContextLost\)/);
+  assert.match(
+    source,
+    /addEventListener\(\s*"webglcontextlost",\s*onContextLost/,
+  );
   assert.match(
     source,
     /onContextLost[\s\S]*?preventDefault\(\)[\s\S]*?setFailure\(/,

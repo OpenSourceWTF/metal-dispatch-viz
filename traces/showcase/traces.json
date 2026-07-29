@@ -41,6 +41,10 @@
       "source_complete": true,
       "valid_evidence": true,
       "source_evidence_status": "verified-complete",
+      "observatory": {
+        "enabled": true,
+        "order": 1
+      },
       "architecture": {
         "source": "checkpoint-config",
         "model_type": "qwen3_5_text",
@@ -88,6 +92,10 @@
       "source_complete": null,
       "valid_evidence": false,
       "source_evidence_status": "legacy-unverifiable",
+      "observatory": {
+        "enabled": true,
+        "order": 2
+      },
       "architecture": {
         "source": "checkpoint-config",
         "model_type": "qwen3_5_moe_text",
