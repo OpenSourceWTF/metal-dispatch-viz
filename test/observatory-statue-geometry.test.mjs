@@ -234,6 +234,73 @@ test("one focal cross-section opens while the complete transformer column remain
   disposeStatueGeometry(statue);
 });
 
+test("one continuous residual spine divides completed from pending model depth", () => {
+  const shape = architecture({ layers: 64 });
+  const frameCount = 64 * TRANSFORMER_STAGES.length + 1;
+  const statue = createStatueGeometry(
+    THREE,
+    presentation(shape, { frameCount, frameIndex: 0 }),
+  );
+
+  assert.ok(
+    statue.parts.residualProgress,
+    "the configured model must install a continuous progress spine",
+  );
+  const { completed, pending } = statue.parts.residualProgress;
+  const initialBoundary = completed.userData.boundaryY;
+  assert.equal(initialBoundary, pending.userData.boundaryY);
+  assert.ok(completed.position.y > pending.position.y);
+
+  const identities = statue.geometryIdentities();
+  applyStatuePresentation(
+    statue,
+    presentation(shape, {
+      frameCount,
+      frameIndex: 32 * TRANSFORMER_STAGES.length,
+    }),
+  );
+
+  assert.deepEqual(statue.geometryIdentities(), identities);
+  assert.ok(completed.userData.boundaryY < initialBoundary);
+  assert.equal(
+    completed.userData.boundaryY,
+    pending.userData.boundaryY,
+  );
+
+  disposeStatueGeometry(statue);
+});
+
+test("completed, active, and pending layers form a top-down progress gradient", () => {
+  const shape = architecture({ layers: 64 });
+  const frameCount = 64 * TRANSFORMER_STAGES.length + 1;
+  const statue = createStatueGeometry(
+    THREE,
+    presentation(shape, {
+      frameCount,
+      frameIndex: 32 * TRANSFORMER_STAGES.length,
+    }),
+  );
+  const processed = new THREE.Color();
+  const active = new THREE.Color();
+  const pending = new THREE.Color();
+  statue.parts.layers.getColorAt(0, processed);
+  statue.parts.layers.getColorAt(32, active);
+  statue.parts.layers.getColorAt(60, pending);
+
+  assert.equal(
+    statue.parts.completedLayers.count,
+    32,
+    "one preallocated overlay must make completed layers lighting-independent",
+  );
+  assert.ok(active.getHSL({}).l > processed.getHSL({}).l);
+  assert.ok(
+    processed.getHSL({}).l > pending.getHSL({}).l * 2,
+    "processed layers must leave a visible trail above the focal plane",
+  );
+
+  disposeStatueGeometry(statue);
+});
+
 test("the focal attention cross-section carries exact configured head geometry", () => {
   const shape = architecture({ layers: 64 });
   const frameCount = 64 * TRANSFORMER_STAGES.length * 2 + 1;

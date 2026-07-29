@@ -608,6 +608,40 @@ function createFocalStageCrossSections(
   return { focalStages, fullAttention, linearAttention };
 }
 
+function createResidualProgressSpine(THREE, dimensions) {
+  const group = groupFor(THREE);
+  group.name = "RESIDUAL_STREAM_PROGRESS";
+  const completed = addMesh(
+    group,
+    new THREE.CylinderGeometry(0.055, 0.055, 1, 8, 1),
+    luminousMaterial(THREE, PALETTE.cyan, {
+      opacity: 0.88,
+      emissiveIntensity: 2,
+      metalness: 0.08,
+      roughness: 0.08,
+    }),
+  );
+  completed.name = "COMPLETED_RESIDUAL_STREAM";
+  const pending = addMesh(
+    group,
+    new THREE.CylinderGeometry(0.022, 0.022, 1, 8, 1),
+    luminousMaterial(THREE, PALETTE.blue, {
+      opacity: 0.2,
+      emissiveIntensity: 0.34,
+      metalness: 0.08,
+      roughness: 0.1,
+    }),
+  );
+  pending.name = "PENDING_RESIDUAL_STREAM";
+  const top = dimensions.height / 2 + 0.52;
+  const bottom = -dimensions.height / 2 - 0.52;
+  completed.userData.boundaryY = top;
+  pending.userData.boundaryY = top;
+  group.userData.top = top;
+  group.userData.bottom = bottom;
+  return { group, completed, pending, top, bottom };
+}
+
 function createLayerBody(THREE, presentation) {
   const group = groupFor(THREE);
   group.name = "LLM_LAYER_STACK";
@@ -637,6 +671,23 @@ function createLayerBody(THREE, presentation) {
   layers.count = count;
   layers.name = "CONFIGURED_TRANSFORMER_LAYERS";
   layers.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+  const completedLayers = new THREE.InstancedMesh(
+    geometry,
+    luminousMaterial(THREE, PALETTE.cyan, {
+      opacity: 0.12,
+      emissiveIntensity: 0.92,
+      metalness: 0.12,
+      roughness: 0.1,
+    }),
+    Math.max(1, count),
+  );
+  completedLayers.count = 0;
+  completedLayers.name = "COMPLETED_TRANSFORMER_LAYERS";
+  completedLayers.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+  completedLayers.material.polygonOffset = true;
+  completedLayers.material.polygonOffsetFactor = -1;
+  completedLayers.material.polygonOffsetUnits = -1;
+  completedLayers.renderOrder = 2;
   const fullAttentionCount =
     presentation.architecture.layerTypes.filter(
       (layerType) => layerType === "full_attention",
@@ -681,6 +732,7 @@ function createLayerBody(THREE, presentation) {
     );
     transform.updateMatrix();
     layers.setMatrixAt(index, transform.matrix);
+    completedLayers.setMatrixAt(index, transform.matrix);
     layers.setColorAt(
       index,
       full ? fullAttention : linearAttention,
@@ -694,13 +746,20 @@ function createLayerBody(THREE, presentation) {
     }
   }
   layers.instanceMatrix.needsUpdate = true;
+  completedLayers.instanceMatrix.needsUpdate = true;
   if (layers.instanceColor) layers.instanceColor.needsUpdate = true;
   attentionAccents.instanceMatrix.needsUpdate = true;
   const stageBands = createStageBands(THREE, presentation, dimensions);
+  const residualProgress = createResidualProgressSpine(
+    THREE,
+    dimensions,
+  );
   scrollGroup.add(
     layers,
+    completedLayers,
     attentionAccents,
     ...stageBands.map(({ mesh }) => mesh),
+    residualProgress.group,
   );
 
   const coreMaterial = luminousMaterial(THREE, PALETTE.blue, {
@@ -809,6 +868,7 @@ function createLayerBody(THREE, presentation) {
     group,
     scrollGroup,
     layers,
+    completedLayers,
     attentionAccents,
     stageBands,
     core,
@@ -816,6 +876,7 @@ function createLayerBody(THREE, presentation) {
     focalStages: focal.focalStages,
     fullAttention: focal.fullAttention,
     linearAttention: focal.linearAttention,
+    residualProgress,
     input,
     output,
   };
@@ -1394,20 +1455,48 @@ function createActivationFlow(THREE, dimensions) {
 
 function updateLayerColors(statue, presentation) {
   const layers = statue.parts.layers;
-  const active = new statue.THREE.Color(PALETTE.white);
-  const full = new statue.THREE.Color(PALETTE.blue);
-  const linear = new statue.THREE.Color(PALETTE.cyanSoft);
+  const activeLayerIndex = presentation.activation.layerIndex;
+  statue.parts.completedLayers.count = Number.isInteger(activeLayerIndex)
+    ? Math.min(layers.count, Math.max(0, activeLayerIndex))
+    : 0;
+  const colors = statue.parts.layerProgressColors;
   for (let index = 0; index < layers.count; index += 1) {
+    const full =
+      presentation.architecture.layerTypes[index] === "full_attention";
+    const color =
+      index === activeLayerIndex
+        ? colors.active
+        : index < activeLayerIndex
+          ? full
+            ? colors.completedFull
+            : colors.completedLinear
+          : full
+            ? colors.pendingFull
+            : colors.pendingLinear;
     layers.setColorAt(
       index,
-      index === presentation.activation.layerIndex
-        ? active
-        : presentation.architecture.layerTypes[index] === "full_attention"
-          ? full
-          : linear,
+      color,
     );
   }
   if (layers.instanceColor) layers.instanceColor.needsUpdate = true;
+}
+
+function updateResidualProgress(statue, activationY, available) {
+  const progress = statue.parts.residualProgress;
+  progress.group.visible = available;
+  if (!available) return;
+  const boundary = Math.min(
+    progress.top,
+    Math.max(progress.bottom, activationY),
+  );
+  const completedLength = Math.max(0.001, progress.top - boundary);
+  const pendingLength = Math.max(0.001, boundary - progress.bottom);
+  progress.completed.position.y = (progress.top + boundary) / 2;
+  progress.completed.scale.y = completedLength;
+  progress.pending.position.y = (boundary + progress.bottom) / 2;
+  progress.pending.scale.y = pendingLength;
+  progress.completed.userData.boundaryY = boundary;
+  progress.pending.userData.boundaryY = boundary;
 }
 
 function updateStageFocus(statue, presentation) {
@@ -1543,6 +1632,11 @@ export function applyStatuePresentation(statue, presentation) {
     statue.parts.scrollGroup.position.y = targetScrollY;
     statue.parts.scrollGroup.userData.initialized = true;
   }
+  updateResidualProgress(
+    statue,
+    activationY,
+    presentation.architecture.available,
+  );
   statue.parts.activeLayer.position.y = 0;
   statue.parts.activeLayer.visible = presentation.architecture.available;
   const activeStageAppearance = stageAppearance(
@@ -1736,6 +1830,7 @@ export function createStatueGeometry(THREE, presentation) {
     presentation,
     parts: {
       layers: body.layers,
+      completedLayers: body.completedLayers,
       attentionAccents: body.attentionAccents,
       stageBands: body.stageBands,
       scrollGroup: body.scrollGroup,
@@ -1757,6 +1852,14 @@ export function createStatueGeometry(THREE, presentation) {
           active: new THREE.Color(STAGE_FOCUS_COLORS.active),
         },
       },
+      layerProgressColors: {
+        active: new THREE.Color(PALETTE.white),
+        completedLinear: new THREE.Color(PALETTE.cyan),
+        completedFull: new THREE.Color(PALETTE.attention),
+        pendingLinear: new THREE.Color(0x14304a),
+        pendingFull: new THREE.Color(0x252b54),
+      },
+      residualProgress: body.residualProgress,
       bodyHeight: body.group.userData.height,
       bodyDimensions: body.group.userData.dimensions,
       memory: memory.group,
