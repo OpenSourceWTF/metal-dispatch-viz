@@ -98,3 +98,29 @@ export function playbackFrameFromElapsed({
       Math.round((terminalIndex - safeInitial) * ratio),
   );
 }
+
+export function observatoryTraversalDuration({
+  galleryDurationMs,
+  terminalHoldMs = 0,
+  speed = 1,
+  remainingShare = 1,
+} = {}) {
+  if (!Number.isFinite(galleryDurationMs) || galleryDurationMs <= 0) {
+    return 1;
+  }
+  const safeSpeed =
+    Number.isFinite(speed) && speed > 0 ? speed : 1;
+  const slotDuration = galleryDurationMs / safeSpeed;
+  const requestedHold =
+    Number.isFinite(terminalHoldMs) && terminalHoldMs > 0
+      ? terminalHoldMs / safeSpeed
+      : 0;
+  const boundedHold = Math.min(slotDuration * 0.25, requestedHold);
+  const boundedShare = Number.isFinite(remainingShare)
+    ? Math.min(1, Math.max(0, remainingShare))
+    : 1;
+  return Math.max(
+    1,
+    (slotDuration - boundedHold) * boundedShare,
+  );
+}

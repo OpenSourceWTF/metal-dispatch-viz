@@ -7,6 +7,7 @@ import {
   nextObservatoryFrameIndex,
   observatoryFrameStride,
   observatoryPixelRatio,
+  observatoryTraversalDuration,
   playbackFrameFromElapsed,
   shouldAnimateObservatory,
 } from "../src/observatory/scene-timing.js";
@@ -109,6 +110,37 @@ test("wall-clock playback catches up when rendering drops timer ticks", () => {
       durationMs: 6_000,
     }),
     778,
+  );
+});
+
+test("short-form playback reserves a bounded final-token hold", () => {
+  assert.equal(
+    observatoryTraversalDuration({
+      galleryDurationMs: 18_000,
+      terminalHoldMs: 1_200,
+      speed: 1,
+      remainingShare: 1,
+    }),
+    16_800,
+  );
+  assert.equal(
+    observatoryTraversalDuration({
+      galleryDurationMs: 18_000,
+      terminalHoldMs: 1_200,
+      speed: 2,
+      remainingShare: 0.5,
+    }),
+    4_200,
+  );
+  assert.equal(
+    observatoryTraversalDuration({
+      galleryDurationMs: 1_000,
+      terminalHoldMs: 1_200,
+      speed: 1,
+      remainingShare: 1,
+    }),
+    750,
+    "the hold must never consume more than one quarter of a short slot",
   );
 });
 

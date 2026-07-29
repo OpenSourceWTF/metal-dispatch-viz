@@ -8,7 +8,10 @@ import {
 } from "./export.js";
 import { ObservatoryScene } from "./ObservatoryScene.jsx";
 import { buildSceneModel } from "./scene-model.js";
-import { playbackFrameFromElapsed } from "./scene-timing.js";
+import {
+  observatoryTraversalDuration,
+  playbackFrameFromElapsed,
+} from "./scene-timing.js";
 import { buildStatueFrame } from "./statue-state.js";
 import {
   createGalleryTraceSource,
@@ -97,6 +100,7 @@ export function ObservatoryApp({
   canvasPngDownloader = downloadCanvasPng,
   canvasRecorderFactory = createCanvasRecorder,
   galleryDurationMs = 18_000,
+  terminalHoldMs = 1_200,
   transformerCycles = 3,
   reducedMotion: forcedReducedMotion,
   baseUrl = globalThis.document?.baseURI,
@@ -356,10 +360,12 @@ export function ObservatoryApp({
     const remainingFrames = terminalIndex - initialIndex;
     const remainingShare =
       terminalIndex <= 0 ? 0 : remainingFrames / terminalIndex;
-    const duration = Math.max(
-      1,
-      (galleryDurationMs / speed) * remainingShare,
-    );
+    const duration = observatoryTraversalDuration({
+      galleryDurationMs,
+      terminalHoldMs,
+      speed,
+      remainingShare,
+    });
     const startedAt = performance.now();
     const advance = () => {
       const elapsed = performance.now() - startedAt;
@@ -372,8 +378,15 @@ export function ObservatoryApp({
       setFrameIndex((current) => Math.max(current, target));
     };
     const timer = setInterval(advance, 90);
+    const completionTimer = setTimeout(
+      () => setFrameIndex(terminalIndex),
+      duration,
+    );
     advance();
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      clearTimeout(completionTimer);
+    };
   }, [
     frameCount,
     galleryDurationMs,
@@ -381,6 +394,7 @@ export function ObservatoryApp({
     playing,
     reducedMotion,
     speed,
+    terminalHoldMs,
   ]);
 
   useEffect(() => {
