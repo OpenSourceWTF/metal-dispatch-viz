@@ -2023,16 +2023,13 @@ test("a degenerate anchored command buffer that owns ops remains unavailable", (
   });
 });
 
-test("all launches in the five bundled showcases satisfy the range-analysis invariant", async () => {
+test("all launches in the bundled showcases satisfy the range-analysis invariant", async () => {
   const showcaseUrl = new URL("../traces/showcase/", import.meta.url);
-  const filenames = [
-    "glm52-q1t-t158-mtp-k3.jsonl",
-    "hy3-oq2e-mtp-k2.jsonl",
-    "laguna-s21-oq4e-ar.jsonl",
-    "qwen36-27b-mtp-k3.jsonl",
-    "qwen36-35b-a3b-k1.jsonl",
-  ];
-  let traceCount = 0;
+  const manifest = JSON.parse(
+    await readFile(new URL("traces.json", showcaseUrl), "utf8"),
+  );
+  const filenames = Object.keys(manifest.traces);
+  assert.ok(filenames.length > 0, "showcase manifest must register a trace");
 
   for (const filename of filenames) {
     const text = await readFile(new URL(filename, showcaseUrl), "utf8");
@@ -2071,7 +2068,5 @@ test("all launches in the five bundled showcases satisfy the range-analysis inva
         );
       }
     }
-    traceCount += 1;
   }
-  assert.equal(traceCount, 5);
 });

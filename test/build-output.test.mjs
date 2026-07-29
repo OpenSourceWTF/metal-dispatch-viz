@@ -108,12 +108,22 @@ test("production build emits a relocatable compiled client and bundled analysis 
   const registry = JSON.parse(
     await readFile(path.join(clientRoot, "hosted-traces.json"), "utf8"),
   );
+  const sourceManifest = JSON.parse(
+    await readFile(
+      path.join(projectRoot, "traces", "showcase", "traces.json"),
+      "utf8",
+    ),
+  );
+  const expectedTraces = Object.keys(sourceManifest.traces).sort();
   const publishedTraceRoot = path.join(clientRoot, "traces", "showcase");
   const publishedTraces = (await walkFiles(publishedTraceRoot)).filter(
     (relativePath) => /\.(?:jsonl|ndjson)$/i.test(relativePath),
   );
-  assert.equal(registry.traces.length, 5);
-  assert.equal(publishedTraces.length, 5);
+  assert.deepEqual(
+    registry.traces.map(({ relativePath }) => relativePath).sort(),
+    expectedTraces,
+  );
+  assert.deepEqual(publishedTraces.sort(), expectedTraces);
   assert.deepEqual(
     publishedTraces.sort(),
     registry.traces.map(({ relativePath }) => relativePath).sort(),

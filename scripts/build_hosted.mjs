@@ -390,7 +390,6 @@ export async function buildHostedSite({
   traceRoot,
   outputRoot,
   hostingConfigPath = new URL("../.openai/hosting.json", import.meta.url),
-  expectedTraceCount,
   registryHooks = {},
   replacementHooks = {},
 }) {
@@ -413,15 +412,6 @@ export async function buildHostedSite({
     );
   }
   const hostingConfig = await readHostingConfig(hostingConfigPath);
-  if (
-    expectedTraceCount !== undefined &&
-    (!Number.isSafeInteger(expectedTraceCount) || expectedTraceCount < 0)
-  ) {
-    throw new TypeError(
-      "expectedTraceCount must be a non-negative integer when provided.",
-    );
-  }
-
   const initialManifest = await readRequiredStaticManifest(sourceTraces);
   const registry = new TraceRegistry(sourceTraces, {
     hooks: registryHooks,
@@ -430,14 +420,6 @@ export async function buildHostedSite({
   const verifiedManifest = await readRequiredStaticManifest(sourceTraces);
   assertStableManifest(initialManifest, verifiedManifest);
   assertManifestMatchesRegistry(verifiedManifest, registryPayload);
-  if (
-    expectedTraceCount !== undefined &&
-    registryPayload.traces.length !== expectedTraceCount
-  ) {
-    throw new Error(
-      `Hosted publication requires exactly ${expectedTraceCount} traces.`,
-    );
-  }
   await assertNoSymlinks(sourcePublic);
   const outputParent = path.dirname(output);
   await mkdir(outputParent, { recursive: true });
@@ -527,7 +509,6 @@ if (isMainModule()) {
     publicRoot: new URL("../.vite-client/", import.meta.url),
     traceRoot: new URL("../traces/showcase/", import.meta.url),
     outputRoot: new URL("../dist/", import.meta.url),
-    expectedTraceCount: 5,
   });
   console.log(
     `Built hosted profiler with ${result.traceCount} traces in ${result.outputRoot}`,
