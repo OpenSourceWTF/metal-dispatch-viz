@@ -2,6 +2,7 @@ const PALETTE = Object.freeze({
   cyan: 0x68e7ff,
   cyanSoft: 0x1b8fa8,
   blue: 0x5a83ff,
+  attention: 0x9eb8ff,
   white: 0xe9fbff,
   amber: 0xffb45d,
   amberSoft: 0x9b542c,
@@ -77,13 +78,12 @@ function createLayerBody(THREE, presentation) {
   group.name = "LLM_LAYER_STACK";
   const count = presentation.architecture.layerCount;
   const dense = presentation.architecture.feedForwardKind === "dense";
-  const geometry = new THREE.BoxGeometry(2.55, 0.052, 0.17);
-  geometry.translate(1.05, 0, 0);
+  const geometry = new THREE.TorusGeometry(1, 0.024, 4, 24);
   const material = luminousMaterial(THREE, PALETTE.cyan, {
-    opacity: 0.78,
-    emissiveIntensity: 0.75,
-    metalness: 0.7,
-    roughness: 0.22,
+    opacity: 0.42,
+    emissiveIntensity: 0.46,
+    metalness: 0.58,
+    roughness: 0.18,
   });
   const layers = new THREE.InstancedMesh(
     geometry,
@@ -93,35 +93,65 @@ function createLayerBody(THREE, presentation) {
   layers.count = count;
   layers.name = "CONFIGURED_TRANSFORMER_LAYERS";
   layers.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+  const fullAttentionCount =
+    presentation.architecture.layerTypes.filter(
+      (layerType) => layerType === "full_attention",
+    ).length;
+  const attentionAccents = new THREE.InstancedMesh(
+    new THREE.TorusGeometry(1, 0.018, 4, 24),
+    luminousMaterial(THREE, PALETTE.attention, {
+      opacity: 0.2,
+      emissiveIntensity: 0.34,
+      metalness: 0.28,
+      roughness: 0.16,
+    }),
+    Math.max(1, fullAttentionCount),
+  );
+  attentionAccents.count = fullAttentionCount;
+  attentionAccents.name = "FULL_ATTENTION_LAYER_ACCENTS";
 
   const transform = new THREE.Object3D();
-  const fullAttention = new THREE.Color(PALETTE.white);
+  const fullAttention = new THREE.Color(PALETTE.attention);
   const linearAttention = new THREE.Color(PALETTE.cyanSoft);
-  const height = dense ? 9.2 : 7.4;
+  const height = dense ? 8.9 : 7.3;
+  let attentionAccentIndex = 0;
   for (let index = 0; index < count; index += 1) {
     const ratio = count <= 1 ? 0.5 : index / (count - 1);
     const y = (ratio - 0.5) * height;
-    const spiral = index * 0.462 + Math.sin(ratio * Math.PI) * 0.18;
-    const waist = 0.76 + Math.sin(ratio * Math.PI) * 0.25;
+    const spiral = index * 0.028;
+    const waist = 0.9 + Math.sin(ratio * Math.PI) * 0.16;
+    const full =
+      presentation.architecture.layerTypes[index] === "full_attention";
     transform.position.set(0, y, 0);
     transform.rotation.set(
-      Math.sin(spiral * 0.5) * 0.055,
+      Math.PI / 2,
       spiral,
-      Math.cos(spiral) * 0.035,
+      Math.sin(spiral) * 0.025,
     );
-    transform.scale.set(waist, 1, 0.78 + ratio * 0.22);
+    const attentionScale = full ? 1.12 : 1;
+    transform.scale.set(
+      (dense ? 1.72 : 1.94) * waist * attentionScale,
+      (dense ? 1.36 : 1.56) * waist * attentionScale,
+      1,
+    );
     transform.updateMatrix();
     layers.setMatrixAt(index, transform.matrix);
     layers.setColorAt(
       index,
-      presentation.architecture.layerTypes[index] === "full_attention"
-        ? fullAttention
-        : linearAttention,
+      full ? fullAttention : linearAttention,
     );
+    if (full) {
+      attentionAccents.setMatrixAt(
+        attentionAccentIndex,
+        transform.matrix,
+      );
+      attentionAccentIndex += 1;
+    }
   }
   layers.instanceMatrix.needsUpdate = true;
   if (layers.instanceColor) layers.instanceColor.needsUpdate = true;
-  group.add(layers);
+  attentionAccents.instanceMatrix.needsUpdate = true;
+  group.add(layers, attentionAccents);
 
   const coreMaterial = luminousMaterial(THREE, PALETTE.blue, {
     opacity: 0.18,
@@ -133,10 +163,10 @@ function createLayerBody(THREE, presentation) {
   const core = addMesh(
     group,
     new THREE.CylinderGeometry(
-      dense ? 0.73 : 0.9,
-      dense ? 1.12 : 1.35,
+      dense ? 0.62 : 0.78,
+      dense ? 0.88 : 1.04,
       height + 0.8,
-      dense ? 12 : 16,
+      dense ? 10 : 14,
       Math.max(8, Math.round(count / 2)),
       true,
     ),
@@ -146,10 +176,10 @@ function createLayerBody(THREE, presentation) {
 
   const activeLayer = addMesh(
     group,
-    new THREE.TorusGeometry(dense ? 2.55 : 2.95, 0.045, 8, 96),
+    new THREE.TorusGeometry(dense ? 1.92 : 2.18, 0.036, 8, 96),
     luminousMaterial(THREE, PALETTE.white, {
-      opacity: 0.92,
-      emissiveIntensity: 2.4,
+      opacity: 0.76,
+      emissiveIntensity: 1.12,
       metalness: 0.2,
       roughness: 0.15,
     }),
@@ -182,7 +212,15 @@ function createLayerBody(THREE, presentation) {
   output.name = "VOCABULARY_APERTURE";
 
   group.userData.height = height;
-  return { group, layers, core, activeLayer, input, output };
+  return {
+    group,
+    layers,
+    attentionAccents,
+    core,
+    activeLayer,
+    input,
+    output,
+  };
 }
 
 function createExpertField(THREE, presentation, bodyHeight) {
@@ -260,8 +298,8 @@ function createMemoryHalo(THREE) {
       group,
       new THREE.TorusGeometry(radius, tube, 6, 192),
       luminousMaterial(THREE, index === 1 ? PALETTE.blue : PALETTE.cyan, {
-        opacity: index === 0 ? 0.52 : 0.25,
-        emissiveIntensity: 1.9,
+        opacity: index === 0 ? 0.4 : 0.18,
+        emissiveIntensity: 1.45,
         metalness: 0.1,
         roughness: 0.12,
       }),
@@ -550,6 +588,42 @@ function createParticleField(THREE) {
   return points;
 }
 
+function createActivationFlow(THREE, bodyHeight) {
+  const group = groupFor(THREE);
+  group.name = "ACTIVATION_ASCENT";
+  const positions = new Float32Array([
+    0,
+    -bodyHeight / 2 - 0.38,
+    0,
+    0,
+    -bodyHeight / 2,
+    0,
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.BufferAttribute(positions, 3),
+  );
+  const material = lineMaterial(THREE, PALETTE.cyan, 0.78);
+  const path = new THREE.Line(geometry, material);
+  path.name = "ACTIVATION_PATH";
+  group.add(path);
+
+  const courier = addMesh(
+    group,
+    new THREE.OctahedronGeometry(0.16, 0),
+    luminousMaterial(THREE, PALETTE.white, {
+      opacity: 0.96,
+      emissiveIntensity: 2.1,
+      metalness: 0.16,
+      roughness: 0.12,
+    }),
+    [0, -bodyHeight / 2, 0],
+  );
+  courier.name = "ACTIVE_TENSOR_COURIER";
+  return { group, path, courier };
+}
+
 function updateLayerColors(statue, presentation) {
   const layers = statue.parts.layers;
   const active = new statue.THREE.Color(PALETTE.white);
@@ -595,8 +669,20 @@ export function applyStatuePresentation(statue, presentation) {
       : presentation.activation.layerIndex / (layerCount - 1);
   statue.parts.activeLayer.position.y = (layerRatio - 0.5) * height;
   statue.parts.activeLayer.visible = presentation.architecture.available;
+  statue.parts.activeLayer.userData.stageScale =
+    [0.82, 1.08, 0.96, 0.84, 1, 1.04][
+      presentation.activation.stageIndex ?? 0
+    ];
   updateLayerColors(statue, presentation);
   updateExperts(statue, presentation);
+  const activationY = statue.parts.activeLayer.position.y;
+  statue.parts.activationCourier.position.y = activationY;
+  statue.parts.activationCourier.visible =
+    presentation.architecture.available;
+  const activationPositions =
+    statue.parts.activationPath.geometry.getAttribute("position");
+  activationPositions.setY(1, activationY);
+  activationPositions.needsUpdate = true;
 
   statue.parts.memory.userData.active =
     presentation.hardware.memory.active;
@@ -605,8 +691,8 @@ export function applyStatuePresentation(statue, presentation) {
   );
   statue.parts.memoryRings.forEach((ring, index) => {
     ring.material.opacity = presentation.hardware.memory.active
-      ? 0.46 - index * 0.09
-      : 0.12;
+      ? 0.34 - index * 0.065
+      : 0.08;
   });
 
   statue.parts.cpu.userData.dispatchPulse =
@@ -615,6 +701,7 @@ export function applyStatuePresentation(statue, presentation) {
   statue.parts.gpuLanes.count = presentation.hardware.gpu.laneCount;
 
   statue.parts.kernel.userData.exactName = presentation.kernel.exactName;
+  statue.parts.kernel.scale.setScalar(0.76);
   for (const [family, glyph] of Object.entries(statue.parts.glyphs)) {
     glyph.visible = family === presentation.kernel.family;
   }
@@ -657,6 +744,8 @@ export function animateStatueGeometry(
   statue.parts.gpu.rotation.y = -time * 0.31;
   statue.parts.kernel.rotation.z = Math.sin(time * 0.42) * 0.08;
   statue.parts.kernel.rotation.y = time * 0.08;
+  statue.parts.activationCourier.rotation.x = time * 1.7;
+  statue.parts.activationCourier.rotation.y = time * 2.1;
   statue.parts.speculationBranches.forEach((branch, index) => {
     branch.material.opacity =
       0.18 + Math.max(0, Math.sin(time * 1.8 - index * 0.7)) * 0.34;
@@ -671,7 +760,9 @@ export function animateStatueGeometry(
   const layerPulse = reducedMotion
     ? 1
     : 1 + Math.sin(time * 4.2) * 0.035;
-  statue.parts.activeLayer.scale.setScalar(layerPulse);
+  statue.parts.activeLayer.scale.setScalar(
+    (statue.parts.activeLayer.userData.stageScale ?? 1) * layerPulse,
+  );
 
   const attribute = statue.parts.particles.geometry.getAttribute("position");
   const seeds = statue.parts.particles.userData.seeds;
@@ -706,6 +797,10 @@ export function createStatueGeometry(THREE, presentation) {
   const ribbons = createRibbons(THREE);
   const speculation = createSpeculationBranches(THREE);
   const particles = createParticleField(THREE);
+  const activationFlow = createActivationFlow(
+    THREE,
+    body.group.userData.height,
+  );
 
   root.add(
     body.group,
@@ -715,6 +810,7 @@ export function createStatueGeometry(THREE, presentation) {
     hardware.gpu,
     glyph.kernel,
     speculation.group,
+    activationFlow.group,
     particles,
   );
   for (const ribbon of ribbons) root.add(ribbon.mesh);
@@ -725,6 +821,7 @@ export function createStatueGeometry(THREE, presentation) {
     presentation,
     parts: {
       layers: body.layers,
+      attentionAccents: body.attentionAccents,
       experts: expertField.experts,
       sharedExpert: expertField.shared,
       activeLayer: body.activeLayer,
@@ -741,6 +838,8 @@ export function createStatueGeometry(THREE, presentation) {
       ribbons,
       speculation: speculation.group,
       speculationBranches: speculation.branches,
+      activationPath: activationFlow.path,
+      activationCourier: activationFlow.courier,
       particles,
     },
     geometryIdentities() {

@@ -7,6 +7,7 @@ import {
   nextObservatoryFrameIndex,
   observatoryFrameStride,
   observatoryPixelRatio,
+  playbackFrameFromElapsed,
   shouldAnimateObservatory,
 } from "../src/observatory/scene-timing.js";
 
@@ -88,6 +89,27 @@ test("playback and scrubbing stay within the captured window", () => {
     9,
   );
   assert.equal(frameIndexFromProgress({ frameCount: 0, progress: 0.5 }), 0);
+});
+
+test("wall-clock playback catches up when rendering drops timer ticks", () => {
+  assert.equal(
+    playbackFrameFromElapsed({
+      initialIndex: 0,
+      frameCount: 779,
+      elapsedMs: 12_000,
+      durationMs: 18_000,
+    }),
+    519,
+  );
+  assert.equal(
+    playbackFrameFromElapsed({
+      initialIndex: 519,
+      frameCount: 779,
+      elapsedMs: 6_000,
+      durationMs: 6_000,
+    }),
+    778,
+  );
 });
 
 test("a responsive resize explicitly invalidates a static WebGL frame", async () => {

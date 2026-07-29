@@ -147,12 +147,35 @@ function createInstruments() {
   return { group, pickables };
 }
 
+function architectureCaption(presentation) {
+  if (!presentation.architecture.available) {
+    return "ARCHITECTURE UNAVAILABLE";
+  }
+  const layerTypes = presentation.architecture.layerTypes;
+  const fullAttention = layerTypes.filter(
+    (layerType) => layerType === "full_attention",
+  ).length;
+  const linearAttention = layerTypes.length - fullAttention;
+  const feedForward =
+    presentation.architecture.feedForwardKind === "moe"
+      ? `${presentation.architecture.feedForward.experts} EXPERTS · TOP ${presentation.architecture.feedForward.expertsPerToken}`
+      : "DENSE FFN";
+  return `${layerTypes.length} LAYERS · ${linearAttention} LINEAR / ${fullAttention} FULL · ${feedForward}`;
+}
+
 function createLabels(scene, presentation) {
   const labels = {
     model: createWorldLabel(THREE, {
       text: presentation.inscriptions.model,
       worldWidth: 5.8,
       accent: "#68e7ff",
+    }),
+    architecture: createWorldLabel(THREE, {
+      text: architectureCaption(presentation),
+      worldWidth: 5.8,
+      height: 112,
+      accent: "#5a83ff",
+      opacity: 0.58,
     }),
     layer: createWorldLabel(THREE, {
       text: presentation.inscriptions.layer,
@@ -164,18 +187,55 @@ function createLabels(scene, presentation) {
       worldWidth: 5.9,
       accent: "#ffb45d",
     }),
-    simulated: createWorldLabel(THREE, {
-      text: presentation.inscriptions.simulated,
-      worldWidth: 1.05,
+    kernelFamily: createWorldLabel(THREE, {
+      text: `KERNEL · ${presentation.kernel.family}`,
+      worldWidth: 2.8,
+      width: 720,
+      height: 112,
+      accent: "#ffb45d",
+      opacity: 0.7,
+    }),
+    memory: createWorldLabel(THREE, {
+      text: "UNIFIED MEMORY",
+      worldWidth: 2.9,
+      width: 720,
+      height: 112,
+      accent: "#68e7ff",
+      opacity: 0.48,
+    }),
+    cpu: createWorldLabel(THREE, {
+      text: "CPU",
+      worldWidth: 1,
       width: 384,
+      height: 112,
+      accent: "#e9fbff",
+      opacity: 0.7,
+    }),
+    gpu: createWorldLabel(THREE, {
+      text: "GPU",
+      worldWidth: 1,
+      width: 384,
+      height: 112,
+      accent: "#ffb45d",
+      opacity: 0.7,
+    }),
+    simulated: createWorldLabel(THREE, {
+      text: `${presentation.inscriptions.simulated} · LAYER FLOW`,
+      worldWidth: 2.05,
+      width: 640,
       height: 112,
       accent: "#a974ff",
       opacity: 0.68,
     }),
   };
   labels.model.sprite.position.set(-3.7, 5.65, 0.2);
+  labels.architecture.sprite.position.set(-3.7, 5.18, 0.2);
   labels.layer.sprite.position.set(4.0, 0, 0.5);
   labels.kernel.sprite.position.set(0, -1.52, 3.35);
+  labels.kernelFamily.sprite.position.set(0, 1.08, 3.18);
+  labels.memory.sprite.position.set(4.05, 4.7, -0.3);
+  labels.cpu.sprite.position.set(-5.05, 3.48, 0.4);
+  labels.gpu.sprite.position.set(5.1, -3.28, 0.5);
   labels.simulated.sprite.position.set(3.65, 5.65, 0.2);
   for (const label of Object.values(labels)) scene.add(label.sprite);
   return labels;
@@ -195,7 +255,19 @@ function applyLabels(labels, presentation, bodyHeight) {
         ? "#ffb45d"
         : "#68e7ff",
   });
-  labels.simulated.update(presentation.inscriptions.simulated);
+  labels.kernelFamily.update(
+    `KERNEL · ${presentation.kernel.family}`,
+    {
+      accent:
+        presentation.kernel.family === "projection"
+          ? "#ffb45d"
+          : "#68e7ff",
+    },
+  );
+  labels.architecture.update(architectureCaption(presentation));
+  labels.simulated.update(
+    `${presentation.inscriptions.simulated} · LAYER FLOW`,
+  );
   const layerCount = presentation.architecture.layerCount;
   const ratio =
     presentation.activation.layerIndex === null || layerCount <= 1
@@ -290,7 +362,7 @@ export function ObservatoryScene({
     renderer.setClearColor(0x02050a, 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
+    renderer.toneMappingExposure = 0.92;
     renderer.domElement.className = "observatory-canvas";
     renderer.domElement.setAttribute("role", "img");
     renderer.domElement.setAttribute(
@@ -319,9 +391,9 @@ export function ObservatoryScene({
     composer.addPass(new RenderPass(scene, camera));
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(1, 1),
-      0.88,
-      0.72,
-      0.14,
+      0.58,
+      0.48,
+      0.24,
     );
     composer.addPass(bloom);
 
@@ -331,7 +403,7 @@ export function ObservatoryScene({
     scene.add(key);
     const rim = new THREE.PointLight(
       STATUE_PALETTE.amber,
-      22,
+      16,
       24,
       1.7,
     );
@@ -339,7 +411,7 @@ export function ObservatoryScene({
     scene.add(rim);
     const memoryLight = new THREE.PointLight(
       STATUE_PALETTE.cyan,
-      18,
+      14,
       22,
       1.6,
     );

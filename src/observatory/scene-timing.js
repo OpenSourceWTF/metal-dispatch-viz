@@ -71,3 +71,27 @@ export function frameIndexFromProgress({
     : 0;
   return Math.min(frameCount - 1, Math.round(bounded * (frameCount - 1)));
 }
+
+export function playbackFrameFromElapsed({
+  initialIndex = 0,
+  frameCount,
+  elapsedMs = 0,
+  durationMs,
+} = {}) {
+  if (!Number.isSafeInteger(frameCount) || frameCount <= 0) return 0;
+  const terminalIndex = frameCount - 1;
+  const safeInitial = Number.isSafeInteger(initialIndex)
+    ? Math.min(terminalIndex, Math.max(0, initialIndex))
+    : 0;
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    return safeInitial;
+  }
+  const ratio = Number.isFinite(elapsedMs)
+    ? Math.min(1, Math.max(0, elapsedMs / durationMs))
+    : 0;
+  return Math.min(
+    terminalIndex,
+    safeInitial +
+      Math.round((terminalIndex - safeInitial) * ratio),
+  );
+}

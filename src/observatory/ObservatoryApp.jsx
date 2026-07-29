@@ -8,10 +8,7 @@ import {
 } from "./export.js";
 import { ObservatoryScene } from "./ObservatoryScene.jsx";
 import { buildSceneModel } from "./scene-model.js";
-import {
-  nextObservatoryFrameIndex,
-  observatoryFrameStride,
-} from "./scene-timing.js";
+import { playbackFrameFromElapsed } from "./scene-timing.js";
 import { buildStatueFrame } from "./statue-state.js";
 import {
   createGalleryTraceSource,
@@ -353,21 +350,28 @@ export function ObservatoryApp({
     ) {
       return undefined;
     }
-    const delay = Math.max(48, 140 / speed);
-    const stride = observatoryFrameStride({
-      frameCount,
-      frameDelayMs: delay,
-      galleryDurationMs: galleryDurationMs / speed,
-    });
-    const timer = setInterval(() => {
-      setFrameIndex((index) =>
-        nextObservatoryFrameIndex({
-          current: index,
-          frameCount,
-          stride,
-        }),
-      );
-    }, delay);
+    const initialIndex = frameIndex;
+    const terminalIndex = frameCount - 1;
+    const remainingFrames = terminalIndex - initialIndex;
+    const remainingShare =
+      terminalIndex <= 0 ? 0 : remainingFrames / terminalIndex;
+    const duration = Math.max(
+      1,
+      (galleryDurationMs / speed) * remainingShare,
+    );
+    const startedAt = performance.now();
+    const advance = () => {
+      const elapsed = performance.now() - startedAt;
+      const target = playbackFrameFromElapsed({
+        initialIndex,
+        frameCount,
+        elapsedMs: elapsed,
+        durationMs: duration,
+      });
+      setFrameIndex((current) => Math.max(current, target));
+    };
+    const timer = setInterval(advance, 90);
+    advance();
     return () => clearInterval(timer);
   }, [
     frameCount,

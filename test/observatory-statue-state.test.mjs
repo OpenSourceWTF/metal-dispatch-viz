@@ -163,22 +163,44 @@ test("uses the complete transformer choreography in causal order", () => {
   ]);
 
   const layerCount = 64;
-  const frames = TRANSFORMER_STAGES.map((_, index) =>
-    frame({
-      progress: (index + 0.1) / (TRANSFORMER_STAGES.length * layerCount),
-      index,
-    }),
+  const frames = Array.from(
+    { length: TRANSFORMER_STAGES.length * layerCount },
+    (_, index) =>
+      frame({
+        progress:
+          index === TRANSFORMER_STAGES.length * layerCount - 1
+            ? 1
+            : 0.01,
+        index,
+      }),
   );
   const denseModel = model(denseArchitecture(), {
     label: "Qwen3.6 27B",
     frames,
   });
   assert.deepEqual(
-    frames.map((_, index) =>
+    TRANSFORMER_STAGES.map((_, index) =>
       buildStatueFrame(denseModel, index).activation.stage,
     ),
     TRANSFORMER_STAGES,
   );
+});
+
+test("simulated traversal covers the model even when trace timestamps cluster", () => {
+  const frames = Array.from({ length: 65 }, (_, index) =>
+    frame({
+      progress: index === 64 ? 1 : 0.01,
+      index,
+    }),
+  );
+  const denseModel = model(denseArchitecture(), {
+    label: "Dense checkpoint",
+    frames,
+  });
+  const middle = buildStatueFrame(denseModel, 32);
+  assert.equal(middle.activation.layerIndex, 32);
+  assert.equal(middle.activation.traceProgress, 0.01);
+  assert.equal(middle.activation.simulationProgress, 0.5);
 });
 
 test("represents the MoE body and configured top-k without inventing routed experts", () => {

@@ -61,10 +61,18 @@ function architecturePresentation(architecture) {
   };
 }
 
-function activationPresentation(architecture, frame) {
+function activationPresentation(
+  architecture,
+  frame,
+  simulationProgress,
+) {
   if (!architecture.available) {
     return {
       evidence: "unavailable",
+      simulationProgress: null,
+      traceProgress: Number.isFinite(frame?.progress)
+        ? clamp(frame.progress, 0, 1)
+        : null,
       layerIndex: null,
       layerLabel: "—",
       layerType: null,
@@ -73,7 +81,7 @@ function activationPresentation(architecture, frame) {
     };
   }
 
-  const progress = clamp(finite(frame?.progress), 0, 1);
+  const progress = clamp(finite(simulationProgress), 0, 1);
   const layerPosition = progress * architecture.layerCount;
   const layerIndex = Math.min(
     architecture.layerCount - 1,
@@ -88,6 +96,10 @@ function activationPresentation(architecture, frame) {
 
   return {
     evidence: "simulated",
+    simulationProgress: progress,
+    traceProgress: Number.isFinite(frame?.progress)
+      ? clamp(frame.progress, 0, 1)
+      : null,
     layerIndex,
     layerLabel: `L${String(layerIndex + 1).padStart(2, "0")}`,
     layerType: architecture.layerTypes[layerIndex],
@@ -211,7 +223,13 @@ export function buildStatueFrame(model, frameIndex) {
         );
   const frame = frames[boundedIndex] ?? {};
   const architecture = architecturePresentation(model?.architecture);
-  const activation = activationPresentation(architecture, frame);
+  const simulationProgress =
+    frames.length <= 1 ? 0 : boundedIndex / (frames.length - 1);
+  const activation = activationPresentation(
+    architecture,
+    frame,
+    simulationProgress,
+  );
   const kernel = buildKernelGlyphDescriptor(frame);
 
   return deepFreeze({
