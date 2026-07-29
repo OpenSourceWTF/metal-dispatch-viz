@@ -172,4 +172,12 @@ test("Retina rendering stays within X web video dimensions", () => {
     }),
     2,
   );
+  assert.equal(
+    observatoryPixelRatio({
+      devicePixelRatio: 2,
+      width: 540,
+      height: 960,
+    }),
+    2,
+  );
 });

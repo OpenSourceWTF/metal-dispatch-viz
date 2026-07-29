@@ -5,6 +5,7 @@ import { normalizeArchitecture } from "../src/observatory/architecture.js";
 import {
   buildStatueFrame,
   TRANSFORMER_STAGES,
+  transformerStagesForArchitecture,
 } from "../src/observatory/statue-state.js";
 
 function denseArchitecture() {
@@ -161,6 +162,18 @@ test("uses the complete transformer choreography in causal order", () => {
     "feed-forward",
     "feed-forward-residual",
   ]);
+  assert.deepEqual(
+    transformerStagesForArchitecture(moeArchitecture()),
+    [
+      "pre-attention-norm",
+      "attention",
+      "attention-residual",
+      "pre-feed-forward-norm",
+      "router",
+      "feed-forward",
+      "feed-forward-residual",
+    ],
+  );
 
   const layerCount = 64;
   const frames = Array.from(

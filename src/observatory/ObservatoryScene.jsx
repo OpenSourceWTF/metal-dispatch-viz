@@ -163,33 +163,38 @@ function architectureCaption(presentation) {
   return `${layerTypes.length} LAYERS · ${linearAttention} LINEAR / ${fullAttention} FULL · ${feedForward}`;
 }
 
+function compactKernelInscription(value) {
+  if (typeof value !== "string" || value.length <= 34) return value;
+  return `${value.slice(0, 20)}…${value.slice(-10)}`;
+}
+
 function createLabels(scene, presentation) {
   const labels = {
     model: createWorldLabel(THREE, {
       text: presentation.inscriptions.model,
-      worldWidth: 5.8,
+      worldWidth: 3.7,
       accent: "#68e7ff",
     }),
     architecture: createWorldLabel(THREE, {
       text: architectureCaption(presentation),
-      worldWidth: 5.8,
+      worldWidth: 4.2,
       height: 112,
       accent: "#5a83ff",
       opacity: 0.58,
     }),
     layer: createWorldLabel(THREE, {
       text: presentation.inscriptions.layer,
-      worldWidth: 4.8,
+      worldWidth: 3.35,
       accent: "#e9fbff",
     }),
     kernel: createWorldLabel(THREE, {
-      text: presentation.inscriptions.kernel,
-      worldWidth: 5.9,
+      text: compactKernelInscription(presentation.inscriptions.kernel),
+      worldWidth: 3.55,
       accent: "#ffb45d",
     }),
     kernelFamily: createWorldLabel(THREE, {
       text: `KERNEL · ${presentation.kernel.family}`,
-      worldWidth: 2.8,
+      worldWidth: 2.25,
       width: 720,
       height: 112,
       accent: "#ffb45d",
@@ -197,15 +202,15 @@ function createLabels(scene, presentation) {
     }),
     memory: createWorldLabel(THREE, {
       text: "UNIFIED MEMORY",
-      worldWidth: 2.9,
+      worldWidth: 1.85,
       width: 720,
       height: 112,
       accent: "#68e7ff",
-      opacity: 0.48,
+      opacity: 0.72,
     }),
     cpu: createWorldLabel(THREE, {
       text: "CPU",
-      worldWidth: 1,
+      worldWidth: 0.8,
       width: 384,
       height: 112,
       accent: "#e9fbff",
@@ -213,7 +218,7 @@ function createLabels(scene, presentation) {
     }),
     gpu: createWorldLabel(THREE, {
       text: "GPU",
-      worldWidth: 1,
+      worldWidth: 0.8,
       width: 384,
       height: 112,
       accent: "#ffb45d",
@@ -221,41 +226,45 @@ function createLabels(scene, presentation) {
     }),
     simulated: createWorldLabel(THREE, {
       text: `${presentation.inscriptions.simulated} · LAYER FLOW`,
-      worldWidth: 2.05,
+      worldWidth: 1.7,
       width: 640,
       height: 112,
       accent: "#a974ff",
       opacity: 0.68,
     }),
   };
-  labels.model.sprite.position.set(-3.7, 5.65, 0.2);
-  labels.architecture.sprite.position.set(-3.7, 5.18, 0.2);
-  labels.layer.sprite.position.set(4.0, 0, 0.5);
-  labels.kernel.sprite.position.set(0, -1.52, 3.35);
-  labels.kernelFamily.sprite.position.set(0, 1.08, 3.18);
-  labels.memory.sprite.position.set(4.05, 4.7, -0.3);
-  labels.cpu.sprite.position.set(-5.05, 3.48, 0.4);
-  labels.gpu.sprite.position.set(5.1, -3.28, 0.5);
-  labels.simulated.sprite.position.set(3.65, 5.65, 0.2);
+  labels.model.sprite.position.set(-2.65, 5.25, 0.2);
+  labels.architecture.sprite.position.set(-2.65, 4.82, 0.2);
+  labels.layer.sprite.position.set(2.85, 0, 0.5);
+  labels.kernel.sprite.position.set(2.85, 1.58, 1.25);
+  labels.kernelFamily.sprite.position.set(3.35, 3.58, 1.05);
+  labels.memory.sprite.position.set(-3.7, -3.55, 0.25);
+  labels.cpu.sprite.position.set(-3.7, 3.48, 0.4);
+  labels.gpu.sprite.position.set(3.7, -3.55, 0.5);
+  labels.simulated.sprite.position.set(2.65, 5.25, 0.2);
   for (const label of Object.values(labels)) scene.add(label.sprite);
   return labels;
 }
 
-function applyLabels(labels, presentation, bodyHeight) {
+function applyLabels(labels, presentation, { reducedMotion = false } = {}) {
+  const change = reducedMotion ? "update" : "transition";
   labels.model.update(presentation.inscriptions.model);
-  labels.layer.update(presentation.inscriptions.layer, {
+  labels.layer[change](presentation.inscriptions.layer, {
     accent:
       presentation.activation.layerType === "full_attention"
         ? "#e9fbff"
         : "#68e7ff",
   });
-  labels.kernel.update(presentation.inscriptions.kernel, {
-    accent:
-      presentation.kernel.family === "projection"
-        ? "#ffb45d"
-        : "#68e7ff",
-  });
-  labels.kernelFamily.update(
+  labels.kernel[change](
+    compactKernelInscription(presentation.inscriptions.kernel),
+    {
+      accent:
+        presentation.kernel.family === "projection"
+          ? "#ffb45d"
+          : "#68e7ff",
+    },
+  );
+  labels.kernelFamily[change](
     `KERNEL · ${presentation.kernel.family}`,
     {
       accent:
@@ -268,12 +277,7 @@ function applyLabels(labels, presentation, bodyHeight) {
   labels.simulated.update(
     `${presentation.inscriptions.simulated} · LAYER FLOW`,
   );
-  const layerCount = presentation.architecture.layerCount;
-  const ratio =
-    presentation.activation.layerIndex === null || layerCount <= 1
-      ? 0.5
-      : presentation.activation.layerIndex / (layerCount - 1);
-  labels.layer.sprite.position.y = (ratio - 0.5) * bodyHeight;
+  labels.layer.sprite.position.y = 0;
 }
 
 export function ObservatoryScene({
@@ -285,6 +289,7 @@ export function ObservatoryScene({
   onCanvasReady,
   onCaptureController,
   onCommand,
+  onScrub,
 }) {
   const presentation = useMemo(
     () => suppliedPresentation ?? buildStatueFrame(model, frameIndex),
@@ -297,12 +302,17 @@ export function ObservatoryScene({
   const animatedRef = useRef(animated);
   const reducedMotionRef = useRef(reducedMotion);
   const commandRef = useRef(onCommand);
+  const scrubRef = useRef(onScrub);
   const renderRequestRef = useRef(null);
   const [failure, setFailure] = useState(null);
 
   useEffect(() => {
     commandRef.current = onCommand;
   }, [onCommand]);
+
+  useEffect(() => {
+    scrubRef.current = onScrub;
+  }, [onScrub]);
 
   useEffect(() => {
     presentationRef.current = presentation;
@@ -320,7 +330,7 @@ export function ObservatoryScene({
       applyLabels(
         activity.labels,
         presentation,
-        activity.statue.parts.bodyHeight,
+        { reducedMotion: reducedMotionRef.current },
       );
       activity.canvas.setAttribute(
         "aria-label",
@@ -362,7 +372,7 @@ export function ObservatoryScene({
     renderer.setClearColor(0x02050a, 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.92;
+    renderer.toneMappingExposure = 0.82;
     renderer.domElement.className = "observatory-canvas";
     renderer.domElement.setAttribute("role", "img");
     renderer.domElement.setAttribute(
@@ -384,16 +394,17 @@ export function ObservatoryScene({
     scene.background = new THREE.Color(0x02050a);
     scene.fog = new THREE.FogExp2(0x02050a, 0.026);
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 80);
-    camera.position.set(11.8, 4.8, 15.5);
+    const cameraBase = { x: 9.2, y: 3.4, z: 14.8 };
+    camera.position.set(cameraBase.x, cameraBase.y, cameraBase.z);
     camera.lookAt(0, 0, 0);
 
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(1, 1),
-      0.58,
-      0.48,
-      0.24,
+      0.4,
+      0.36,
+      0.32,
     );
     composer.addPass(bloom);
 
@@ -415,7 +426,7 @@ export function ObservatoryScene({
       22,
       1.6,
     );
-    memoryLight.position.set(-6, 3, 4);
+    memoryLight.position.set(-3.7, -2.65, 4);
     scene.add(memoryLight);
 
     const backdrop = createBackdrop();
@@ -429,7 +440,7 @@ export function ObservatoryScene({
     applyLabels(
       labels,
       presentationRef.current,
-      statue.parts.bodyHeight,
+      { reducedMotion: reducedMotionRef.current },
     );
     const instruments = createInstruments();
     scene.add(instruments.group);
@@ -487,40 +498,60 @@ export function ObservatoryScene({
         commandRef.current?.(selected.userData.action);
       }
     };
+    const onWheel = (event) => {
+      if (Math.abs(event.deltaY) < 1) return;
+      event.preventDefault();
+      scrubRef.current?.(event.deltaY);
+    };
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("wheel", onWheel, {
+      passive: false,
+    });
 
     let animationFrame = null;
     let visible = !globalThis.document?.hidden;
     let captureLocked = false;
     const startedAt = performance.now();
+    let previousRenderSeconds = 0;
     const render = (now = performance.now()) => {
       animationFrame = null;
       if (!visible) return;
       const time = Math.max(0, (now - startedAt) / 1_000);
+      const renderDelta = Math.min(
+        0.1,
+        Math.max(0, time - previousRenderSeconds),
+      );
+      previousRenderSeconds = time;
       const currentStatue = activityRef.current?.statue ?? statue;
       animateStatueGeometry(currentStatue, time, {
         reducedMotion: reducedMotionRef.current,
       });
       const cameraMotion = reducedMotionRef.current ? 0 : time;
       camera.position.x =
-        11.8 + Math.sin(cameraMotion * 0.085) * 1.25;
+        cameraBase.x + Math.sin(cameraMotion * 0.085) * 0.35;
       camera.position.z =
-        15.5 + Math.cos(cameraMotion * 0.085) * 0.8;
+        cameraBase.z + Math.cos(cameraMotion * 0.085) * 0.24;
       camera.position.y =
-        4.8 + Math.sin(cameraMotion * 0.052) * 0.45;
+        cameraBase.y + Math.sin(cameraMotion * 0.052) * 0.16;
       camera.lookAt(0, 0, 0);
       backdrop.rotation.y = cameraMotion * 0.006;
       instruments.group.children.forEach((instrument, index) => {
         if (!instrument.userData.action) return;
         instrument.rotation.y = cameraMotion * 0.45 + index * 0.22;
       });
+      let labelsAnimating = false;
+      for (const label of Object.values(labels)) {
+        labelsAnimating = label.animate(renderDelta) || labelsAnimating;
+      }
       composer.render();
 
       if (
         shouldAnimateObservatory({
           active:
-            animatedRef.current || instruments.group.visible,
+            animatedRef.current ||
+            instruments.group.visible ||
+            labelsAnimating,
           reducedMotion: reducedMotionRef.current,
           visible,
         })
@@ -547,6 +578,11 @@ export function ObservatoryScene({
       renderer.setSize(width, height, false);
       composer.setSize(width, height);
       camera.aspect = width / height;
+      const portrait = camera.aspect < 0.82;
+      cameraBase.x = portrait ? 7.2 : 9.2;
+      cameraBase.y = portrait ? 2.4 : 3.4;
+      cameraBase.z = portrait ? 18.2 : 14.8;
+      camera.fov = portrait ? 50 : 42;
       camera.updateProjectionMatrix();
       renderRequestRef.current?.();
     };
@@ -611,6 +647,7 @@ export function ObservatoryScene({
         "pointerdown",
         onPointerDown,
       );
+      renderer.domElement.removeEventListener("wheel", onWheel);
       for (const label of Object.values(labels)) label.dispose();
       disposeScene(scene);
       composer.dispose();

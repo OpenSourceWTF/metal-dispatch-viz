@@ -488,6 +488,21 @@ export function ObservatoryApp({
     },
     [frameCount],
   );
+  const scrubSculpture = useCallback(
+    (deltaY) => {
+      const direction = Math.sign(deltaY);
+      if (direction === 0) return;
+      const stride = Math.max(1, Math.round(frameCount / 180));
+      setPlaying(false);
+      setFrameIndex((current) =>
+        Math.min(
+          Math.max(0, frameCount - 1),
+          Math.max(0, current + direction * stride),
+        ),
+      );
+    },
+    [frameCount],
+  );
 
   const savePng = useCallback(async () => {
     if (!canvas) return;
@@ -619,6 +634,7 @@ export function ObservatoryApp({
         onCanvasReady={handleCanvasReady}
         onCaptureController={handleCaptureController}
         onCommand={onSceneCommand}
+        onScrub={scrubSculpture}
       />
       <div className="observatory-vignette" aria-hidden="true" />
       <div className="observatory-scanline" aria-hidden="true" />

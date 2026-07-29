@@ -6,6 +6,7 @@ import { normalizeArchitecture } from "../src/observatory/architecture.js";
 import {
   buildStatueFrame,
   TRANSFORMER_STAGES,
+  transformerStagesForArchitecture,
 } from "../src/observatory/statue-state.js";
 import {
   applyStatuePresentation,
@@ -99,10 +100,30 @@ test("installs the exact configured layer and expert counts once", () => {
     presentation(architecture({ layers: 40, experts: 256 })),
   );
   assert.equal(moe.parts.layers.count, 40);
-  assert.equal(moe.parts.experts.count, 256);
+  assert.equal(moe.parts.experts.userData.expertsPerLayer, 256);
+  assert.equal(moe.parts.experts.count, 40 * 256);
 
   disposeStatueGeometry(dense);
   disposeStatueGeometry(moe);
+});
+
+test("the configured transformer column flows from its top input to bottom output", () => {
+  const statue = createStatueGeometry(
+    THREE,
+    presentation(architecture({ layers: 64 })),
+  );
+  const input = statue.root.getObjectByName("TOKEN_EMBEDDING_APERTURE");
+  const output = statue.root.getObjectByName("VOCABULARY_APERTURE");
+
+  assert.ok(input.position.y > output.position.y);
+  assert.ok(statue.root.getObjectByName("UNIFIED_MEMORY_CUBE"));
+  assert.ok(
+    statue.parts.ribbons.every(
+      ({ mesh }) => mesh.userData.anchor === "ACTIVE_LAYER_APERTURE",
+    ),
+  );
+
+  disposeStatueGeometry(statue);
 });
 
 test("frame updates reuse installed geometry and expose hardware activity", () => {
@@ -128,7 +149,7 @@ test("frame updates reuse installed geometry and expose hardware activity", () =
   disposeStatueGeometry(statue);
 });
 
-test("active layer circuit advances through the complete transformer cycle", () => {
+test("every layer retains the complete transformer stage sequence while the column scrolls", () => {
   const shape = architecture({ layers: 64 });
   const first = presentation(shape, {
     frameCount: 64 * TRANSFORMER_STAGES.length + 1,
@@ -137,9 +158,16 @@ test("active layer circuit advances through the complete transformer cycle", () 
   const statue = createStatueGeometry(THREE, first);
   const identities = statue.geometryIdentities();
 
-  assert.equal(statue.parts.stageNodes.length, TRANSFORMER_STAGES.length);
-  assert.equal(statue.parts.stageCircuit.userData.activeStageIndex, 0);
-  assert.equal(statue.parts.stageNodes[0].userData.active, true);
+  assert.equal(statue.parts.stageBands.length, TRANSFORMER_STAGES.length);
+  assert.ok(
+    statue.parts.stageBands.every(
+      ({ mesh }) => mesh.count === shape.numHiddenLayers,
+    ),
+  );
+  assert.ok(
+    statue.parts.stageBands.every(({ mesh }) => mesh.visible),
+  );
+  const initialTarget = statue.parts.scrollGroup.userData.targetY;
 
   const feedForward = presentation(shape, {
     frameCount: 64 * TRANSFORMER_STAGES.length + 1,
@@ -148,13 +176,10 @@ test("active layer circuit advances through the complete transformer cycle", () 
   applyStatuePresentation(statue, feedForward);
 
   assert.deepEqual(statue.geometryIdentities(), identities);
-  assert.equal(statue.parts.stageCircuit.userData.activeStageIndex, 4);
-  assert.equal(statue.parts.stageCircuit.position.y, statue.parts.activeLayer.position.y);
-  assert.equal(statue.parts.stageNodes[0].userData.active, false);
-  assert.equal(statue.parts.stageNodes[4].userData.active, true);
-  assert.deepEqual(
-    statue.parts.stageCourier.position.toArray(),
-    statue.parts.stageNodes[4].position.toArray(),
+  assert.equal(statue.parts.activeLayer.position.y, 0);
+  assert.notEqual(
+    statue.parts.scrollGroup.userData.targetY,
+    initialTarget,
   );
 
   disposeStatueGeometry(statue);
@@ -162,10 +187,11 @@ test("active layer circuit advances through the complete transformer cycle", () 
 
 test("MoE routing appears only while feed-forward selects configured experts", () => {
   const shape = architecture({ layers: 40, experts: 256 });
-  const frameCount = 40 * TRANSFORMER_STAGES.length + 1;
+  const stageCount = transformerStagesForArchitecture(shape).length;
+  const frameCount = 40 * stageCount * 2 + 1;
   const attention = presentation(shape, {
     frameCount,
-    frameIndex: 1,
+    frameIndex: 3,
   });
   const statue = createStatueGeometry(THREE, attention);
   const identities = statue.geometryIdentities();
@@ -174,11 +200,11 @@ test("MoE routing appears only while feed-forward selects configured experts", (
   assert.equal(statue.parts.expertRouteFan.visible, false);
   assert.equal(statue.parts.sharedExpert.visible, false);
 
-  const feedForward = presentation(shape, {
+  const router = presentation(shape, {
     frameCount,
-    frameIndex: 4,
+    frameIndex: 9,
   });
-  applyStatuePresentation(statue, feedForward);
+  applyStatuePresentation(statue, router);
 
   assert.deepEqual(statue.geometryIdentities(), identities);
   assert.equal(statue.parts.expertRouteFan.visible, true);
@@ -187,11 +213,19 @@ test("MoE routing appears only while feed-forward selects configured experts", (
     statue.parts.expertRoutes.filter((route) => route.visible).length,
     8,
   );
+  assert.equal(statue.parts.sharedExpert.visible, false);
+
+  const feedForward = presentation(shape, {
+    frameCount,
+    frameIndex: 11,
+  });
+  applyStatuePresentation(statue, feedForward);
+  assert.equal(statue.parts.expertRouteFan.visible, true);
   assert.equal(statue.parts.sharedExpert.visible, true);
 
   const residual = presentation(shape, {
     frameCount,
-    frameIndex: 5,
+    frameIndex: 13,
   });
   applyStatuePresentation(statue, residual);
   assert.equal(statue.parts.expertRouteFan.visible, false);

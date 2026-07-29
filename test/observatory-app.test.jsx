@@ -166,6 +166,7 @@ function SceneStub({
   animated,
   onCanvasReady,
   onCommand,
+  onScrub,
 }) {
   const canvasRef = useRef(null);
   useEffect(() => {
@@ -183,6 +184,7 @@ function SceneStub({
       data-reduced-motion={String(reducedMotion)}
       data-animated={String(animated)}
       onClick={() => onCommand?.("toggle")}
+      onWheel={(event) => onScrub?.(event.deltaY)}
     />
   );
 }
@@ -286,15 +288,21 @@ describe("Silicon Observatory process", () => {
     expect(scene().dataset.frame).toBe("0");
     expect(scene().dataset.animated).toBe("false");
 
+    await act(async () => {
+      scene().dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, deltaY: 120 }),
+      );
+    });
+    expect(scene().dataset.frame).toBe("1");
+
     await act(async () =>
       container
         .querySelector(
-          'button[aria-label="Step forward one dispatch"]',
+          'button[aria-label="Step backward one dispatch"]',
         )
         .click(),
     );
-    expect(scene().dataset.frame).toBe("1");
-    expect(scene().dataset.kernel).toBe("rms_norm");
+    expect(scene().dataset.frame).toBe("0");
 
     const scrubber = container.querySelector(
       'input[aria-label="Captured window position"]',

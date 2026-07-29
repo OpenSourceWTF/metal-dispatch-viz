@@ -39,11 +39,14 @@ export function observatoryPixelRatio({
       : 1;
   const safeWidth = Number.isFinite(width) && width > 0 ? width : 1;
   const safeHeight = Number.isFinite(height) && height > 0 ? height : 1;
+  const portrait = safeHeight > safeWidth;
+  const maximumWidth = portrait ? 1_080 : 1_920;
+  const maximumHeight = portrait ? 1_920 : 1_200;
   return Math.min(
     safeDeviceRatio,
     2,
-    1_920 / safeWidth,
-    1_200 / safeHeight,
+    maximumWidth / safeWidth,
+    maximumHeight / safeHeight,
   );
 }
 

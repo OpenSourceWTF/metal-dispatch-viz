@@ -9,6 +9,23 @@ export const TRANSFORMER_STAGES = Object.freeze([
   "feed-forward-residual",
 ]);
 
+const MOE_TRANSFORMER_STAGES = Object.freeze([
+  "pre-attention-norm",
+  "attention",
+  "attention-residual",
+  "pre-feed-forward-norm",
+  "router",
+  "feed-forward",
+  "feed-forward-residual",
+]);
+
+export function transformerStagesForArchitecture(architecture) {
+  return architecture?.feedForward?.kind === "moe" ||
+    architecture?.feedForwardKind === "moe"
+    ? MOE_TRANSFORMER_STAGES
+    : TRANSFORMER_STAGES;
+}
+
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -78,6 +95,7 @@ function activationPresentation(
       layerType: null,
       stage: null,
       stageIndex: null,
+      stageCount: 0,
     };
   }
 
@@ -89,9 +107,10 @@ function activationPresentation(
   );
   const layerFraction =
     progress === 1 ? 1 : layerPosition - layerIndex;
+  const stages = transformerStagesForArchitecture(architecture);
   const stageIndex = Math.min(
-    TRANSFORMER_STAGES.length - 1,
-    Math.floor(layerFraction * TRANSFORMER_STAGES.length),
+    stages.length - 1,
+    Math.floor(layerFraction * stages.length),
   );
 
   return {
@@ -103,8 +122,9 @@ function activationPresentation(
     layerIndex,
     layerLabel: `L${String(layerIndex + 1).padStart(2, "0")}`,
     layerType: architecture.layerTypes[layerIndex],
-    stage: TRANSFORMER_STAGES[stageIndex],
+    stage: stages[stageIndex],
     stageIndex,
+    stageCount: stages.length,
   };
 }
 

@@ -52,7 +52,10 @@ export function createWorldLabel(
   let currentText = null;
   let currentColor = null;
   let currentAccent = null;
-  const update = (
+  let pending = null;
+  let transitionPhase = "idle";
+  let transitionProgress = 0;
+  const draw = (
     nextText,
     { color: nextColor = color, accent: nextAccent = accent } = {},
   ) => {
@@ -98,10 +101,67 @@ export function createWorldLabel(
     texture.needsUpdate = true;
   };
 
+  const update = (nextText, options = {}) => {
+    pending = null;
+    transitionPhase = "idle";
+    transitionProgress = 0;
+    material.opacity = opacity;
+    draw(nextText, options);
+  };
+  const transition = (nextText, options = {}) => {
+    const value = safeText(nextText);
+    const nextColor = options.color ?? color;
+    const nextAccent = options.accent ?? accent;
+    if (
+      value === currentText &&
+      nextColor === currentColor &&
+      nextAccent === currentAccent
+    ) {
+      return;
+    }
+    pending = { text: value, options };
+    if (transitionPhase === "idle" || transitionPhase === "in") {
+      transitionPhase = "out";
+      transitionProgress = 0;
+    }
+  };
+  const animate = (deltaSeconds) => {
+    if (transitionPhase === "idle") return false;
+    const delta = Math.min(0.1, Math.max(0, deltaSeconds));
+    if (transitionPhase === "out") {
+      transitionProgress = Math.min(
+        1,
+        transitionProgress + delta / 0.12,
+      );
+      material.opacity =
+        opacity * (1 - transitionProgress * 0.82);
+      if (transitionProgress >= 1 && pending) {
+        draw(pending.text, pending.options);
+        pending = null;
+        transitionPhase = "in";
+        transitionProgress = 0;
+      }
+      return true;
+    }
+    transitionProgress = Math.min(
+      1,
+      transitionProgress + delta / 0.22,
+    );
+    material.opacity =
+      opacity * (0.18 + transitionProgress * 0.82);
+    if (transitionProgress >= 1) {
+      transitionPhase = "idle";
+      material.opacity = opacity;
+    }
+    return transitionPhase !== "idle";
+  };
+
   update(text);
   return {
     sprite,
     update,
+    transition,
+    animate,
     dispose() {
       texture.dispose();
       material.dispose();

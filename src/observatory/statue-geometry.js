@@ -1,4 +1,6 @@
-import { TRANSFORMER_STAGES } from "./statue-state.js";
+import {
+  transformerStagesForArchitecture,
+} from "./statue-state.js";
 
 const PALETTE = Object.freeze({
   cyan: 0x68e7ff,
@@ -76,15 +78,141 @@ function groupFor(THREE) {
   return group;
 }
 
+function architectureDimensions(presentation) {
+  const architecture = presentation.architecture;
+  const layerCount = Math.max(1, architecture.layerCount);
+  const hiddenSize = Math.max(1, architecture.hiddenSize ?? 1);
+  const queryHeads = Math.max(1, architecture.attention?.queryHeads ?? 8);
+  const keyValueHeads = Math.max(
+    1,
+    architecture.attention?.keyValueHeads ?? queryHeads,
+  );
+  const width = Math.min(2.4, Math.max(1.5, Math.sqrt(hiddenSize) / 30));
+  const attentionRatio = Math.min(1, keyValueHeads / queryHeads);
+  const layerPitch = 0.9;
+  const stages = transformerStagesForArchitecture(architecture);
+  return {
+    height: architecture.available ? layerCount * layerPitch : 6.4,
+    layerPitch,
+    stagePitch: layerPitch / stages.length,
+    stages,
+    width,
+    depth: width * (0.72 + attentionRatio * 0.18),
+    facets: Math.min(32, Math.max(8, queryHeads)),
+  };
+}
+
+function stageAppearance(stage, feedForwardKind) {
+  if (stage.includes("norm")) {
+    return {
+      color: PALETTE.cyan,
+      opacity: 0.055,
+      radius: 0.76,
+      tube: 0.008,
+    };
+  }
+  if (stage === "attention") {
+    return {
+      color: PALETTE.attention,
+      opacity: 0.18,
+      radius: 1.08,
+      tube: 0.015,
+    };
+  }
+  if (stage === "router") {
+    return {
+      color: PALETTE.magenta,
+      opacity: 0.16,
+      radius: 0.96,
+      tube: 0.014,
+    };
+  }
+  if (stage === "feed-forward") {
+    return {
+      color:
+        feedForwardKind === "moe" ? PALETTE.violet : PALETTE.amber,
+      opacity: 0.16,
+      radius: feedForwardKind === "moe" ? 1.12 : 1.02,
+      tube: 0.015,
+    };
+  }
+  return {
+    color: PALETTE.white,
+    opacity: 0.05,
+    radius: 0.9,
+    tube: 0.007,
+  };
+}
+
+function createStageBands(THREE, presentation, dimensions) {
+  const layerCount = presentation.architecture.layerCount;
+  const transform = new THREE.Object3D();
+  return dimensions.stages.map((stage, stageIndex) => {
+    const appearance = stageAppearance(
+      stage,
+      presentation.architecture.feedForwardKind,
+    );
+    const mesh = new THREE.InstancedMesh(
+      new THREE.TorusGeometry(
+        1,
+        appearance.tube,
+        5,
+        Math.max(32, dimensions.facets * 2),
+      ),
+      luminousMaterial(THREE, appearance.color, {
+        opacity: appearance.opacity,
+        emissiveIntensity: stage.includes("residual") ? 0.42 : 0.7,
+        metalness: 0.2,
+        roughness: 0.15,
+      }),
+      Math.max(1, layerCount),
+    );
+    mesh.count = layerCount;
+    mesh.name = `CONFIGURED_STAGE_${stage.toUpperCase()}`;
+    mesh.userData.stage = stage;
+    mesh.userData.stageIndex = stageIndex;
+    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    for (let layerIndex = 0; layerIndex < layerCount; layerIndex += 1) {
+      const stageOrdinal =
+        layerIndex * dimensions.stages.length + stageIndex + 0.5;
+      const y =
+        dimensions.height / 2 - stageOrdinal * dimensions.stagePitch;
+      const ratio =
+        layerCount <= 1 ? 0.5 : layerIndex / (layerCount - 1);
+      const silhouette = 0.92 + Math.sin(ratio * Math.PI) * 0.1;
+      transform.position.set(0, y, 0);
+      transform.rotation.set(Math.PI / 2, 0, 0);
+      transform.scale.set(
+        dimensions.width * silhouette * appearance.radius,
+        dimensions.depth * silhouette * appearance.radius,
+        1,
+      );
+      transform.updateMatrix();
+      mesh.setMatrixAt(layerIndex, transform.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    return { mesh, stage, stageIndex };
+  });
+}
+
 function createLayerBody(THREE, presentation) {
   const group = groupFor(THREE);
   group.name = "LLM_LAYER_STACK";
+  const scrollGroup = groupFor(THREE);
+  scrollGroup.name = "SCROLLING_TRANSFORMER_COLUMN";
+  group.add(scrollGroup);
   const count = presentation.architecture.layerCount;
-  const dense = presentation.architecture.feedForwardKind === "dense";
-  const geometry = new THREE.TorusGeometry(1, 0.024, 4, 24);
+  const dimensions = architectureDimensions(presentation);
+  const geometry = new THREE.CylinderGeometry(
+    1,
+    1,
+    0.025,
+    dimensions.facets,
+    1,
+  );
   const material = luminousMaterial(THREE, PALETTE.cyan, {
-    opacity: 0.42,
-    emissiveIntensity: 0.46,
+    opacity: 0.018,
+    emissiveIntensity: 0.26,
     metalness: 0.58,
     roughness: 0.18,
   });
@@ -101,9 +229,15 @@ function createLayerBody(THREE, presentation) {
       (layerType) => layerType === "full_attention",
     ).length;
   const attentionAccents = new THREE.InstancedMesh(
-    new THREE.TorusGeometry(1, 0.018, 4, 24),
+    new THREE.CylinderGeometry(
+      1,
+      1,
+      0.065,
+      dimensions.facets,
+      1,
+    ),
     luminousMaterial(THREE, PALETTE.attention, {
-      opacity: 0.2,
+      opacity: 0.065,
       emissiveIntensity: 0.34,
       metalness: 0.28,
       roughness: 0.16,
@@ -116,26 +250,21 @@ function createLayerBody(THREE, presentation) {
   const transform = new THREE.Object3D();
   const fullAttention = new THREE.Color(PALETTE.attention);
   const linearAttention = new THREE.Color(PALETTE.cyanSoft);
-  const height = dense ? 8.9 : 7.3;
+  const height = dimensions.height;
   let attentionAccentIndex = 0;
   for (let index = 0; index < count; index += 1) {
     const ratio = count <= 1 ? 0.5 : index / (count - 1);
-    const y = (ratio - 0.5) * height;
-    const spiral = index * 0.028;
-    const waist = 0.9 + Math.sin(ratio * Math.PI) * 0.16;
+    const y = height / 2 - (index + 0.5) * dimensions.layerPitch;
+    const silhouette = 0.92 + Math.sin(ratio * Math.PI) * 0.1;
     const full =
       presentation.architecture.layerTypes[index] === "full_attention";
     transform.position.set(0, y, 0);
-    transform.rotation.set(
-      Math.PI / 2,
-      spiral,
-      Math.sin(spiral) * 0.025,
-    );
+    transform.rotation.set(0, 0, 0);
     const attentionScale = full ? 1.12 : 1;
     transform.scale.set(
-      (dense ? 1.72 : 1.94) * waist * attentionScale,
-      (dense ? 1.36 : 1.56) * waist * attentionScale,
+      dimensions.width * silhouette * attentionScale,
       1,
+      dimensions.depth * silhouette * attentionScale,
     );
     transform.updateMatrix();
     layers.setMatrixAt(index, transform.matrix);
@@ -154,22 +283,27 @@ function createLayerBody(THREE, presentation) {
   layers.instanceMatrix.needsUpdate = true;
   if (layers.instanceColor) layers.instanceColor.needsUpdate = true;
   attentionAccents.instanceMatrix.needsUpdate = true;
-  group.add(layers, attentionAccents);
+  const stageBands = createStageBands(THREE, presentation, dimensions);
+  scrollGroup.add(
+    layers,
+    attentionAccents,
+    ...stageBands.map(({ mesh }) => mesh),
+  );
 
   const coreMaterial = luminousMaterial(THREE, PALETTE.blue, {
-    opacity: 0.18,
-    emissiveIntensity: 0.9,
+    opacity: 0.055,
+    emissiveIntensity: 0.48,
     metalness: 0.8,
     roughness: 0.18,
     wireframe: true,
   });
   const core = addMesh(
-    group,
+    scrollGroup,
     new THREE.CylinderGeometry(
-      dense ? 0.62 : 0.78,
-      dense ? 0.88 : 1.04,
+      dimensions.width * 0.34,
+      dimensions.width * 0.46,
       height + 0.8,
-      dense ? 10 : 14,
+      dimensions.facets,
       Math.max(8, Math.round(count / 2)),
       true,
     ),
@@ -177,48 +311,87 @@ function createLayerBody(THREE, presentation) {
   );
   core.name = "MODEL_LATENT_VOLUME";
 
-  const activeLayer = addMesh(
-    group,
-    new THREE.TorusGeometry(dense ? 1.92 : 2.18, 0.036, 8, 96),
+  const activeLayer = groupFor(THREE);
+  activeLayer.name = "ACTIVE_LAYER_APERTURE";
+  const scannerPlane = addMesh(
+    activeLayer,
+    new THREE.CylinderGeometry(
+      dimensions.width * 1.12,
+      dimensions.width * 1.12,
+      0.018,
+      64,
+    ),
     luminousMaterial(THREE, PALETTE.white, {
-      opacity: 0.76,
-      emissiveIntensity: 1.12,
+      opacity: 0.018,
+      emissiveIntensity: 0.3,
+      metalness: 0.08,
+      roughness: 0.12,
+    }),
+  );
+  scannerPlane.name = "ACTIVE_SCANNING_PLANE";
+  const scannerRing = addMesh(
+    activeLayer,
+    new THREE.TorusGeometry(dimensions.width * 1.16, 0.036, 8, 96),
+    luminousMaterial(THREE, PALETTE.white, {
+      opacity: 0.46,
+      emissiveIntensity: 0.78,
       metalness: 0.2,
       roughness: 0.15,
     }),
   );
-  activeLayer.rotation.x = Math.PI / 2;
-  activeLayer.name = "ACTIVE_LAYER_APERTURE";
+  scannerRing.rotation.x = Math.PI / 2;
+  scannerRing.name = "ACTIVE_SCANNING_RING";
+  group.add(activeLayer);
 
   const input = addMesh(
-    group,
-    new THREE.CylinderGeometry(1.25, 1.72, 0.18, 48, 1, true),
+    scrollGroup,
+    new THREE.CylinderGeometry(
+      dimensions.width * 0.7,
+      dimensions.width * 0.96,
+      0.18,
+      48,
+      1,
+      true,
+    ),
     luminousMaterial(THREE, PALETTE.cyan, {
       opacity: 0.44,
       emissiveIntensity: 1.4,
       wireframe: true,
     }),
-    [0, -height / 2 - 0.52, 0],
+    [0, height / 2 + 0.52, 0],
   );
   input.name = "TOKEN_EMBEDDING_APERTURE";
 
   const output = addMesh(
-    group,
-    new THREE.CylinderGeometry(1.72, 1.25, 0.24, 64, 1, true),
+    scrollGroup,
+    new THREE.CylinderGeometry(
+      dimensions.width * 0.96,
+      dimensions.width * 0.7,
+      0.24,
+      64,
+      1,
+      true,
+    ),
     luminousMaterial(THREE, PALETTE.amber, {
       opacity: 0.55,
       emissiveIntensity: 1.6,
       wireframe: true,
     }),
-    [0, height / 2 + 0.52, 0],
+    [0, -height / 2 - 0.52, 0],
   );
   output.name = "VOCABULARY_APERTURE";
 
   group.userData.height = height;
+  group.userData.width = dimensions.width;
+  group.userData.dimensions = dimensions;
+  scrollGroup.userData.targetY = 0;
+  scrollGroup.userData.lastAnimationTime = null;
   return {
     group,
+    scrollGroup,
     layers,
     attentionAccents,
+    stageBands,
     core,
     activeLayer,
     input,
@@ -226,51 +399,73 @@ function createLayerBody(THREE, presentation) {
   };
 }
 
-function createExpertField(THREE, presentation, bodyHeight) {
+function createExpertField(THREE, presentation, dimensions) {
   const group = groupFor(THREE);
-  group.name = "MOE_EXPERT_FIELD";
-  const count =
+  group.name = "MOE_EXPERT_BANDS";
+  const expertsPerLayer =
     presentation.architecture.feedForward?.kind === "moe"
       ? presentation.architecture.feedForward.experts
       : 0;
-  const geometry = new THREE.OctahedronGeometry(0.075, 0);
+  const layerCount =
+    expertsPerLayer > 0 ? presentation.architecture.layerCount : 0;
+  const totalInstances = layerCount * expertsPerLayer;
+  const geometry = new THREE.BoxGeometry(
+    0.035,
+    dimensions.stagePitch * 0.36,
+    0.085,
+  );
   const material = luminousMaterial(THREE, PALETTE.violet, {
-    opacity: 0.55,
-    emissiveIntensity: 1,
+    opacity: 0.1,
+    emissiveIntensity: 0.36,
     metalness: 0.25,
     roughness: 0.28,
   });
   const experts = new THREE.InstancedMesh(
     geometry,
     material,
-    Math.max(1, count),
+    Math.max(1, totalInstances),
   );
-  experts.count = count;
-  experts.name = "CONFIGURED_EXPERTS";
+  experts.count = totalInstances;
+  experts.name = "CONFIGURED_EXPERT_BANDS";
+  experts.userData.expertsPerLayer = expertsPerLayer;
+  experts.userData.activeInstances = [];
   const transform = new THREE.Object3D();
-  const positions = [];
-  const dormant = new THREE.Color(0x583b82);
-  const columns = Math.max(1, Math.min(16, Math.ceil(Math.sqrt(count))));
-  const rows = Math.max(1, Math.ceil(count / columns));
-  for (let index = 0; index < count; index += 1) {
-    const band = index % columns;
-    const tier = Math.floor(index / columns);
+  const dormant = new THREE.Color(0x241633);
+  const feedForwardStageIndex =
+    dimensions.stages.indexOf("feed-forward");
+  const radius = dimensions.width * 1.34;
+  const positionFor = (layerIndex, expertIndex) => {
+    const stageOrdinal =
+      layerIndex * dimensions.stages.length +
+      feedForwardStageIndex +
+      0.5;
+    const y =
+      dimensions.height / 2 - stageOrdinal * dimensions.stagePitch;
     const angle =
-      band * (Math.PI * 2 / columns) + tier * 0.13;
-    const tierRatio = rows <= 1 ? 0.5 : tier / (rows - 1);
-    const y = (tierRatio - 0.5) * (bodyHeight * 0.88);
-    const radius = 3.05 + Math.sin(tier * 0.8) * 0.22;
-    transform.position.set(
+      (expertIndex / Math.max(1, expertsPerLayer)) * Math.PI * 2;
+    return new THREE.Vector3(
       Math.cos(angle) * radius,
       y,
       Math.sin(angle) * radius,
     );
-    positions.push(transform.position.clone());
-    transform.rotation.set(angle, angle * 0.3, -angle);
-    transform.scale.setScalar(0.8 + (index % 3) * 0.18);
-    transform.updateMatrix();
-    experts.setMatrixAt(index, transform.matrix);
-    experts.setColorAt(index, dormant);
+  };
+  for (let layerIndex = 0; layerIndex < layerCount; layerIndex += 1) {
+    for (
+      let expertIndex = 0;
+      expertIndex < expertsPerLayer;
+      expertIndex += 1
+    ) {
+      const instanceIndex =
+        layerIndex * expertsPerLayer + expertIndex;
+      const position = positionFor(layerIndex, expertIndex);
+      const angle =
+        (expertIndex / Math.max(1, expertsPerLayer)) * Math.PI * 2;
+      transform.position.copy(position);
+      transform.rotation.set(0, -angle, 0);
+      transform.updateMatrix();
+      experts.setMatrixAt(instanceIndex, transform.matrix);
+      experts.setColorAt(instanceIndex, dormant);
+    }
   }
   experts.instanceMatrix.needsUpdate = true;
   if (experts.instanceColor) experts.instanceColor.needsUpdate = true;
@@ -280,17 +475,17 @@ function createExpertField(THREE, presentation, bodyHeight) {
     group,
     new THREE.TorusKnotGeometry(0.38, 0.025, 96, 8, 2, 3),
     luminousMaterial(THREE, PALETTE.magenta, {
-      opacity: count > 0 ? 0.24 : 0,
+      opacity: expertsPerLayer > 0 ? 0.24 : 0,
       emissiveIntensity: 0.9,
       wireframe: true,
     }),
   );
   shared.name = "SHARED_EXPERT";
   shared.visible = false;
-  return { group, experts, shared, positions };
+  return { group, experts, shared, positionFor };
 }
 
-function createExpertRouteFan(THREE, presentation, expertPositions) {
+function createExpertRouteFan(THREE, presentation, expertPositionFor) {
   const group = groupFor(THREE);
   group.name = "MOE_CONFIGURED_ROUTE_FAN";
   const fanout =
@@ -306,43 +501,58 @@ function createExpertRouteFan(THREE, presentation, expertPositions) {
     );
     const route = new THREE.Line(
       geometry,
-      lineMaterial(THREE, PALETTE.magenta, 0.34),
+      lineMaterial(THREE, PALETTE.magenta, 0.58),
     );
     route.name = `MOE_CONFIGURED_ROUTE_${index + 1}`;
     route.visible = false;
+    route.frustumCulled = false;
+    route.renderOrder = 6;
+    route.material.depthTest = false;
     group.add(route);
     routes.push(route);
   }
   group.visible = false;
-  group.userData.expertPositions = expertPositions;
+  group.userData.expertPositionFor = expertPositionFor;
   group.userData.routedExpertCount = 0;
   return { group, routes };
 }
 
-function createMemoryHalo(THREE) {
+function createMemoryCube(THREE) {
   const group = groupFor(THREE);
-  group.name = "UNIFIED_MEMORY_HALO";
-  const rings = [];
-  [
-    [5.25, 0.028, 0.24, 0.08],
-    [5.65, 0.018, -0.38, -0.14],
-    [4.88, 0.014, 0.58, 0.22],
-  ].forEach(([radius, tube, tiltX, tiltY], index) => {
-    const ring = addMesh(
+  group.name = "UNIFIED_MEMORY_CUBE";
+  group.position.set(-3.7, -2.65, 0.25);
+  const elements = [];
+  [1.4, 1.08].forEach((size, index) => {
+    const shell = addMesh(
       group,
-      new THREE.TorusGeometry(radius, tube, 6, 192),
+      new THREE.BoxGeometry(size, size, size),
       luminousMaterial(THREE, index === 1 ? PALETTE.blue : PALETTE.cyan, {
-        opacity: index === 0 ? 0.28 : 0.14,
-        emissiveIntensity: 1.08,
-        metalness: 0.1,
-        roughness: 0.12,
+        opacity: index === 0 ? 0.2 : 0.1,
+        emissiveIntensity: 0.9,
+        metalness: 0.42,
+        roughness: 0.16,
+        wireframe: true,
       }),
     );
-    ring.rotation.set(tiltX, tiltY, index * 0.38);
-    rings.push(ring);
+    shell.rotation.set(index * 0.16, index * 0.22, index * 0.08);
+    elements.push(shell);
   });
+  for (let index = 0; index < 4; index += 1) {
+    const bank = addMesh(
+      group,
+      new THREE.BoxGeometry(0.92, 0.045, 0.92),
+      luminousMaterial(THREE, PALETTE.cyan, {
+        opacity: 0.13,
+        emissiveIntensity: 0.58,
+        metalness: 0.5,
+        roughness: 0.18,
+      }),
+      [0, (index - 1.5) * 0.23, 0],
+    );
+    elements.push(bank);
+  }
   group.userData.active = false;
-  return { group, rings };
+  return { group, elements };
 }
 
 function createHardwareOrbitals(THREE) {
@@ -366,7 +576,7 @@ function createHardwareOrbitals(THREE) {
     }),
   );
   cpuRing.rotation.x = Math.PI / 2;
-  cpu.position.set(-5.05, 2.8, 0.4);
+  cpu.position.set(-3.7, 2.65, 0.4);
 
   const gpu = groupFor(THREE);
   gpu.name = "GPU_EXECUTION_ORBITAL";
@@ -400,7 +610,7 @@ function createHardwareOrbitals(THREE) {
       wireframe: true,
     }),
   );
-  gpu.position.set(5.1, -2.5, 0.5);
+  gpu.position.set(3.7, -2.65, 0.5);
 
   cpu.userData.dispatchPulse = false;
   gpu.userData.active = false;
@@ -425,13 +635,13 @@ function tubeBetween(THREE, points, color) {
 }
 
 function createRibbons(THREE) {
-  return [
+  const ribbons = [
     tubeBetween(
       THREE,
       [
-        [-4.9, 0.1, -0.1],
-        [-3.5, 1.35, 1.5],
-        [-2.1, 0.3, 1.1],
+        [-3.7, -2.65, 0.25],
+        [-3.0, -1.6, 1.25],
+        [-1.7, -0.35, 1.05],
         [0, 0, 0],
       ],
       PALETTE.cyan,
@@ -439,24 +649,28 @@ function createRibbons(THREE) {
     tubeBetween(
       THREE,
       [
-        [-4.8, 2.75, 0.4],
-        [-3.25, 3.35, 1.25],
-        [-1.5, 1.8, 0.8],
-        [0, 0.4, 0],
+        [-3.7, 2.65, 0.4],
+        [-3.0, 2.05, 1.25],
+        [-1.55, 0.8, 0.8],
+        [0, 0, 0],
       ],
       PALETTE.white,
     ),
     tubeBetween(
       THREE,
       [
-        [0, -0.2, 0],
-        [1.7, -1.2, 1.35],
-        [3.45, -3.2, 1.1],
-        [5.0, -2.5, 0.5],
+        [0, 0, 0],
+        [1.6, -0.75, 1.35],
+        [2.8, -2.35, 1.1],
+        [3.7, -2.65, 0.5],
       ],
       PALETTE.amber,
     ),
   ];
+  ribbons.forEach(({ mesh }) => {
+    mesh.userData.anchor = "ACTIVE_LAYER_APERTURE";
+  });
+  return ribbons;
 }
 
 function createSpeculationBranches(THREE) {
@@ -572,7 +786,7 @@ function bridgeGlyph(THREE, color) {
 function createKernelGlyphs(THREE) {
   const kernel = groupFor(THREE);
   kernel.name = "ACTIVE_KERNEL_GLYPH";
-  kernel.position.set(0, -0.15, 3.15);
+  kernel.position.set(3.7, 2.65, 1.1);
   const cage = addMesh(
     kernel,
     new THREE.IcosahedronGeometry(1.1, 2),
@@ -647,9 +861,9 @@ function createParticleField(THREE) {
   );
   const material = new THREE.PointsMaterial({
     color: PALETTE.white,
-    size: 0.055,
+    size: 0.034,
     transparent: true,
-    opacity: 0.82,
+    opacity: 0.46,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
@@ -659,15 +873,15 @@ function createParticleField(THREE) {
   return points;
 }
 
-function createActivationFlow(THREE, bodyHeight) {
+function createActivationFlow(THREE) {
   const group = groupFor(THREE);
-  group.name = "ACTIVATION_ASCENT";
+  group.name = "ACTIVATION_FOCAL_FLOW";
   const positions = new Float32Array([
     0,
-    -bodyHeight / 2 - 0.38,
+    0.7,
     0,
     0,
-    -bodyHeight / 2,
+    -0.7,
     0,
   ]);
   const geometry = new THREE.BufferGeometry();
@@ -689,88 +903,10 @@ function createActivationFlow(THREE, bodyHeight) {
       metalness: 0.16,
       roughness: 0.12,
     }),
-    [0, -bodyHeight / 2, 0],
+    [0, 0, 0],
   );
   courier.name = "ACTIVE_TENSOR_COURIER";
   return { group, path, courier };
-}
-
-function stageNodeGeometry(THREE, stage) {
-  if (stage.includes("norm")) {
-    return new THREE.OctahedronGeometry(0.115, 0);
-  }
-  if (stage === "attention") {
-    return new THREE.TorusGeometry(0.115, 0.028, 5, 18);
-  }
-  if (stage === "feed-forward") {
-    return new THREE.TetrahedronGeometry(0.14, 0);
-  }
-  return new THREE.BoxGeometry(0.17, 0.075, 0.075);
-}
-
-function stageNodeColor(stage) {
-  if (stage.includes("norm")) return PALETTE.cyan;
-  if (stage === "attention") return PALETTE.attention;
-  if (stage === "feed-forward") return PALETTE.amber;
-  return PALETTE.white;
-}
-
-function createTransformerStageCircuit(THREE, dense) {
-  const group = groupFor(THREE);
-  group.name = "ACTIVE_TRANSFORMER_STAGE_CIRCUIT";
-  const radius = dense ? 1.48 : 1.68;
-  const rail = addMesh(
-    group,
-    new THREE.TorusGeometry(radius, 0.018, 4, 96),
-    luminousMaterial(THREE, PALETTE.blue, {
-      opacity: 0.48,
-      emissiveIntensity: 0.82,
-      metalness: 0.2,
-      roughness: 0.18,
-    }),
-  );
-  rail.name = "TRANSFORMER_STAGE_RAIL";
-
-  const nodes = TRANSFORMER_STAGES.map((stage, index) => {
-    const angle =
-      -Math.PI / 2 + index * (Math.PI * 2 / TRANSFORMER_STAGES.length);
-    const node = addMesh(
-      group,
-      stageNodeGeometry(THREE, stage),
-      luminousMaterial(THREE, stageNodeColor(stage), {
-        opacity: 0.16,
-        emissiveIntensity: 0.24,
-        metalness: 0.22,
-        roughness: 0.16,
-      }),
-      [
-        Math.cos(angle) * radius,
-        Math.sin(angle) * radius,
-        0.16,
-      ],
-    );
-    node.name = `TRANSFORMER_STAGE_${stage.toUpperCase()}`;
-    node.rotation.set(angle * 0.1, angle * 0.08, angle);
-    node.userData.stage = stage;
-    node.userData.stageIndex = index;
-    node.userData.active = false;
-    return node;
-  });
-
-  const courier = addMesh(
-    group,
-    new THREE.OctahedronGeometry(0.105, 0),
-    luminousMaterial(THREE, PALETTE.white, {
-      opacity: 0.96,
-      emissiveIntensity: 1.8,
-      metalness: 0.12,
-      roughness: 0.1,
-    }),
-  );
-  courier.name = "ACTIVE_TRANSFORMER_STAGE_COURIER";
-  group.userData.activeStageIndex = null;
-  group.userData.activeStage = null;
-  return { group, rail, nodes, courier };
 }
 
 function updateLayerColors(statue, presentation) {
@@ -795,19 +931,32 @@ function updateExperts(statue, presentation, activationY) {
   const experts = statue.parts.experts;
   if (experts.count === 0) return;
   const routingActive =
+    presentation.activation.stage === "router" ||
     presentation.activation.stage === "feed-forward";
   const routedIndices = routingActive
     ? presentation.experts.illuminatedIndices
     : [];
-  const illuminated = new Set(routedIndices);
   const active = new statue.THREE.Color(PALETTE.magenta);
-  const dormant = new statue.THREE.Color(0x583b82);
-  for (let index = 0; index < experts.count; index += 1) {
-    experts.setColorAt(index, illuminated.has(index) ? active : dormant);
+  const dormant = new statue.THREE.Color(0x241633);
+  for (const instanceIndex of experts.userData.activeInstances) {
+    experts.setColorAt(instanceIndex, dormant);
   }
+  const layerIndex = presentation.activation.layerIndex ?? 0;
+  const activeInstances = routedIndices.map(
+    (expertIndex) =>
+      layerIndex * experts.userData.expertsPerLayer + expertIndex,
+  );
+  for (const instanceIndex of activeInstances) {
+    experts.setColorAt(instanceIndex, active);
+  }
+  experts.userData.activeInstances = activeInstances;
   if (experts.instanceColor) experts.instanceColor.needsUpdate = true;
+  experts.material.opacity = routingActive ? 0.24 : 0.08;
+  experts.material.emissiveIntensity = routingActive ? 0.72 : 0.22;
+  statue.parts.sharedExpert.position.y = activationY;
   statue.parts.sharedExpert.visible =
-    routingActive && presentation.experts.sharedExpert;
+    presentation.activation.stage === "feed-forward" &&
+    presentation.experts.sharedExpert;
   statue.parts.expertRouteFan.visible =
     routingActive && routedIndices.length > 0;
   statue.parts.expertRouteFan.userData.routedExpertCount =
@@ -815,13 +964,16 @@ function updateExperts(statue, presentation, activationY) {
   statue.parts.expertRoutes.forEach((route, index) => {
     const expertIndex = routedIndices[index];
     const endpoint =
-      statue.parts.expertPositions[expertIndex] ?? null;
+      expertIndex === undefined
+        ? null
+        : statue.parts.expertPositionFor(layerIndex, expertIndex);
     route.visible = routingActive && endpoint !== null;
     if (endpoint === null) return;
     const positions = route.geometry.getAttribute("position");
     positions.setXYZ(0, 0, activationY, 0);
     positions.setXYZ(1, endpoint.x, endpoint.y, endpoint.z);
     positions.needsUpdate = true;
+    route.geometry.computeBoundingSphere();
   });
 }
 
@@ -832,60 +984,34 @@ export function applyStatuePresentation(statue, presentation) {
   statue.root.userData.activeLayer = presentation.activation.layerIndex;
   statue.root.userData.activeStage = presentation.activation.stage;
 
-  const height = statue.parts.bodyHeight;
-  const layerCount = presentation.architecture.layerCount;
-  const layerRatio =
-    presentation.activation.layerIndex === null || layerCount <= 1
-      ? 0.5
-      : presentation.activation.layerIndex / (layerCount - 1);
-  statue.parts.activeLayer.position.y = (layerRatio - 0.5) * height;
+  const dimensions = statue.parts.bodyDimensions;
+  const activeLayerIndex = presentation.activation.layerIndex ?? 0;
+  const activeStageIndex = presentation.activation.stageIndex ?? 0;
+  const stageOrdinal =
+    activeLayerIndex * dimensions.stages.length +
+    activeStageIndex +
+    0.5;
+  const activationY =
+    dimensions.height / 2 - stageOrdinal * dimensions.stagePitch;
+  const targetScrollY = -activationY;
+  statue.parts.scrollGroup.userData.targetY = targetScrollY;
+  if (statue.parts.scrollGroup.userData.initialized !== true) {
+    statue.parts.scrollGroup.position.y = targetScrollY;
+    statue.parts.scrollGroup.userData.initialized = true;
+  }
+  statue.parts.activeLayer.position.y = 0;
   statue.parts.activeLayer.visible = presentation.architecture.available;
+  const activeStageAppearance = stageAppearance(
+    presentation.activation.stage ?? "pre-attention-norm",
+    presentation.architecture.feedForwardKind,
+  );
   statue.parts.activeLayer.userData.stageScale =
-    [0.82, 1.08, 0.96, 0.84, 1, 1.04][
-      presentation.activation.stageIndex ?? 0
-    ];
+    0.88 + activeStageAppearance.radius * 0.12;
   updateLayerColors(statue, presentation);
-  const activationY = statue.parts.activeLayer.position.y;
   updateExperts(statue, presentation, activationY);
-  statue.parts.activationCourier.position.y = activationY;
+  statue.parts.activationCourier.position.y = 0;
   statue.parts.activationCourier.visible =
     presentation.architecture.available;
-  const activationPositions =
-    statue.parts.activationPath.geometry.getAttribute("position");
-  activationPositions.setY(1, activationY);
-  activationPositions.needsUpdate = true;
-  const activeStageIndex = presentation.activation.stageIndex;
-  const activeStageNode =
-    activeStageIndex === null
-      ? null
-      : statue.parts.stageNodes[activeStageIndex];
-  statue.parts.stageCircuit.position.y = activationY;
-  statue.parts.stageCircuit.position.x = 1.45;
-  statue.parts.stageCircuit.position.z = 1.9;
-  statue.parts.stageCircuit.visible =
-    presentation.architecture.available && activeStageNode !== null;
-  statue.parts.stageCircuit.userData.activeStageIndex =
-    activeStageIndex;
-  statue.parts.stageCircuit.userData.activeStage =
-    presentation.activation.stage;
-  statue.parts.stageNodes.forEach((node, index) => {
-    const active = index === activeStageIndex;
-    const complete =
-      activeStageIndex !== null && index < activeStageIndex;
-    node.userData.active = active;
-    node.userData.complete = complete;
-    node.material.opacity = active ? 0.94 : complete ? 0.54 : 0.26;
-    node.material.emissiveIntensity = active
-      ? 1.55
-      : complete
-        ? 0.82
-        : 0.38;
-    node.scale.setScalar(active ? 1.38 : complete ? 0.98 : 0.82);
-  });
-  statue.parts.stageCourier.visible = activeStageNode !== null;
-  if (activeStageNode !== null) {
-    statue.parts.stageCourier.position.copy(activeStageNode.position);
-  }
 
   statue.parts.memory.userData.active =
     presentation.hardware.memory.active;
@@ -894,8 +1020,12 @@ export function applyStatuePresentation(statue, presentation) {
   );
   statue.parts.memoryRings.forEach((ring, index) => {
     ring.material.opacity = presentation.hardware.memory.active
-      ? 0.23 - index * 0.04
-      : 0.05;
+      ? index === 0
+        ? 0.24
+        : 0.12
+      : index === 0
+        ? 0.08
+        : 0.035;
   });
 
   statue.parts.cpu.userData.dispatchPulse =
@@ -916,11 +1046,11 @@ export function applyStatuePresentation(statue, presentation) {
         : index === 1
           ? presentation.hardware.cpu.dispatchPulse
           : presentation.hardware.gpu.active;
-    material.opacity = active ? 0.72 : 0.08;
+    material.opacity = active ? 0.42 : 0.045;
   });
   statue.parts.particles.visible = presentation.hardware.gpu.active;
   statue.parts.particles.material.opacity =
-    0.24 + presentation.hardware.gpu.laneCount / 24;
+    0.12 + presentation.hardware.gpu.laneCount / 80;
   statue.parts.speculation.userData.configuredWidth =
     presentation.speculation.width;
   statue.parts.speculationBranches.forEach((branch, index) => {
@@ -942,28 +1072,42 @@ export function animateStatueGeometry(
   const presentation = statue.presentation;
   if (!presentation) return;
 
-  statue.parts.memory.rotation.y = time * 0.045;
+  const scrollGroup = statue.parts.scrollGroup;
+  const previousTime = scrollGroup.userData.lastAnimationTime;
+  const deltaSeconds =
+    previousTime === null
+      ? 0
+      : Math.min(0.1, Math.max(0, elapsedSeconds - previousTime));
+  scrollGroup.userData.lastAnimationTime = elapsedSeconds;
+  if (reducedMotion) {
+    scrollGroup.position.y = scrollGroup.userData.targetY;
+  } else if (deltaSeconds > 0) {
+    scrollGroup.position.y = statue.THREE.MathUtils.damp(
+      scrollGroup.position.y,
+      scrollGroup.userData.targetY,
+      8,
+      deltaSeconds,
+    );
+  }
+
+  statue.parts.memory.rotation.y = time * 0.08;
+  statue.parts.memory.rotation.x = Math.sin(time * 0.12) * 0.08;
   statue.parts.cpu.rotation.y = time * 0.62;
   statue.parts.gpu.rotation.y = -time * 0.31;
   statue.parts.kernel.rotation.z = Math.sin(time * 0.42) * 0.08;
   statue.parts.kernel.rotation.y = time * 0.08;
+  statue.parts.activationCourier.position.y = reducedMotion
+    ? 0
+    : 0.45 - ((time * 0.7) % 1) * 0.9;
   statue.parts.activationCourier.rotation.x = time * 1.7;
   statue.parts.activationCourier.rotation.y = time * 2.1;
-  statue.parts.stageCircuit.rotation.y =
-    0.65 + Math.sin(time * 0.42) * 0.045;
-  statue.parts.stageCourier.rotation.x = time * 2.4;
-  statue.parts.stageCourier.rotation.y = time * 3.1;
   statue.parts.sharedExpert.rotation.x = time * 0.48;
   statue.parts.sharedExpert.rotation.y = time * 0.72;
   statue.parts.expertRoutes.forEach((route, index) => {
     route.material.opacity =
-      0.2 +
-      Math.max(0, Math.sin(time * 3.4 - index * 0.48)) * 0.32;
+      0.46 +
+      Math.max(0, Math.sin(time * 3.4 - index * 0.48)) * 0.28;
   });
-  const stagePulse = reducedMotion
-    ? 1
-    : 1 + Math.sin(time * 7.2) * 0.16;
-  statue.parts.stageCourier.scale.setScalar(stagePulse);
   statue.parts.speculationBranches.forEach((branch, index) => {
     branch.material.opacity =
       0.18 + Math.max(0, Math.sin(time * 1.8 - index * 0.7)) * 0.34;
@@ -984,7 +1128,7 @@ export function animateStatueGeometry(
 
   const attribute = statue.parts.particles.geometry.getAttribute("position");
   const seeds = statue.parts.particles.userData.seeds;
-  const activeY = statue.parts.activeLayer.position.y;
+  const activeY = 0;
   for (let index = 0; index < attribute.count; index += 1) {
     const angle = seeds[index * 3] + time * (1.2 + (index % 5) * 0.07);
     const phase = (seeds[index * 3 + 1] + time * 0.31) % 1;
@@ -1007,39 +1151,29 @@ export function createStatueGeometry(THREE, presentation) {
   const expertField = createExpertField(
     THREE,
     presentation,
-    body.group.userData.height,
+    body.group.userData.dimensions,
   );
   const expertRouteFan = createExpertRouteFan(
     THREE,
     presentation,
-    expertField.positions,
+    expertField.positionFor,
   );
-  const memory = createMemoryHalo(THREE);
+  body.scrollGroup.add(expertField.group, expertRouteFan.group);
+  const memory = createMemoryCube(THREE);
   const hardware = createHardwareOrbitals(THREE);
   const glyph = createKernelGlyphs(THREE);
   const ribbons = createRibbons(THREE);
   const speculation = createSpeculationBranches(THREE);
   const particles = createParticleField(THREE);
-  const activationFlow = createActivationFlow(
-    THREE,
-    body.group.userData.height,
-  );
-  const stageCircuit = createTransformerStageCircuit(
-    THREE,
-    presentation.architecture.feedForwardKind === "dense",
-  );
-
+  const activationFlow = createActivationFlow(THREE);
   root.add(
     body.group,
-    expertField.group,
-    expertRouteFan.group,
     memory.group,
     hardware.cpu,
     hardware.gpu,
     glyph.kernel,
     speculation.group,
     activationFlow.group,
-    stageCircuit.group,
     particles,
   );
   for (const ribbon of ribbons) root.add(ribbon.mesh);
@@ -1051,15 +1185,18 @@ export function createStatueGeometry(THREE, presentation) {
     parts: {
       layers: body.layers,
       attentionAccents: body.attentionAccents,
+      stageBands: body.stageBands,
+      scrollGroup: body.scrollGroup,
       experts: expertField.experts,
       sharedExpert: expertField.shared,
-      expertPositions: expertField.positions,
+      expertPositionFor: expertField.positionFor,
       expertRouteFan: expertRouteFan.group,
       expertRoutes: expertRouteFan.routes,
       activeLayer: body.activeLayer,
       bodyHeight: body.group.userData.height,
+      bodyDimensions: body.group.userData.dimensions,
       memory: memory.group,
-      memoryRings: memory.rings,
+      memoryRings: memory.elements,
       cpu: hardware.cpu,
       cpuCore: hardware.cpuCore,
       gpu: hardware.gpu,
@@ -1072,10 +1209,6 @@ export function createStatueGeometry(THREE, presentation) {
       speculationBranches: speculation.branches,
       activationPath: activationFlow.path,
       activationCourier: activationFlow.courier,
-      stageCircuit: stageCircuit.group,
-      stageRail: stageCircuit.rail,
-      stageNodes: stageCircuit.nodes,
-      stageCourier: stageCircuit.courier,
       particles,
     },
     geometryIdentities() {
