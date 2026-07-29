@@ -299,7 +299,7 @@ git commit -m "feat: derive readable Observatory story frames"
 launch windows. The scrubber addresses only the frames already installed in the
 current Observatory scene model.
 
-- [ ] **Step 1: Write failing UI tests**
+- [x] **Step 1: Write failing UI tests**
 
 Extend `SceneStub` to expose story-frame fields and assert that the ready state
 contains:
@@ -344,7 +344,7 @@ that its explanation names aggregated model blocks; focus `GPU lanes` and
 assert that its explanation calls them representative rather than physical
 cores.
 
-- [ ] **Step 2: Run the app test and confirm failure**
+- [x] **Step 2: Run the app test and confirm failure**
 
 Run:
 
@@ -355,7 +355,7 @@ npx vitest run test/observatory-app.test.jsx
 Expected: FAIL because the progress rail, scrubber, step controls, legend, and
 evidence disclosure do not exist.
 
-- [ ] **Step 3: Wire a single story frame into React and Three**
+- [x] **Step 3: Wire a single story frame into React and Three**
 
 Memoize the presentation:
 
@@ -376,7 +376,7 @@ const seekFrame = (nextIndex) => {
 };
 ```
 
-- [ ] **Step 4: Replace the old readout and zone labels**
+- [x] **Step 4: Replace the old readout and zone labels**
 
 Render a `observatory-story-hud` containing:
 
@@ -406,7 +406,7 @@ for `Unified memory`, `Active kernel`, and `GPU lanes`; focus and pointer entry
 update a concise `aria-live` explanation immediately beside the stage. Remove
 the SSD/CPU/GPU free-floating zone-label overlay.
 
-- [ ] **Step 5: Add frame stepping and progressive evidence disclosure**
+- [x] **Step 5: Add frame stepping and progressive evidence disclosure**
 
 Add buttons labeled `Step backward one dispatch` and
 `Step forward one dispatch`. Replace the always-open rail with:
@@ -421,14 +421,14 @@ Add buttons labeled `Step backward one dispatch` and
 `EvidenceDetails` includes the raw current kernel name. Keep the evidence level
 in a compact always-visible badge beside the progress rail.
 
-- [ ] **Step 6: Rebuild CSS hierarchy**
+- [x] **Step 6: Rebuild CSS hierarchy**
 
 Use a slate canvas (`#0b1118` range), visible inactive surfaces, a stage that
 dominates the viewport, and 16px minimum mobile copy. Make the progress rail
 and active operation the two strongest typographic elements. Keep 44px controls,
 visible focus rings, no horizontal overflow, and reduced-motion guards.
 
-- [ ] **Step 7: Run UI and timing tests**
+- [x] **Step 7: Run UI and timing tests**
 
 Run:
 
@@ -439,7 +439,7 @@ node --test test/observatory-scene-timing.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 2**
+- [x] **Step 8: Commit Task 2**
 
 ```sh
 git add src/observatory/ObservatoryApp.jsx \

@@ -1,16 +1,12 @@
 import {
   ChevronLeft,
   ChevronRight,
-  Cpu,
   Download,
   Film,
-  Gauge,
-  HardDrive,
   Pause,
   Play,
   RotateCcw,
   Upload,
-  Zap,
 } from "lucide-react";
 import {
   useCallback,
@@ -27,7 +23,11 @@ import { Progress } from "../components/ui/progress.jsx";
 import { buildSceneModel } from "./scene-model.js";
 import { createCanvasRecorder, downloadCanvasPng } from "./export.js";
 import { ObservatoryScene } from "./ObservatoryScene.jsx";
-import { observatoryFrameStride } from "./scene-timing.js";
+import {
+  nextObservatoryFrameIndex,
+  observatoryFrameStride,
+} from "./scene-timing.js";
+import { buildStoryFrame } from "./story-frame.js";
 import {
   createGalleryTraceSource,
   createLocalTraceSource,
@@ -86,16 +86,21 @@ function displayEvidence(value) {
     : "unspecified";
 }
 
-function EvidenceRail({ model }) {
+const REGION_EXPLANATIONS = Object.freeze({
+  memory:
+    "Aggregated model blocks in unified memory. Illumination is a derived binding presentation, not an allocation map.",
+  kernel:
+    "The active kernel family and recorded dispatch grid. Math particles appear only while this operation is active.",
+  gpu:
+    "Representative lanes, not physical cores. The exact recorded dispatch grid remains visible beside the aggregation.",
+});
+
+function EvidenceDetails({ activeFrame, model }) {
   const configuredWidth = model?.speculation?.configuredWidth;
   const modelMass = model?.model?.estimatedWeightGigabytes;
   const health = model?.evidenceHealth;
   return (
-    <aside
-      className="observatory-evidence"
-      aria-label="Visual evidence key"
-      data-evidence-level={health?.level ?? "pending"}
-    >
+    <div className="evidence-details">
       <div className="evidence-heading">
         <span>Signal key</span>
         <Badge variant="outline">
@@ -131,6 +136,10 @@ function EvidenceRail({ model }) {
           <dd>{model?.evidence?.dispatch ?? "awaiting trace"}</dd>
         </div>
         <div>
+          <dt>Current kernel</dt>
+          <dd>{activeFrame?.kernel ?? "awaiting trace"}</dd>
+        </div>
+        <div>
           <dt>Frame coverage</dt>
           <dd>
             {model?.dispatchCoverage
@@ -163,7 +172,7 @@ function EvidenceRail({ model }) {
           <dd>SSD activity is not present in profiler schema v1.</dd>
         </div>
       </dl>
-    </aside>
+    </div>
   );
 }
 
@@ -211,6 +220,7 @@ export function ObservatoryApp({
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(!reducedMotion);
   const [speed, setSpeed] = useState(1);
+  const [explainedRegion, setExplainedRegion] = useState("kernel");
   const [reloadKey, setReloadKey] = useState(0);
   const [registryReloadKey, setRegistryReloadKey] = useState(0);
   const [status, setStatus] = useState("Opening the trace registry.");
@@ -407,7 +417,12 @@ export function ObservatoryApp({
     });
     const timer = setInterval(() => {
       setFrameIndex(
-        (index) => (index + stride) % sceneModel.frames.length,
+        (index) =>
+          nextObservatoryFrameIndex({
+            current: index,
+            frameCount: sceneModel.frames.length,
+            stride,
+          }),
       );
     }, delay);
     return () => clearInterval(timer);
@@ -531,7 +546,35 @@ export function ObservatoryApp({
   const selectedTrace = activeSource?.trace;
   const galleryPosition =
     activeSource?.kind === "gallery" ? galleryIndex + 1 : null;
-  const activeFrame = sceneModel?.frames?.[frameIndex] ?? null;
+  const storyFrame = useMemo(
+    () => buildStoryFrame(sceneModel, frameIndex),
+    [frameIndex, sceneModel],
+  );
+  const frameCount = sceneModel?.frames?.length ?? 0;
+  const seekFrame = useCallback(
+    (nextIndex) => {
+      setPlaying(false);
+      setFrameIndex(
+        Math.min(
+          Math.max(0, frameCount - 1),
+          Math.max(0, Number.isFinite(nextIndex) ? nextIndex : 0),
+        ),
+      );
+    },
+    [frameCount],
+  );
+  const stepFrame = useCallback(
+    (delta) => {
+      setPlaying(false);
+      setFrameIndex((current) =>
+        Math.min(
+          Math.max(0, frameCount - 1),
+          Math.max(0, current + delta),
+        ),
+      );
+    },
+    [frameCount],
+  );
   const title = sceneModel?.label ?? selectedTrace?.label ?? "Silicon Observatory";
   const metadataLine = [
     selectedTrace?.model,
@@ -608,24 +651,13 @@ export function ObservatoryApp({
         <section className="observatory-stage" aria-label="Trace animation">
           <SceneComponent
             model={sceneModel}
+            storyFrame={storyFrame}
             frameIndex={frameIndex}
             reducedMotion={reducedMotion}
             animated={phase === "ready" && playing && !reducedMotion}
             onCanvasReady={handleCanvasReady}
           />
           <div className="observatory-vignette" aria-hidden="true" />
-          <div className="observatory-zones" aria-hidden="true">
-            <span className="zone-label zone-ssd">
-              <HardDrive /> SSD reservoir
-            </span>
-            <span className="zone-label zone-cpu">
-              <Cpu /> CPU encode
-            </span>
-            <span className="zone-label zone-memory">Unified memory</span>
-            <span className="zone-label zone-gpu">
-              <Zap /> GPU kernels
-            </span>
-          </div>
 
           {(phase === "registry-loading" || phase === "trace-loading") && (
             <Loader progress={progress} />
@@ -689,35 +721,119 @@ export function ObservatoryApp({
             </section>
           )}
 
-          <section className="observatory-readout" aria-label="Active trace">
-            <div className="readout-index">
-              <span>
+          <section className="observatory-story-hud" aria-label="Active trace">
+            <div className="observatory-trace-title">
+              <p className="observatory-kicker">
                 {galleryPosition
-                  ? `${String(galleryPosition).padStart(2, "0")} / ${String(
-                      gallery.length,
-                    ).padStart(2, "0")}`
-                  : "LOCAL"}
-              </span>
-              <i aria-hidden="true" />
-            </div>
-            <div>
-              <p className="observatory-kicker">Now observing</p>
+                  ? `Gallery ${galleryPosition} / ${gallery.length}`
+                  : "Local trace"}
+              </p>
               <h2>{title}</h2>
               <p>{metadataLine || "Architecture metadata unavailable"}</p>
             </div>
-            <div className="kernel-readout">
-              <Gauge aria-hidden="true" />
-              <span>{activeFrame?.family ?? "awaiting kernel"}</span>
-              <code>
-                {activeFrame
-                  ? `${Math.round(activeFrame.progress * 100)}%`
-                  : "—"}
-              </code>
+
+            <section
+              className="observatory-progress"
+              aria-label="Captured trace progress"
+            >
+              <div className="progress-copy">
+                <span>{storyFrame.progress.capturedWindowLabel}</span>
+                <strong>{storyFrame.progress.percent}%</strong>
+                <span>Buffer {storyFrame.progress.bufferLabel}</span>
+                <span>Dispatch {storyFrame.progress.dispatchLabel}</span>
+                <span>{storyFrame.progress.elapsedLabel}</span>
+              </div>
+              <input
+                aria-label="Captured window position"
+                type="range"
+                min="0"
+                max={Math.max(0, frameCount - 1)}
+                step="1"
+                value={Math.min(frameIndex, Math.max(0, frameCount - 1))}
+                disabled={frameCount < 2}
+                onInput={(event) =>
+                  seekFrame(Number(event.currentTarget.value))
+                }
+              />
+            </section>
+
+            <section
+              className="active-operation"
+              aria-label="Active kernel operation"
+            >
+              <p className="observatory-kicker">Active kernel</p>
+              <h3>{storyFrame.active.family}</h3>
+              <span>{storyFrame.active.shapeLabel}</span>
+              <code>{storyFrame.active.kernel}</code>
+            </section>
+
+            <div
+              className="observatory-legend"
+              aria-label="Animation legend"
+            >
+              <span data-signal="memory">
+                <i aria-hidden="true" /> Unified memory
+              </span>
+              <span data-signal="math">
+                <i aria-hidden="true" /> Active math
+              </span>
+              <span data-signal="speculation">
+                <i aria-hidden="true" /> Configured speculation
+              </span>
             </div>
+
+            <div
+              className="observatory-evidence-chip"
+              data-evidence-level={
+                sceneModel?.evidenceHealth?.level ?? "pending"
+              }
+            >
+              <Badge variant="outline">
+                {sceneModel?.evidenceHealth?.level === "verified"
+                  ? "Measured trace"
+                  : "Evidence caution"}
+              </Badge>
+            </div>
+          </section>
+
+          <section className="observatory-region-guide">
+            <nav aria-label="Explain stage regions">
+              {[
+                ["memory", "Unified memory"],
+                ["kernel", "Active kernel"],
+                ["gpu", "GPU lanes"],
+              ].map(([region, label]) => (
+                <button
+                  key={region}
+                  type="button"
+                  aria-pressed={explainedRegion === region}
+                  onFocus={() => setExplainedRegion(region)}
+                  onPointerEnter={() => setExplainedRegion(region)}
+                  onClick={() => setExplainedRegion(region)}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+            <p aria-live="polite">
+              {REGION_EXPLANATIONS[explainedRegion]}
+            </p>
           </section>
         </section>
 
-        <EvidenceRail model={sceneModel} />
+        <details
+          className="observatory-evidence"
+          aria-label="What is measured?"
+          data-evidence-level={
+            sceneModel?.evidenceHealth?.level ?? "pending"
+          }
+        >
+          <summary>What is measured?</summary>
+          <EvidenceDetails
+            model={sceneModel}
+            activeFrame={storyFrame.active}
+          />
+        </details>
 
         <footer
           className="observatory-transport"
@@ -742,7 +858,7 @@ export function ObservatoryApp({
               onClick={() => {
                 if (reducedMotion) {
                   setStatus(
-                    "Reduced motion is active; use previous and next to step manually.",
+                    "Reduced motion is active; use the dispatch step controls.",
                   );
                   return;
                 }
@@ -764,6 +880,24 @@ export function ObservatoryApp({
               onClick={nextGallery}
             >
               <ChevronRight aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Step backward one dispatch"
+              disabled={frameCount < 2 || frameIndex <= 0}
+              onClick={() => stepFrame(-1)}
+            >
+              Step −
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Step forward one dispatch"
+              disabled={frameCount < 2 || frameIndex >= frameCount - 1}
+              onClick={() => stepFrame(1)}
+            >
+              Step +
             </Button>
           </div>
           <div className="transport-speed" aria-label="Playback speed">

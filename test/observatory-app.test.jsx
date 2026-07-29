@@ -36,6 +36,7 @@ function dataset(kernel = "steel_gemm_fused_q4") {
           {
             seq: 0,
             atNs: 20,
+            commandBufferIndex: 0,
             kernel,
             grid: [64, 1, 1],
             bufferBinds: 4,
@@ -43,6 +44,7 @@ function dataset(kernel = "steel_gemm_fused_q4") {
           {
             seq: 1,
             atNs: 80,
+            commandBufferIndex: 0,
             kernel: "rms_norm",
             grid: [16, 1, 1],
             bufferBinds: 2,
@@ -92,6 +94,7 @@ function sessionFactory({ loadImpl = async () => ({ dataset: dataset() }) } = {}
 
 function SceneStub({
   model,
+  storyFrame,
   frameIndex,
   reducedMotion,
   animated,
@@ -103,6 +106,8 @@ function SceneStub({
       data-testid="scene"
       data-label={model?.label ?? ""}
       data-frame={frameIndex}
+      data-story-family={storyFrame?.active?.family ?? ""}
+      data-story-progress={storyFrame?.progress?.percent ?? ""}
       data-reduced-motion={String(reducedMotion)}
       data-animated={String(animated)}
     />
@@ -171,6 +176,11 @@ describe("Silicon Observatory", () => {
       container.querySelector('input[type="file"][accept=".jsonl,.ndjson"]'),
     ).not.toBeNull();
     expect(container.textContent).toMatch(/Unified memory/i);
+    expect(container.textContent).toMatch(/Captured window/i);
+    expect(container.textContent).toMatch(/Dispatch 1 \/ 2/i);
+    expect(container.textContent).toMatch(/Buffer 1 \/ 1/i);
+    expect(container.textContent).toMatch(/Active math/i);
+    expect(container.textContent).toMatch(/Configured speculation/i);
     expect(container.textContent).toMatch(/Binding activity is derived/i);
     expect(container.textContent).toMatch(/SSD activity is not present/i);
     expect(container.textContent).toMatch(/MTP K3 configured/i);
@@ -179,10 +189,77 @@ describe("Silicon Observatory", () => {
       container.querySelector('[data-evidence-level="verified"]'),
     ).not.toBeNull();
     expect(container.querySelector('[aria-live="polite"]')).not.toBeNull();
+    expect(
+      container.querySelector(
+        'input[aria-label="Captured window position"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('details[aria-label="What is measured?"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[aria-label="Explain stage regions"]'),
+    ).not.toBeNull();
     expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
       "Qwen3.6 27B",
     );
+    expect(
+      container.querySelector('[data-testid="scene"]').dataset.storyFamily,
+    ).toBe("projection");
     expect(container.querySelector('a[href="?"]')).not.toBeNull();
+  });
+
+  it("scrubs, steps, and explains the stable theater regions", async () => {
+    const sessions = sessionFactory();
+    await act(async () => {
+      root.render(
+        <ObservatoryApp
+          registryLoader={async () => registryResult([QWEN_27])}
+          analysisSessionFactory={sessions.factory}
+          SceneComponent={SceneStub}
+          reducedMotion
+        />,
+      );
+    });
+    await settle();
+
+    const scene = () => container.querySelector('[data-testid="scene"]');
+    expect(scene().dataset.frame).toBe("0");
+    expect(scene().dataset.animated).toBe("false");
+
+    await act(async () =>
+      container
+        .querySelector('button[aria-label="Step forward one dispatch"]')
+        .click(),
+    );
+    expect(scene().dataset.frame).toBe("1");
+    expect(scene().dataset.storyFamily).toBe("normalization");
+
+    const scrubber = container.querySelector(
+      'input[aria-label="Captured window position"]',
+    );
+    await act(async () => {
+      scrubber.value = "0";
+      scrubber.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(scene().dataset.frame).toBe("0");
+    expect(scene().dataset.animated).toBe("false");
+
+    const regionNav = container.querySelector(
+      '[aria-label="Explain stage regions"]',
+    );
+    const memory = [...regionNav.querySelectorAll("button")].find(
+      (button) => button.textContent === "Unified memory",
+    );
+    const gpu = [...regionNav.querySelectorAll("button")].find(
+      (button) => button.textContent === "GPU lanes",
+    );
+    await act(async () => memory.focus());
+    expect(container.textContent).toMatch(/aggregated model blocks/i);
+    await act(async () => gpu.focus());
+    expect(container.textContent).toMatch(
+      /representative lanes, not physical cores/i,
+    );
   });
 
   it("shows loading, empty, and recoverable error states", async () => {
