@@ -9,6 +9,8 @@ import { buildStoryFrame, MAX_GPU_LANES, MAX_MEMORY_BLOCKS } from "./story-frame
 import {
   buildTheaterLabels,
   createTextPlate,
+  evidenceAccent,
+  theaterProgressTransform,
 } from "./theater-labels.js";
 
 const THEATER_COLORS = Object.freeze({
@@ -124,6 +126,12 @@ function createLabelSet(scene, storyFrame) {
       width: 8.7,
       accent: "#48e7ff",
     },
+    control: {
+      text: labels.control,
+      position: [0, 2.56, 1.1],
+      width: 4.4,
+      accent: "#8da8b9",
+    },
     memory: {
       text: labels.memory,
       position: [STAGE.memory.x, -2.95, 1.1],
@@ -156,9 +164,17 @@ function createLabelSet(scene, storyFrame) {
     },
     legend: {
       text: labels.legend,
-      position: [0, -4.05, 1.1],
-      width: 8.3,
-      accent: "#f4f9fc",
+      position: [0, -3.55, 1.1],
+      width: 10.8,
+      height: 0.5,
+      accent: "#8da8b9",
+    },
+    evidence: {
+      text: labels.evidence,
+      position: [0, -4.12, 1.1],
+      width: 10.8,
+      height: 0.5,
+      accent: evidenceAccent(storyFrame?.evidence?.level),
     },
   };
   const plates = {};
@@ -211,9 +227,9 @@ function applyStoryFrame(activity, storyFrame) {
       emissive: lane.userData.active
         ? THEATER_COLORS.math
         : THEATER_COLORS.laneInactive,
-      emissiveIntensity: lane.userData.active ? 1.15 : 0.28,
+      emissiveIntensity: lane.userData.active ? 0.78 : 0.28,
     });
-    lane.scale.z = lane.userData.active ? 1.5 : 1;
+    lane.scale.z = lane.userData.active ? 1.2 : 1;
   });
 
   const commandPosition = story.progress.bufferLabel === "—"
@@ -233,7 +249,7 @@ function applyStoryFrame(activity, storyFrame) {
   activity.kernelCore.scale.y =
     0.88 + clamp(story.active.mathIntensity) * 0.12;
   activity.kernelCore.material.emissiveIntensity =
-    0.9 + story.active.mathIntensity * 0.85;
+    0.65 + story.active.mathIntensity * 0.55;
   activity.kernelTiles.forEach((tile, index) => {
     const active = index <= Math.round(story.active.mathIntensity * 7);
     tile.material.emissiveIntensity = active ? 1.25 : 0.28;
@@ -258,17 +274,22 @@ function applyStoryFrame(activity, storyFrame) {
   });
   activity.labels.speculation.sprite.visible = story.speculation.visible;
 
-  activity.progressFill.scale.x = Math.max(0.001, story.progress.ratio);
-  activity.progressFill.position.x =
-    -4.2 + (4.2 * story.progress.ratio);
+  const progress = theaterProgressTransform(story.progress.ratio);
+  activity.progressFill.scale.x = Math.max(0.001, progress.scaleX);
+  activity.progressFill.position.x = progress.positionX;
 
   for (const [name, plate] of Object.entries(activity.labels)) {
-    plate.update(labels[name]);
+    plate.update(
+      labels[name],
+      name === "evidence"
+        ? evidenceAccent(story.evidence.level)
+        : undefined,
+    );
   }
   activity.story = story;
   activity.canvas.setAttribute(
     "aria-label",
-    `${labels.progress}. ${labels.memory}. ${labels.kernel}. ${labels.gpu}.`,
+    `${labels.progress}. ${labels.memory}. ${labels.kernel}. ${labels.gpu}. ${labels.evidence}.`,
   );
 }
 
@@ -346,6 +367,13 @@ export function ObservatoryScene({
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.domElement.className = "observatory-canvas";
     renderer.domElement.setAttribute("role", "img");
+    const onContextLost = (event) => {
+      event.preventDefault();
+      setFailure(
+        "The WebGL context was lost. Reload the Observatory to restore the stage.",
+      );
+    };
+    renderer.domElement.addEventListener("webglcontextlost", onContextLost);
     mount.append(renderer.domElement);
     onCanvasReady?.(renderer.domElement);
 
@@ -361,7 +389,7 @@ export function ObservatoryScene({
     scene.add(keyLight);
     const mathLight = new THREE.PointLight(
       THEATER_COLORS.math,
-      32,
+      14,
       11,
       1.7,
     );
@@ -441,9 +469,9 @@ export function ObservatoryScene({
       [2.92, 2.28, 0.72],
       [STAGE.kernel.x, STAGE.kernel.y, 0.22],
       new THREE.MeshStandardMaterial({
-        color: THEATER_COLORS.math,
+        color: 0x8d5f2a,
         emissive: THEATER_COLORS.math,
-        emissiveIntensity: 1.2,
+        emissiveIntensity: 0.78,
         metalness: 0.34,
         roughness: 0.24,
       }),
@@ -674,13 +702,13 @@ export function ObservatoryScene({
       current.mathParticles.rotation.z = motion * 0.22;
       current.mathParticles.rotation.y = motion * 0.16;
       current.kernelCore.material.emissiveIntensity =
-        1.05 +
-        story.active.mathIntensity * 0.75 +
+        0.68 +
+        story.active.mathIntensity * 0.55 +
         (reducedMotionRef.current ? 0 : Math.sin(time * 5) * 0.12);
       current.laneNodes.forEach((lane, index) => {
         if (!lane.visible || !lane.userData.active) return;
         lane.material.emissiveIntensity =
-          1.05 +
+          0.78 +
           (reducedMotionRef.current
             ? 0
             : Math.sin(time * 4.2 + index * 0.4) * 0.18);
@@ -717,13 +745,17 @@ export function ObservatoryScene({
         "visibilitychange",
         onVisibility,
       );
+      renderer.domElement.removeEventListener(
+        "webglcontextlost",
+        onContextLost,
+      );
       activityRef.current = null;
       onCanvasReady?.(null);
       disposeScene(scene);
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [onCanvasReady]);
+  }, [failure, onCanvasReady]);
 
   if (failure) {
     const story = storyFrame ?? buildStoryFrame(model, frameIndex);

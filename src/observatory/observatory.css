@@ -744,14 +744,14 @@
 }
 
 .progress-copy {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  grid-template-columns: auto auto 1fr auto auto;
   gap: 8px 14px;
   color: var(--obs-muted);
   font: 620 0.68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.055em;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .progress-copy > span:first-child {
@@ -844,8 +844,11 @@
 }
 
 .observatory-evidence-chip {
+  display: grid;
+  max-width: 34ch;
   justify-self: end;
   grid-area: evidence;
+  gap: 5px;
 }
 
 .observatory-evidence-chip [data-slot="badge"] {
@@ -857,6 +860,12 @@
 .observatory-evidence-chip[data-evidence-level="verified"] [data-slot="badge"] {
   color: var(--obs-measured);
   border-color: rgb(72 231 255 / 55%);
+}
+
+.evidence-chip-summary {
+  color: var(--obs-muted);
+  font: 550 0.62rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right;
 }
 
 .observatory-region-guide {
@@ -990,11 +999,37 @@
 
   .observatory-evidence {
     position: fixed;
-    top: 78px;
-    right: 18px;
-    width: min(390px, calc(100vw - 36px));
+    z-index: 60;
+    top: 50%;
+    right: 0;
+    width: 48px;
+    margin: 0;
     padding: 0;
     border: 1px solid var(--obs-line-strong);
+    transform: translateY(-50%);
+  }
+
+  .observatory-evidence summary {
+    display: grid;
+    min-height: 168px;
+    padding: 12px;
+    place-items: center;
+    writing-mode: vertical-rl;
+  }
+
+  .observatory-evidence[open] {
+    top: 76px;
+    right: 12px;
+    bottom: 84px;
+    width: min(390px, calc(100vw - 36px));
+    transform: none;
+  }
+
+  .observatory-evidence[open] summary {
+    min-height: 48px;
+    padding: 14px 16px;
+    place-items: initial;
+    writing-mode: horizontal-tb;
   }
 
   .observatory-evidence dl {
@@ -1005,6 +1040,19 @@
     padding: 10px;
     border-right: 0;
     border-bottom: 1px solid var(--obs-line);
+  }
+}
+
+@media (max-width: 1023px) {
+  .observatory-evidence[open] {
+    position: fixed;
+    z-index: 60;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    max-height: min(78dvh, 720px);
+    overflow: auto;
+    box-shadow: 0 -24px 80px rgb(0 0 0 / 58%);
   }
 }
 
@@ -1020,7 +1068,12 @@
 
 @media (max-width: 767px) {
   .observatory-stage {
-    min-height: 620px;
+    min-height: 880px;
+  }
+
+  .observatory-scene {
+    top: 440px;
+    bottom: 210px;
   }
 
   .observatory-story-hud {
@@ -1042,12 +1095,7 @@
   }
 
   .progress-copy {
-    grid-template-columns: auto auto 1fr;
     font-size: 0.7rem;
-  }
-
-  .progress-copy > span:nth-last-child(-n + 2) {
-    display: none;
   }
 
   .active-operation code {

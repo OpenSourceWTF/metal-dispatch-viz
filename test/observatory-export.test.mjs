@@ -229,6 +229,75 @@ test("canvas recorder owns one H.264 MP4 lifecycle and releases media resources"
   assert.equal(track.stop.mock.callCount(), 1);
 });
 
+test("recording automatically stops and downloads within its duration budget", async () => {
+  const downloads = downloadHarness();
+  const completed = [];
+  let expire;
+  let mediaRecorder;
+
+  class BoundedMediaRecorder {
+    static isTypeSupported(type) {
+      return type === "video/mp4;codecs=avc1.42E01E";
+    }
+
+    constructor() {
+      this.state = "inactive";
+      this.listeners = new Map();
+      mediaRecorder = this;
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    start(timeslice) {
+      assert.equal(timeslice, 1_000);
+      this.state = "recording";
+    }
+
+    stop() {
+      this.state = "inactive";
+      this.listeners.get("dataavailable")?.({
+        data: new Blob(["bounded-mp4"], { type: "video/mp4" }),
+      });
+      this.listeners.get("stop")?.();
+    }
+  }
+
+  const recorder = createCanvasRecorder(
+    { width: 640, height: 480 },
+    {
+      MediaRecorderClass: BoundedMediaRecorder,
+      maxDurationMs: 60_000,
+      onComplete(result) {
+        completed.push(result);
+      },
+      recordingCanvasFactory: () =>
+        xRecordingSurface({ getTracks: () => [{ stop() {} }] }),
+      documentObject: downloads.documentObject,
+      createObjectURL: () => "blob:bounded",
+      revokeObjectURL() {},
+      setTimeoutImpl(callback, delay) {
+        assert.equal(delay, 60_000);
+        expire = callback;
+        return 17;
+      },
+      clearTimeoutImpl() {},
+    },
+  );
+
+  recorder.start();
+  assert.equal(recorder.recording, true);
+  expire();
+  await Promise.resolve();
+
+  assert.equal(mediaRecorder.state, "inactive");
+  assert.equal(recorder.recording, false);
+  assert.equal(completed.length, 1);
+  assert.equal(completed[0].reason, "duration-limit");
+  assert.equal(completed[0].filename.endsWith(".mp4"), true);
+});
+
 test("failed recording starts release every captured stream before retry", () => {
   const tracks = [];
   const canvas = { width: 640, height: 480 };
@@ -338,6 +407,78 @@ test("asynchronous recorder errors reset resources and report immediately", () =
   assert.equal(recorder.recording, false);
   assert.equal(track.stop.mock.callCount(), 1);
   assert.deepEqual(errors.map((error) => error.message), ["Encoder crashed"]);
+});
+
+test("a mirror-frame draw failure stops recording and reports immediately", () => {
+  const errors = [];
+  const track = { stop: test.mock.fn() };
+  let nextFrame;
+  let drawCount = 0;
+
+  class MirrorMediaRecorder {
+    static isTypeSupported(type) {
+      return type === "video/mp4;codecs=avc1.42E01E";
+    }
+
+    constructor() {
+      this.state = "inactive";
+      this.listeners = new Map();
+    }
+
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    }
+
+    start() {
+      this.state = "recording";
+    }
+
+    stop() {
+      this.state = "inactive";
+      this.listeners.get("stop")?.();
+    }
+  }
+
+  const recorder = createCanvasRecorder(
+    { width: 640, height: 480 },
+    {
+      MediaRecorderClass: MirrorMediaRecorder,
+      recordingCanvasFactory: () => ({
+        width: 0,
+        height: 0,
+        getContext() {
+          return {
+            fillRect() {},
+            drawImage() {
+              drawCount += 1;
+              if (drawCount > 1) throw new Error("Mirror frame is invalid");
+            },
+          };
+        },
+        captureStream: () => ({ getTracks: () => [track] }),
+      }),
+      requestAnimationFrameImpl(callback) {
+        nextFrame = callback;
+        return 9;
+      },
+      cancelAnimationFrameImpl() {},
+      setTimeoutImpl: () => 10,
+      clearTimeoutImpl() {},
+      onError(error) {
+        errors.push(error);
+      },
+    },
+  );
+
+  recorder.start();
+  assert.equal(recorder.recording, true);
+  assert.doesNotThrow(() => nextFrame());
+  assert.equal(recorder.recording, false);
+  assert.equal(track.stop.mock.callCount(), 1);
+  assert.deepEqual(
+    errors.map((error) => error.message),
+    ["Mirror frame is invalid"],
+  );
 });
 
 test("concurrent stop calls share one pending recording result", async () => {

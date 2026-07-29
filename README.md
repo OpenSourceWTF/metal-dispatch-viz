@@ -34,21 +34,42 @@ the browser. Long launches are sampled in order across each gallery slot so the
 animation traverses the full selected window instead of replaying only its
 opening dispatches.
 
-The Observatory uses one unified-memory landscape shared by the CPU encode and
-GPU kernel regions. The separate SSD form is contextual: schema v1 has no SSD
-I/O events, so it does not light up as measured activity. Command-buffer timing
-and dispatch order are trace evidence. Model mass is estimated from manifest
-model/quantization metadata, while binding ribbons and particle choreography
-are derived visual encodings. Schema v1 does not contain tensor identities,
-exact buffer access direction, or per-operation execution timestamps.
-Unassigned dispatches use an explicitly labeled ordinal fallback when no
-launch-owned dispatch is available; omissions and deterministic client
-sampling downgrade the evidence state and are disclosed in the signal rail.
+Read the Observatory from left to right:
+
+```text
+Unified memory → active kernel → representative GPU lanes → derived writeback
+```
+
+The progress rail reports position within the captured trace window, including
+the current command buffer and displayed dispatch when those relationships are
+available. An operation's position within measured command-buffer timing is an
+ordered interpolation, not a measured per-operation timestamp, and the UI says
+so explicitly. Cyan identifies the unified-memory presentation, amber
+identifies active math, and dashed violet identifies configured speculation.
+GPU lanes are a bounded visual aggregation of the exact recorded dispatch grid,
+not a claim about physical Apple GPU cores. Missing dispatch geometry remains
+labeled unavailable instead of becoming a synthetic `1 × 1 × 1` measurement.
+Core labels, the progress rail, and a compact evidence qualifier are drawn into
+the WebGL composition, so they remain visible in PNG and MP4 exports. Sampling
+counts and source-verification cautions are prioritized in that export label
+rather than hidden by a generic warning.
+
+Command-buffer timing and dispatch order are trace evidence. Model mass is
+estimated from manifest model/quantization metadata, while binding flow,
+memory-block activation, and writeback choreography are explicitly derived
+visual encodings. Schema v1 does not contain SSD I/O, tensor identities, exact
+buffer access direction, per-operation execution timestamps, or speculative
+acceptance. SSD therefore stays out of the primary stage and is documented in
+the collapsed **What is measured?** panel. Unassigned dispatches use an
+explicitly labeled ordinal fallback when no launch-owned dispatch is available;
+omissions and deterministic client sampling downgrade the visible evidence
+state.
 
 Choose **Save PNG** for a still frame or **Record MP4** to capture a silent
 H.264 animation when the browser exposes that `MediaRecorder` codec. Movie
 export letterboxes the live canvas into a fixed 1280×720 frame, records at 30
-fps, and requests an 8 Mbps video bitrate. Those bounds fit [X's published
+fps, requests an 8 Mbps video bitrate, and automatically saves at 60 seconds
+to bound in-browser recording memory. Those bounds fit [X's published
 video guidance](https://help.x.com/en/using-x/media-studio-faqs); WebM is
 intentionally not presented as X-ready. Both exports are generated locally and
 downloaded through temporary object URLs that are revoked after use. Workbench

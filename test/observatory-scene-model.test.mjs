@@ -103,9 +103,11 @@ test("parameter scale and kernel families are derived from metadata", () => {
 
   assert.equal(classifyKernelFamily("flash_attention_decode"), "attention");
   assert.equal(classifyKernelFamily("steel_gemm_fused_q4"), "projection");
+  assert.equal(classifyKernelFamily("affine_qmv_fast_bfloat16"), "projection");
   assert.equal(classifyKernelFamily("rms_norm"), "normalization");
   assert.equal(classifyKernelFamily("moe_router_topk"), "routing");
   assert.equal(classifyKernelFamily("silu_gate"), "activation");
+  assert.equal(classifyKernelFamily("v_Sigmoidbfloat16bfloat16"), "activation");
   assert.equal(classifyKernelFamily("token_embedding"), "embedding-output");
   assert.equal(classifyKernelFamily("copy_buffer"), "transfer-binding");
   assert.equal(classifyKernelFamily("mystery_kernel"), "other");
@@ -142,11 +144,22 @@ test("scene geometry preserves measured order and labels every inference boundar
     index: 0,
     position: 1,
     total: 1,
+    durationNs: 300,
+    durationSource: "gpu",
   });
   assert.deepEqual(
-    model.frames.map(({ elapsedNs }) => elapsedNs),
+    model.frames.map(({ windowPositionNs }) => windowPositionNs),
     [0, 150, 300],
   );
+  assert.deepEqual(
+    model.frames.map(({ placementDetail }) => placementDetail),
+    [
+      "interpolated-sequence",
+      "interpolated-sequence",
+      "interpolated-sequence",
+    ],
+  );
+  assert.equal(model.frames.every(({ gridAvailable }) => gridAvailable), true);
   assert.deepEqual(
     model.frames.map(({ family }) => family),
     ["projection", "normalization", "routing"],
@@ -215,6 +228,75 @@ test("untimed dispatches retain source order with ordinal visual progress", () =
     [0, 1],
   );
   assert.equal(model.evidence.timing, "ordinal fallback");
+  assert.equal(model.frames.every(({ gridAvailable }) => !gridAvailable), true);
+});
+
+test("overlapping command-buffer timestamps cannot move the visual playhead backward", () => {
+  const model = buildSceneModel({
+    trace: { label: "overlapping buffers" },
+    dataset: {
+      launchWindows: [
+        {
+          startNs: 0,
+          endNs: 200,
+          dispatches: [
+            { seq: 0, kernel: "first", atNs: 0, commandBufferIndex: 0 },
+            { seq: 1, kernel: "second", atNs: 100, commandBufferIndex: 0 },
+            { seq: 2, kernel: "third", atNs: 50, commandBufferIndex: 1 },
+          ],
+          commandBuffers: [
+            {
+              commandBufferIndex: 0,
+              gpuStartNs: 0,
+              gpuEndNs: 100,
+            },
+            {
+              commandBufferIndex: 1,
+              gpuStartNs: 50,
+              gpuEndNs: 200,
+            },
+          ],
+        },
+      ],
+      health: { validEvidence: true },
+    },
+  });
+
+  assert.deepEqual(
+    model.frames.map(({ windowPositionNs }) => windowPositionNs),
+    [0, 100, 50],
+  );
+  assert.deepEqual(
+    model.frames.map(({ progress }) => progress),
+    [0, 0.5, 0.5],
+  );
+  assert.equal(model.frames.at(-1).commandBuffer.durationNs, 150);
+  assert.equal(model.frames.at(-1).commandBuffer.durationSource, "gpu");
+});
+
+test("a measured GPU tail is not relabeled as completed captured-window time", () => {
+  const model = buildSceneModel({
+    trace: { label: "GPU tail" },
+    dataset: {
+      launchWindows: [
+        {
+          startNs: 0,
+          endNs: 1_000,
+          dispatches: [
+            { seq: 0, kernel: "first", atNs: 100 },
+            { seq: 1, kernel: "second", atNs: 200 },
+          ],
+          commandBuffers: [],
+        },
+      ],
+      health: { validEvidence: true },
+    },
+  });
+
+  assert.deepEqual(
+    model.frames.map(({ progress }) => progress),
+    [0.1, 0.2],
+  );
 });
 
 test("evidence health distinguishes source provenance from trace-window damage", () => {

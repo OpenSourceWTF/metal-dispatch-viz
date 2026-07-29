@@ -21,7 +21,11 @@ import { Badge } from "../components/ui/badge.jsx";
 import { Button } from "../components/ui/button.jsx";
 import { Progress } from "../components/ui/progress.jsx";
 import { buildSceneModel } from "./scene-model.js";
-import { createCanvasRecorder, downloadCanvasPng } from "./export.js";
+import {
+  createCanvasRecorder,
+  downloadCanvasPng,
+  MAX_RECORDING_DURATION_MS,
+} from "./export.js";
 import { ObservatoryScene } from "./ObservatoryScene.jsx";
 import {
   nextObservatoryFrameIndex,
@@ -244,6 +248,15 @@ export function ObservatoryApp({
         : "The browser stopped recording unexpectedly.",
     );
   }, []);
+  const handleRecorderComplete = useCallback((result) => {
+    setRecording(false);
+    if (!result?.filename) return;
+    setStatus(
+      result.reason === "duration-limit"
+        ? `${result.filename} saved at the 60-second recording limit.`
+        : `${result.filename} saved locally.`,
+    );
+  }, []);
 
   useEffect(() => {
     if (reducedMotion) setPlaying(false);
@@ -257,12 +270,18 @@ export function ObservatoryApp({
     }
     const nextRecorder = canvasRecorderFactory(canvas, {
       label: () => sceneLabelRef.current,
+      onComplete: handleRecorderComplete,
       onError: handleRecorderError,
     });
     setCanvasRecorder(nextRecorder);
     setRecording(false);
     return () => nextRecorder.destroy();
-  }, [canvas, canvasRecorderFactory, handleRecorderError]);
+  }, [
+    canvas,
+    canvasRecorderFactory,
+    handleRecorderComplete,
+    handleRecorderError,
+  ]);
 
   useEffect(() => {
     let current = true;
@@ -339,14 +358,24 @@ export function ObservatoryApp({
       void session.load(activeSource.url).then(
         (loaded) => {
           if (!current || generation !== loadGeneration.current) return;
-          const model = buildSceneModel({
-            trace: activeSource.trace,
-            dataset: loaded?.dataset,
-          });
-          setSceneModel(model);
-          setProgress((previous) => ({ ...previous, done: true }));
-          setPhase("ready");
-          setStatus(`${model.label} is ready.`);
+          try {
+            const model = buildSceneModel({
+              trace: activeSource.trace,
+              dataset: loaded?.dataset,
+            });
+            setSceneModel(model);
+            setProgress((previous) => ({ ...previous, done: true }));
+            setPhase("ready");
+            setStatus(`${model.label} is ready.`);
+          } catch (reason) {
+            setError(
+              reason instanceof Error
+                ? reason
+                : new Error("The selected trace could not be visualized."),
+            );
+            setPhase("error");
+            setStatus("Trace visualization failed.");
+          }
         },
         (reason) => {
           if (!current || generation !== loadGeneration.current) return;
@@ -551,6 +580,26 @@ export function ObservatoryApp({
     [frameIndex, sceneModel],
   );
   const frameCount = sceneModel?.frames?.length ?? 0;
+  useEffect(() => {
+    const hasGalleryTransition =
+      activeSource?.kind === "gallery" && gallery.length > 1;
+    if (
+      phase === "ready" &&
+      playing &&
+      !hasGalleryTransition &&
+      frameCount > 0 &&
+      frameIndex >= frameCount - 1
+    ) {
+      setPlaying(false);
+    }
+  }, [
+    activeSource?.kind,
+    frameCount,
+    frameIndex,
+    gallery.length,
+    phase,
+    playing,
+  ]);
   const seekFrame = useCallback(
     (nextIndex) => {
       setPlaying(false);
@@ -741,7 +790,10 @@ export function ObservatoryApp({
                 <strong>{storyFrame.progress.percent}%</strong>
                 <span>Buffer {storyFrame.progress.bufferLabel}</span>
                 <span>Dispatch {storyFrame.progress.dispatchLabel}</span>
-                <span>{storyFrame.progress.elapsedLabel}</span>
+                <span>{storyFrame.progress.positionLabel}</span>
+                {storyFrame.progress.measuredDurationLabel ? (
+                  <span>{storyFrame.progress.measuredDurationLabel}</span>
+                ) : null}
               </div>
               <input
                 aria-label="Captured window position"
@@ -793,6 +845,9 @@ export function ObservatoryApp({
                   ? "Measured trace"
                   : "Evidence caution"}
               </Badge>
+              <span className="evidence-chip-summary">
+                {storyFrame.evidence.summary}
+              </span>
             </div>
           </section>
 
@@ -853,17 +908,21 @@ export function ObservatoryApp({
             <Button
               size="icon-lg"
               type="button"
-              aria-label={playing ? "Pause animation" : "Play animation"}
+              aria-label={
+                reducedMotion
+                  ? "Animation disabled by reduced motion"
+                  : playing
+                    ? "Pause animation"
+                    : "Play animation"
+              }
               aria-pressed={playing}
-              onClick={() => {
-                if (reducedMotion) {
-                  setStatus(
-                    "Reduced motion is active; use the dispatch step controls.",
-                  );
-                  return;
-                }
-                setPlaying((value) => !value);
-              }}
+              disabled={reducedMotion}
+              title={
+                reducedMotion
+                  ? "Reduced motion is active; use the dispatch step controls."
+                  : undefined
+              }
+              onClick={() => setPlaying((value) => !value)}
             >
               {playing ? (
                 <Pause aria-hidden="true" />
@@ -939,7 +998,10 @@ export function ObservatoryApp({
               {recording ? "Stop recording" : "Record MP4"}
             </Button>
             {canvasRecorder?.supported ? (
-              <span>X-ready · H.264 · 720p</span>
+              <span>
+                X-ready · H.264 · 720p ·{" "}
+                {MAX_RECORDING_DURATION_MS / 1_000}s max
+              </span>
             ) : (
               canvasRecorder && <span>H.264 MP4 recording unavailable</span>
             )}

@@ -7,6 +7,8 @@ const X_VIDEO_WIDTH = 1_280;
 const X_VIDEO_HEIGHT = 720;
 const X_VIDEO_FRAME_RATE = 30;
 const X_VIDEO_BIT_RATE = 8_000_000;
+const X_VIDEO_CHUNK_INTERVAL_MS = 1_000;
+export const MAX_RECORDING_DURATION_MS = 60_000;
 
 function exportTimestamp(now) {
   if (!(now instanceof Date) || Number.isNaN(now.valueOf())) {
@@ -179,29 +181,40 @@ export function createCanvasRecorder(
     now = () => new Date(),
     MediaRecorderClass = globalThis.MediaRecorder,
     onError,
+    onComplete,
     documentObject = globalThis.document,
     recordingCanvasFactory = defaultRecordingCanvasFactory,
     requestAnimationFrameImpl = globalThis.requestAnimationFrame,
     cancelAnimationFrameImpl = globalThis.cancelAnimationFrame,
+    setTimeoutImpl = globalThis.setTimeout,
+    clearTimeoutImpl = globalThis.clearTimeout,
+    maxDurationMs = MAX_RECORDING_DURATION_MS,
     createObjectURL = defaultCreateObjectUrl,
     revokeObjectURL = defaultRevokeObjectUrl,
   } = {},
 ) {
   const mimeType = selectRecordingMimeType(MediaRecorderClass);
+  const recordingDurationMs =
+    Number.isFinite(maxDurationMs) && maxDurationMs > 0
+      ? maxDurationMs
+      : MAX_RECORDING_DURATION_MS;
   const supported =
     typeof MediaRecorderClass === "function" &&
     typeof recordingCanvasFactory === "function" &&
+    typeof setTimeoutImpl === "function" &&
     mimeType !== null;
   let recorder = null;
   let stream = null;
   let recordingCanvas = null;
   let recordingContext = null;
   let mirrorAnimationFrame = null;
+  let durationTimer = null;
   let chunks = [];
   let destroyed = false;
   let stopPromise = null;
   let stopResolve = null;
   let stopReject = null;
+  let stopReason = "manual";
 
   const stopTracks = () => {
     for (const track of stream?.getTracks?.() ?? []) track.stop?.();
@@ -218,8 +231,19 @@ export function createCanvasRecorder(
     mirrorAnimationFrame = null;
   };
 
+  const stopDurationTimer = () => {
+    if (
+      durationTimer !== null &&
+      typeof clearTimeoutImpl === "function"
+    ) {
+      clearTimeoutImpl(durationTimer);
+    }
+    durationTimer = null;
+  };
+
   const reset = () => {
     stopMirror();
+    stopDurationTimer();
     stopTracks();
     recorder = null;
     recordingCanvas = null;
@@ -231,10 +255,50 @@ export function createCanvasRecorder(
     drawLetterboxedFrame(canvas, recordingCanvas, recordingContext);
   };
 
+  const notifyError = (reason) => {
+    const error =
+      reason instanceof Error
+        ? reason
+        : new Error("The browser stopped recording unexpectedly.");
+    if (typeof onError === "function") {
+      try {
+        onError(error);
+      } catch {
+        // A UI notification must not keep media resources alive.
+      }
+    }
+  };
+
+  const failRecording = (reason) => {
+    const error =
+      reason instanceof Error
+        ? reason
+        : new Error("The browser stopped recording unexpectedly.");
+    const activeRecorder = recorder;
+    stopReject?.(error);
+    stopResolve = null;
+    stopReject = null;
+    stopPromise = null;
+    reset();
+    if (activeRecorder?.state === "recording") {
+      try {
+        activeRecorder.stop();
+      } catch {
+        // Resource release and UI notification remain authoritative.
+      }
+    }
+    notifyError(error);
+  };
+
   const mirrorFrame = () => {
     mirrorAnimationFrame = null;
     if (!api.recording) return;
-    drawFrame();
+    try {
+      drawFrame();
+    } catch (error) {
+      failRecording(error);
+      return;
+    }
     if (typeof requestAnimationFrameImpl === "function") {
       mirrorAnimationFrame = requestAnimationFrameImpl(mirrorFrame);
     }
@@ -288,22 +352,7 @@ export function createCanvasRecorder(
           }
         });
         recorder.addEventListener("error", (event) => {
-          const error =
-            event?.error instanceof Error
-              ? event.error
-              : new Error("The browser stopped recording unexpectedly.");
-          stopReject?.(error);
-          stopResolve = null;
-          stopReject = null;
-          stopPromise = null;
-          reset();
-          if (typeof onError === "function") {
-            try {
-              onError(error);
-            } catch {
-              // A UI notification must not keep media resources alive.
-            }
-          }
+          failRecording(event?.error);
         });
         recorder.addEventListener("stop", () => {
           try {
@@ -319,17 +368,27 @@ export function createCanvasRecorder(
               const currentTime = typeof now === "function" ? now() : now;
               const currentLabel =
                 typeof label === "function" ? label() : label;
-              stopResolve?.(
-                downloadBlob(
-                  blob,
-                  observatoryExportFilename(
-                    currentLabel,
-                    "mp4",
-                    currentTime,
-                  ),
-                  { createObjectURL, documentObject, revokeObjectURL },
+              const download = downloadBlob(
+                blob,
+                observatoryExportFilename(
+                  currentLabel,
+                  "mp4",
+                  currentTime,
                 ),
+                { createObjectURL, documentObject, revokeObjectURL },
               );
+              const result = Object.freeze({
+                ...download,
+                reason: stopReason,
+              });
+              stopResolve?.(result);
+              if (typeof onComplete === "function") {
+                try {
+                  onComplete(result);
+                } catch {
+                  // A UI notification must not keep media resources alive.
+                }
+              }
             }
           } catch (error) {
             stopReject?.(error);
@@ -340,16 +399,23 @@ export function createCanvasRecorder(
             reset();
           }
         });
-        recorder.start();
+        recorder.start(X_VIDEO_CHUNK_INTERVAL_MS);
         if (typeof requestAnimationFrameImpl === "function") {
           mirrorAnimationFrame = requestAnimationFrameImpl(mirrorFrame);
         }
+        durationTimer = setTimeoutImpl(() => {
+          durationTimer = null;
+          if (!api.recording) return;
+          void api.stop("duration-limit").catch((error) => {
+            notifyError(error);
+          });
+        }, recordingDurationMs);
       } catch (error) {
         reset();
         throw error;
       }
     },
-    stop() {
+    stop(reason = "manual") {
       if (stopPromise) return stopPromise;
       if (!api.recording) {
         return Promise.reject(
@@ -360,6 +426,8 @@ export function createCanvasRecorder(
         stopResolve = resolve;
         stopReject = reject;
       });
+      stopReason = reason === "duration-limit" ? reason : "manual";
+      stopDurationTimer();
       const pendingStop = stopPromise;
       try {
         recorder.stop();

@@ -5,10 +5,10 @@ const MTP_WIDTH_PATTERN = /\bMTP\s*K(\d+)\b/i;
 
 const KERNEL_FAMILY_PATTERNS = Object.freeze([
   ["attention", /attention|flash_attn|sdpa|softmax|rope|rotary/i],
-  ["projection", /gemm|matmul|mm_|linear|projection|proj_|qmm/i],
+  ["projection", /gemm|matmul|mm_|linear|projection|proj_|qmm|qmv/i],
   ["normalization", /norm|layernorm|rms/i],
   ["routing", /router|routing|topk|expert|moe/i],
-  ["activation", /silu|gelu|relu|activation|gate/i],
+  ["activation", /silu|gelu|relu|sigmoid|activation|gate/i],
   ["embedding-output", /embed|embedding|lm_head|vocab|logit|output/i],
   ["transfer-binding", /copy|blit|buffer|bind|transfer|upload|download/i],
 ]);
@@ -173,6 +173,16 @@ function normalizedGrid(value) {
   );
 }
 
+function hasRecordedGrid(value) {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.slice(0, 3).every(
+      (dimension) => Number.isFinite(dimension) && dimension > 0,
+    )
+  );
+}
+
 function dispatchWork(dispatch) {
   return dimensionProduct(dispatch?.grid);
 }
@@ -196,6 +206,27 @@ function progressFor(dispatch, index, count, launch) {
     return clamp((dispatch.atNs - startNs) / (endNs - startNs));
   }
   return count <= 1 ? 0 : index / (count - 1);
+}
+
+function measuredCommandBufferDuration(commandBuffer) {
+  for (const [durationSource, startKey, endKey] of [
+    ["gpu", "gpuStartNs", "gpuEndNs"],
+    ["encode", "encodeStartNs", "encodeEndNs"],
+  ]) {
+    const startNs = commandBuffer?.[startKey];
+    const endNs = commandBuffer?.[endKey];
+    if (
+      Number.isFinite(startNs) &&
+      Number.isFinite(endNs) &&
+      endNs >= startNs
+    ) {
+      return Object.freeze({
+        durationNs: endNs - startNs,
+        durationSource,
+      });
+    }
+  }
+  return null;
 }
 
 function kernelFamilyCensus(dispatches) {
@@ -260,6 +291,17 @@ function buildFrames(dispatches, launch, speculationWidth) {
   const commandBufferPositions = new Map(
     commandBufferIndices.map((index, position) => [index, position + 1]),
   );
+  const commandBufferTimings = new Map(
+    (launch?.commandBuffers ?? [])
+      .filter((commandBuffer) =>
+        Number.isFinite(commandBuffer?.commandBufferIndex),
+      )
+      .map((commandBuffer) => [
+        commandBuffer.commandBufferIndex,
+        measuredCommandBufferDuration(commandBuffer),
+      ]),
+  );
+  let visualProgress = 0;
   return Object.freeze(
     dispatches.map((dispatch, index) => {
       const commandBufferIndex = Number.isFinite(
@@ -267,14 +309,26 @@ function buildFrames(dispatches, launch, speculationWidth) {
       )
         ? dispatch.commandBufferIndex
         : null;
+      const measuredTiming =
+        commandBufferIndex === null
+          ? null
+          : (commandBufferTimings.get(commandBufferIndex) ?? null);
+      visualProgress = Math.max(
+        visualProgress,
+        progressFor(dispatch, index, dispatches.length, launch),
+      );
       return Object.freeze({
         index,
         seq: Number.isFinite(dispatch?.seq) ? dispatch.seq : null,
         atNs: Number.isFinite(dispatch?.atNs) ? dispatch.atNs : null,
-        elapsedNs:
+        windowPositionNs:
           Number.isFinite(dispatch?.atNs) && Number.isFinite(launch?.startNs)
             ? Math.max(0, dispatch.atNs - launch.startNs)
             : null,
+        placementDetail:
+          stringValue(dispatch?.placementDetail) ??
+          stringValue(dispatch?.placement) ??
+          "ordinal",
         commandBufferIndex,
         commandBuffer: Object.freeze({
           index: commandBufferIndex,
@@ -286,11 +340,14 @@ function buildFrames(dispatches, launch, speculationWidth) {
             commandBufferIndices.length > 0
               ? commandBufferIndices.length
               : null,
+          durationNs: measuredTiming?.durationNs ?? null,
+          durationSource: measuredTiming?.durationSource ?? null,
         }),
         kernel: stringValue(dispatch?.kernel) ?? "unnamed kernel",
         family: classifyKernelFamily(dispatch?.kernel),
         grid: normalizedGrid(dispatch?.grid),
-        progress: progressFor(dispatch, index, dispatches.length, launch),
+        gridAvailable: hasRecordedGrid(dispatch?.grid),
+        progress: visualProgress,
         mathIntensity:
           Math.log1p(dispatchWork(dispatch)) / Math.log1p(maximumWork),
         bindingIntensity: dispatchBinding(dispatch) / maximumBinding,

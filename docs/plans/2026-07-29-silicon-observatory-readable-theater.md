@@ -45,7 +45,8 @@ Node test runner, Vite, Playwright/Chromium browser receipts.
 - Create `test/observatory-theater-labels.test.mjs` — export-visible label copy
   and deterministic formatting.
 - Modify `src/observatory/scene-model.js` — retain normalized dispatch grid,
-  elapsed position, and command-buffer ordinal at construction.
+  window position with placement provenance, measured command-buffer duration,
+  and command-buffer ordinal at construction.
 - Modify `src/observatory/scene-timing.js` — clamp automatic playback at the
   final frame and map scrubber positions safely.
 - Modify `src/observatory/ObservatoryApp.jsx` — progress rail, scrubber, frame
@@ -90,7 +91,10 @@ command-buffer position:
 assert.deepEqual(model.frames[0].grid, [64, 1, 1]);
 assert.equal(model.frames[0].commandBuffer.position, 1);
 assert.equal(model.frames[0].commandBuffer.total, 2);
-assert.equal(model.frames[0].elapsedNs, 20);
+assert.equal(model.frames[0].windowPositionNs, 20);
+assert.equal(model.frames[0].placementDetail, "interpolated-sequence");
+assert.equal(model.frames[0].commandBuffer.durationNs, 80);
+assert.equal(model.frames[0].commandBuffer.durationSource, "gpu");
 ```
 
 Add monotonic playback and scrubber tests:
@@ -147,14 +151,17 @@ references, then install immutable frame fields:
 ```js
 {
   grid: normalizedGrid(dispatch?.grid),
-  elapsedNs:
+  windowPositionNs:
     Number.isFinite(dispatch?.atNs) && Number.isFinite(launch?.startNs)
       ? Math.max(0, dispatch.atNs - launch.startNs)
       : null,
+  placementDetail: dispatch?.placementDetail ?? "ordinal",
   commandBuffer: Object.freeze({
     index: commandBufferIndex,
     position: commandBufferOrdinal ?? null,
     total: commandBufferCount || null,
+    durationNs: measuredTiming?.durationNs ?? null,
+    durationSource: measuredTiming?.durationSource ?? null,
   }),
 }
 ```
@@ -244,7 +251,8 @@ The returned contract is:
     capturedWindowLabel,
     dispatchLabel,
     bufferLabel,
-    elapsedLabel,
+    positionLabel,
+    measuredDurationLabel,
   },
   active: { family, kernel, shapeLabel, mathIntensity },
   memory: { blocks, activeIndices, exactMassLabel, evidence: "derived" },
@@ -387,7 +395,8 @@ Render a `observatory-story-hud` containing:
     <strong>{storyFrame.progress.percent}%</strong>
     <span>Buffer {storyFrame.progress.bufferLabel}</span>
     <span>Dispatch {storyFrame.progress.dispatchLabel}</span>
-    <span>{storyFrame.progress.elapsedLabel}</span>
+    <span>{storyFrame.progress.positionLabel}</span>
+    <span>{storyFrame.progress.measuredDurationLabel}</span>
   </div>
   <input
     aria-label="Captured window position"
@@ -597,7 +606,7 @@ git commit -m "feat: render the Observatory computational theater"
 **Does NOT cover:** New video codecs, server-side rendering, uploading traces or
 media, or changing the existing workbench route.
 
-- [ ] **Step 1: Add final UI contract assertions**
+- [x] **Step 1: Add final UI contract assertions**
 
 Assert that the DOM contains one primary progress region, one active-operation
 heading, one persistent legend, and a collapsed evidence disclosure. Assert
@@ -612,7 +621,7 @@ assert.match(css, /@media \\(prefers-reduced-motion: reduce\\)/);
 assert.doesNotMatch(appSource, /SSD reservoir/);
 ```
 
-- [ ] **Step 2: Update the README reading guide**
+- [x] **Step 2: Update the README reading guide**
 
 Document the stable reading order:
 
@@ -624,7 +633,7 @@ Explain captured-window progress, the cyan/amber/violet legend, representative
 lane aggregation, configured speculation, the hidden SSD, and the fact that
 PNG/MP4 exports include the stage annotations.
 
-- [ ] **Step 3: Run the complete automated gate**
+- [x] **Step 3: Run the complete automated gate**
 
 Run:
 
@@ -639,7 +648,10 @@ git diff --check origin/main...HEAD
 Expected: all tests PASS, build succeeds, Pages artifact verifies, audit reports
 zero high-severity vulnerabilities, and the diff check is clean.
 
-- [ ] **Step 4: Run browser readability receipts**
+Final receipt: 365 Node tests and 24 Vitest tests passed; the production build
+and five-trace Pages artifact passed; `npm audit` reported zero vulnerabilities.
+
+- [x] **Step 4: Run browser readability receipts**
 
 Start the built server:
 
@@ -661,7 +673,12 @@ At 375, 768, 1024, and 1440 CSS pixels, capture the Observatory after the Qwen
 
 Repeat one desktop receipt for Qwen 35B and save screenshots under `/tmp`.
 
-- [ ] **Step 5: Verify annotated exports**
+Final receipt: 375, 768, 1024, and 1440 pixel viewports had no horizontal
+overflow or progress-rail clipping. Reduced motion disabled continuous
+animation while preserving manual stepping. Qwen 35B visibly downgraded source
+evidence.
+
+- [x] **Step 5: Verify annotated exports**
 
 Save a PNG and record an MP4 from the real browser. Confirm the exported frames
 visibly contain:
@@ -673,7 +690,14 @@ visibly contain:
 
 Confirm the MP4 still parses as ISO MP4 with an `avc1` track at 1280×720.
 
-- [ ] **Step 6: Request focused review**
+Final receipt: the current PNG was downloaded and inspected with progress,
+measured duration, operation/grid labels, the evidence legend, and a structured
+source warning visible. The cached Playwright Chromium has no H.264 encoder, so
+the final browser receipt confirmed the fail-closed disabled state; H.264
+selection, 1280×720 composition, chunking, 60-second limit, completion, and
+cleanup remain covered by the recorder tests.
+
+- [x] **Step 6: Request focused review**
 
 Review against the approved spec, with special attention to:
 
@@ -684,7 +708,11 @@ Review against the approved spec, with special attention to:
 
 Fix all blocking findings and rerun affected gates.
 
-- [ ] **Step 7: Commit and push**
+Final receipt: the focused review found no remaining blocking or Important
+issue after the structured evidence export fix. Its final Minor dynamic-accent
+finding was also fixed and regression-tested.
+
+- [x] **Step 7: Commit and push**
 
 ```sh
 git add README.md \

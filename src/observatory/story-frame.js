@@ -37,15 +37,87 @@ function dimensionProduct(value) {
   );
 }
 
-function elapsedLabel(elapsedNs) {
-  if (!Number.isFinite(elapsedNs) || elapsedNs < 0) return "timing unavailable";
-  if (elapsedNs < 1_000) return `${Math.round(elapsedNs)} ns elapsed`;
-  if (elapsedNs < 1_000_000) {
-    const microseconds = elapsedNs / 1_000;
-    return `${Number(microseconds.toFixed(microseconds < 10 ? 1 : 0))} µs elapsed`;
+function nanosecondsLabel(durationNs) {
+  if (durationNs < 1_000) {
+    return `${Math.round(durationNs)} ns`;
   }
-  const milliseconds = elapsedNs / 1_000_000;
-  return `${Number(milliseconds.toFixed(milliseconds < 10 ? 1 : 0))} ms elapsed`;
+  if (durationNs < 1_000_000) {
+    const microseconds = durationNs / 1_000;
+    return `${Number(microseconds.toFixed(microseconds < 10 ? 1 : 0))} µs`;
+  }
+  const milliseconds = durationNs / 1_000_000;
+  return `${Number(milliseconds.toFixed(milliseconds < 10 ? 1 : 0))} ms`;
+}
+
+function positionLabel(windowPositionNs, placementDetail) {
+  if (!Number.isFinite(windowPositionNs) || windowPositionNs < 0) {
+    return "ordinal position";
+  }
+  const value = nanosecondsLabel(windowPositionNs);
+  const placement = String(placementDetail ?? "").includes("interpolated")
+    ? "interpolated position"
+    : "ordered position";
+  return `${value} ${placement}`;
+}
+
+function measuredDurationLabel(commandBuffer) {
+  const durationNs = commandBuffer?.durationNs;
+  const source = commandBuffer?.durationSource;
+  if (
+    !Number.isFinite(durationNs) ||
+    durationNs < 0 ||
+    !["gpu", "encode"].includes(source)
+  ) {
+    return null;
+  }
+  return `MEASURED ${source.toUpperCase()} · ${nanosecondsLabel(durationNs)}`;
+}
+
+function formattedCount(value) {
+  return Math.max(0, Math.floor(value)).toLocaleString("en-US");
+}
+
+function evidenceStatusLabel(model) {
+  const health = model?.evidenceHealth ?? {};
+  const coverage = model?.dispatchCoverage ?? {};
+  const qualifiers = [];
+  if (
+    Number.isFinite(coverage.displayed) &&
+    Number.isFinite(coverage.total) &&
+    coverage.total > coverage.displayed
+  ) {
+    qualifiers.push(
+      `SAMPLED ${formattedCount(coverage.displayed)}/${formattedCount(coverage.total)}`,
+    );
+  }
+  if (Number.isFinite(health.droppedRows) && health.droppedRows > 0) {
+    qualifiers.push(`DROPPED ${formattedCount(health.droppedRows)} ROWS`);
+  } else if (
+    Number.isFinite(health.malformedRows) &&
+    health.malformedRows > 0
+  ) {
+    qualifiers.push(`MALFORMED ${formattedCount(health.malformedRows)} ROWS`);
+  } else if (health.windowCompleteness === "incomplete") {
+    qualifiers.push("WINDOW INCOMPLETE");
+  } else if (Number.isFinite(coverage.unassigned) && coverage.unassigned > 0) {
+    qualifiers.push(
+      `UNASSIGNED ${formattedCount(coverage.unassigned)} DISPATCHES`,
+    );
+  }
+  if (health.sourceCompleteness === "unverifiable") {
+    qualifiers.push("SOURCE UNVERIFIABLE");
+  } else if (health.sourceCompleteness === "incomplete") {
+    qualifiers.push("SOURCE INCOMPLETE");
+  } else if (
+    health.sourceCompleteness === "not declared" ||
+    health.sourceStatus === "unspecified"
+  ) {
+    qualifiers.push("SOURCE UNVERIFIED");
+  }
+  if (qualifiers.length > 0) return qualifiers.slice(0, 2).join(" · ");
+  return health.level === "verified"
+    ? "EVIDENCE VERIFIED"
+    : `EVIDENCE ${String(health.level ?? "pending").toUpperCase()}`;
 }
 
 function numberedItems(count) {
@@ -106,10 +178,8 @@ export function buildStoryFrame(model, requestedFrameIndex = 0) {
   const mathIntensity = clamp(
     Number.isFinite(frame?.mathIntensity) ? frame.mathIntensity : 0,
   );
-  const activeMemoryCount = Math.max(
-    1,
-    Math.round(1 + bindingIntensity * 5),
-  );
+  const activeMemoryCount =
+    bindingIntensity > 0 ? Math.round(1 + bindingIntensity * 5) : 0;
   const activeLaneCount = Math.max(
     1,
     Math.round(lanesCount * (0.35 + mathIntensity * 0.65)),
@@ -118,7 +188,10 @@ export function buildStoryFrame(model, requestedFrameIndex = 0) {
     model?.speculation?.configuredWidth,
   );
   const mass = finitePositive(model?.model?.estimatedWeightGigabytes);
-  const shapeLabel = dimensionsLabel(frame?.grid);
+  const gridAvailable = frame?.gridAvailable === true;
+  const shapeLabel = gridAvailable
+    ? dimensionsLabel(frame?.grid)
+    : "SHAPE UNAVAILABLE";
   const hasFrames = frames.length > 0;
 
   return deepFreeze({
@@ -132,7 +205,11 @@ export function buildStoryFrame(model, requestedFrameIndex = 0) {
         frame?.commandBuffer?.position && frame?.commandBuffer?.total
           ? `${frame.commandBuffer.position} / ${frame.commandBuffer.total}`
           : "—",
-      elapsedLabel: elapsedLabel(frame?.elapsedNs),
+      positionLabel: positionLabel(
+        frame?.windowPositionNs,
+        frame?.placementDetail,
+      ),
+      measuredDurationLabel: measuredDurationLabel(frame?.commandBuffer),
     },
     active: {
       family: frame?.family ?? "awaiting",
@@ -151,14 +228,16 @@ export function buildStoryFrame(model, requestedFrameIndex = 0) {
       evidence: "derived",
     },
     gpu: {
-      lanes: numberedItems(lanesCount),
-      activeIndices: activeIndices(
-        lanesCount,
-        activeLaneCount,
-        frame?.index ?? 0,
-      ),
-      gridLabel: `GRID ${shapeLabel}`,
-      evidence: "measured geometry",
+      lanes: gridAvailable ? numberedItems(lanesCount) : Object.freeze([]),
+      activeIndices: gridAvailable
+        ? activeIndices(
+            lanesCount,
+            activeLaneCount,
+            frame?.index ?? 0,
+          )
+        : Object.freeze([]),
+      gridLabel: gridAvailable ? `GRID ${shapeLabel}` : "GRID UNAVAILABLE",
+      evidence: gridAvailable ? "measured geometry" : "unavailable",
     },
     flow: {
       active: hasFrames && bindingIntensity > 0,
@@ -182,6 +261,7 @@ export function buildStoryFrame(model, requestedFrameIndex = 0) {
       summary:
         model?.evidenceHealth?.summary ??
         "Evidence health is resolved with the trace.",
+      statusLabel: evidenceStatusLabel(model),
     },
   });
 }

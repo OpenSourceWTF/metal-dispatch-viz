@@ -2,6 +2,8 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveAppMode } from "../src/main.jsx";
@@ -179,6 +181,7 @@ describe("Silicon Observatory", () => {
     expect(container.textContent).toMatch(/Captured window/i);
     expect(container.textContent).toMatch(/Dispatch 1 \/ 2/i);
     expect(container.textContent).toMatch(/Buffer 1 \/ 1/i);
+    expect(container.textContent).toMatch(/Measured GPU · 80 ns/i);
     expect(container.textContent).toMatch(/Active math/i);
     expect(container.textContent).toMatch(/Configured speculation/i);
     expect(container.textContent).toMatch(/Binding activity is derived/i);
@@ -198,6 +201,17 @@ describe("Silicon Observatory", () => {
       container.querySelector('details[aria-label="What is measured?"]'),
     ).not.toBeNull();
     expect(
+      container.querySelector('details[aria-label="What is measured?"]')
+        .open,
+    ).toBe(false);
+    expect(container.querySelectorAll(".observatory-progress")).toHaveLength(1);
+    expect(container.querySelectorAll(".active-operation")).toHaveLength(1);
+    expect(container.querySelectorAll(".observatory-legend")).toHaveLength(1);
+    expect(
+      container.querySelector(".evidence-chip-summary")?.textContent,
+    ).toMatch(/verified source · complete trace window/i);
+    expect(container.querySelector(".observatory-zones")).toBeNull();
+    expect(
       container.querySelector('[aria-label="Explain stage regions"]'),
     ).not.toBeNull();
     expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
@@ -207,6 +221,26 @@ describe("Silicon Observatory", () => {
       container.querySelector('[data-testid="scene"]').dataset.storyFamily,
     ).toBe("projection");
     expect(container.querySelector('a[href="?"]')).not.toBeNull();
+  });
+
+  it("ships responsive theater and reduced-motion contracts", async () => {
+    const [appSource, css] = await Promise.all([
+      readFile(
+        resolve(process.cwd(), "src/observatory/ObservatoryApp.jsx"),
+        "utf8",
+      ),
+      readFile(
+        resolve(process.cwd(), "src/observatory/observatory.css"),
+        "utf8",
+      ),
+    ]);
+    expect(css).toMatch(/@media \(min-width: 768px\)/);
+    expect(css).toMatch(/@media \(min-width: 1024px\)/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+    expect(css).not.toMatch(/nth-last-child\(-n \+ 2\)/);
+    expect(css).toMatch(/writing-mode: vertical-rl/);
+    expect(css).toMatch(/\.observatory-evidence\[open\]/);
+    expect(appSource).not.toMatch(/SSD reservoir/);
   });
 
   it("scrubs, steps, and explains the stable theater regions", async () => {
@@ -262,6 +296,31 @@ describe("Silicon Observatory", () => {
     );
   });
 
+  it("stops playback at the terminal dispatch when no gallery transition exists", async () => {
+    vi.useFakeTimers();
+    const sessions = sessionFactory();
+    await act(async () => {
+      root.render(
+        <ObservatoryApp
+          registryLoader={async () => registryResult([QWEN_27])}
+          analysisSessionFactory={sessions.factory}
+          SceneComponent={SceneStub}
+          galleryDurationMs={1_000}
+          reducedMotion={false}
+        />,
+      );
+    });
+    await settle();
+
+    await act(async () => vi.advanceTimersByTime(500));
+    expect(container.querySelector('[data-testid="scene"]').dataset.frame).toBe(
+      "1",
+    );
+    expect(
+      container.querySelector('button[aria-label="Play animation"]'),
+    ).not.toBeNull();
+  });
+
   it("shows loading, empty, and recoverable error states", async () => {
     let resolveRegistry;
     const registryPromise = new Promise((resolve) => {
@@ -311,6 +370,31 @@ describe("Silicon Observatory", () => {
     expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
       "Qwen3.6 27B",
     );
+  });
+
+  it("surfaces scene-model construction failures instead of staying in loading", async () => {
+    const brokenDataset = {};
+    Object.defineProperty(brokenDataset, "launchWindows", {
+      get() {
+        throw new Error("Broken normalized dataset");
+      },
+    });
+    const sessions = sessionFactory({
+      loadImpl: async () => ({ dataset: brokenDataset }),
+    });
+    await act(async () => {
+      root.render(
+        <ObservatoryApp
+          registryLoader={async () => registryResult([QWEN_27])}
+          analysisSessionFactory={sessions.factory}
+          SceneComponent={SceneStub}
+        />,
+      );
+    });
+    await settle();
+
+    expect(container.textContent).toMatch(/Broken normalized dataset/i);
+    expect(container.textContent).toMatch(/Try loading this trace again/i);
   });
 
   it("retries a failed registry without requiring a page reload", async () => {
@@ -369,6 +453,9 @@ describe("Silicon Observatory", () => {
       container.querySelector('[data-evidence-level="warning"]'),
     ).not.toBeNull();
     expect(container.textContent).toMatch(/source completeness unverifiable/i);
+    expect(
+      container.querySelector(".evidence-chip-summary")?.textContent,
+    ).toMatch(/source completeness unverifiable/i);
 
     await act(async () =>
       container.querySelector('button[aria-label="Pause animation"]').click(),
@@ -400,9 +487,11 @@ describe("Silicon Observatory", () => {
       );
     });
     await settle();
-    expect(
-      container.querySelector('button[aria-label="Play animation"]'),
-    ).not.toBeNull();
+    const reducedMotionControl = container.querySelector(
+      'button[aria-label="Animation disabled by reduced motion"]',
+    );
+    expect(reducedMotionControl).not.toBeNull();
+    expect(reducedMotionControl.disabled).toBe(true);
     await act(async () => vi.advanceTimersByTime(2_000));
     expect(container.querySelector('[data-testid="scene"]').dataset.label).toBe(
       "Qwen3.6 27B",
@@ -541,6 +630,7 @@ describe("Silicon Observatory", () => {
       canvas,
       expect.objectContaining({
         label: expect.any(Function),
+        onComplete: expect.any(Function),
         onError: expect.any(Function),
       }),
     );
@@ -577,6 +667,20 @@ describe("Silicon Observatory", () => {
       /Stop recording before leaving the Observatory/i,
     );
 
+    await act(async () =>
+      canvasRecorderFactory.mock.calls.at(-1)[1].onComplete({
+        filename: "bounded.mp4",
+        reason: "duration-limit",
+      }),
+    );
+    expect(
+      container.querySelector('button[aria-label="Record MP4 animation"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toMatch(/60-second recording limit/i);
+
+    await act(async () =>
+      container.querySelector('button[aria-label="Record MP4 animation"]').click(),
+    );
     await act(async () =>
       canvasRecorderFactory.mock.calls
         .at(-1)[1]

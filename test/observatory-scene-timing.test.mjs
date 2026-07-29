@@ -117,6 +117,22 @@ test("the readable theater uses a fixed orthographic camera", async () => {
   );
 });
 
+test("runtime WebGL loss switches to the structured fallback and cleans up", async () => {
+  const source = await readFile(
+    new URL("../src/observatory/ObservatoryScene.jsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /addEventListener\("webglcontextlost", onContextLost\)/);
+  assert.match(
+    source,
+    /onContextLost[\s\S]*?preventDefault\(\)[\s\S]*?setFailure\(/,
+  );
+  assert.match(
+    source,
+    /removeEventListener\(\s*"webglcontextlost",\s*onContextLost/,
+  );
+});
+
 test("Retina rendering stays within X web video dimensions", () => {
   const pixelRatio = observatoryPixelRatio({
     devicePixelRatio: 2,

@@ -1,7 +1,7 @@
 # Silicon Observatory Readable Theater Design
 
 **Status:** Approved
-**Date:** 2026-07-29  
+**Date:** 2026-07-29
 **Branch:** `agent/silicon-observatory`
 
 ## Problem
@@ -132,12 +132,19 @@ A persistent progress rail is the primary HUD:
 - Captured-window percentage
 - Current command buffer and total command buffers when available
 - Current dispatch and total displayed dispatches
-- Measured elapsed command-buffer time when available
+- Measured GPU or encode duration for the active command buffer when matching
+  endpoints are available
 - Play/pause state and playback speed
 
 The progress rail uses the captured window as its denominator. If the source is
 sampled or incomplete, it says `CAPTURED WINDOW` rather than implying complete
 model execution.
+
+Dispatch placement inside that window may be interpolated from recorded
+command-buffer boundaries. Interpolated position is labeled as such and is not
+described as measured elapsed time. The separately labeled command-buffer
+duration is measured only when the trace provides matching GPU or encode
+endpoints.
 
 A persistent three-item legend sits next to the progress rail:
 
