@@ -71,6 +71,17 @@ legends, tutorials, random particles, generic cyberpunk rain, excessive bloom,
 fictional SSD activity, and text that explains what stable form and motion must
 communicate.
 
+## Iteration Test Policy
+
+Until the visual language is explicitly declared ready to lock, automated tests
+cover data truth and process rather than appearance. They protect architecture
+normalization, measured/configured/derived/simulated boundaries, deterministic
+state transitions, construction-time allocation, interaction commands, local
+imports, cleanup, and export behavior. They do not freeze exact silhouettes,
+colors, camera poses, particle placement, bloom, typography coordinates, or
+pixel output. Browser captures are iteration material for direct visual review,
+not snapshot-test baselines.
+
 ## Requirement-to-Evidence Map
 
 | Requirement | Authoritative implementation evidence |
@@ -79,7 +90,7 @@ communicate.
 | Every layer visible and active layer identifiable | Three scene-graph tests count exact layer ribs; browser receipts inspect both candidates |
 | Layer-by-layer activation | `buildStatueFrame()` tests prove deterministic layer/stage traversal; captures show travelling residual ribbon and opened focus layer |
 | Unified memory, CPU dispatch, GPU work | presentation tests prove binding and command-buffer gates; scene tests prove ribbons terminate at active layer |
-| Exact kernel plus recognizable family shape | kernel-glyph descriptor tests retain raw name and produce stable, bounded family geometry |
+| Exact kernel plus recognizable family shape | descriptor tests retain raw name and deterministic measured inputs; browser captures iterate on the family artwork |
 | Parallelism and speculation | representative GPU lanes derive from measured grid/overlap; ghost branches derive from configured MTP width and remain non-measured |
 | Minimal standalone animation | app and CSS contracts forbid persistent HUD/cards/legend/control bar; idle browser capture shows instruments retracted |
 | UI exists in 3D | scene graph contains world-space instrument group and raycast targets; interaction capture proves parallax |
@@ -104,8 +115,8 @@ communicate.
   for the three idle inscriptions and temporary inspection rings.
 - Create `test/observatory-architecture.test.mjs` — nested/top-level checkpoint
   normalization, pattern expansion, validation, and immutability.
-- Create `test/observatory-kernel-glyph.test.mjs` — exact identity, stable hash,
-  bounded grid/threadgroup ratios, port count, and family grammar.
+- Create `test/observatory-kernel-glyph.test.mjs` — exact identity, stable
+  derivation, and bounded measured inputs without freezing family artwork.
 - Create `test/observatory-statue-state.test.mjs` — traversal, hardware gates,
   evidence class, dense/MoE silhouette state, and text budget.
 - Create `test/observatory-statue-geometry.test.mjs` — exact layer/expert scene
@@ -634,20 +645,9 @@ assert.notEqual(
 );
 ```
 
-Assert the grammar map is:
-
-```js
-{
-  attention: "phased-rings",
-  projection: "matrix-slab",
-  normalization: "equalizer-torus",
-  routing: "switch-manifold",
-  activation: "ignition-chamber",
-  "embedding-output": "vocabulary-aperture",
-  "transfer-binding": "conduit-coupler",
-  other: "neutral-capsule",
-}
-```
+For each supported family, assert only that the descriptor preserves the family
+and selects a non-empty deterministic grammar. Do not assert the exact artwork
+name or mesh topology.
 
 - [ ] **Step 2: Run the glyph test and verify red**
 
@@ -913,17 +913,14 @@ assert.equal(dense.root.getObjectByName("world-instruments").visible, false);
 const moe = createStatueAssembly(THREE, moePresentation);
 assert.equal(moe.layers.length, 40);
 assert.equal(moe.experts.length, 256);
-assert.notEqual(
-  dense.bounds.silhouetteRadius,
-  moe.bounds.silhouetteRadius,
-);
 ```
 
 Capture every geometry UUID, call `applyStatueFrame()` for two different
 frames, and assert the UUID list and child count are unchanged. Assert the
-installed kernel pool contains all eight family grammars and only the active
-family is visible. Assert `setInstrumentsVisible()` changes only group
-visibility/material opacity.
+installed kernel pool switches to the active descriptor without allocating new
+geometry. Assert `setInstrumentsVisible()` changes only group
+visibility/material opacity. Do not assert exact radii, vertices, colors,
+camera coordinates, or pixel placement.
 
 - [ ] **Step 2: Run the geometry test and verify red**
 
@@ -1521,7 +1518,8 @@ world-instruments-1440x900.png
 reduced-motion-1024x768.png
 ```
 
-Inspect each image directly. Acceptance requires:
+Inspect each image directly as iteration material. The following are visual
+review prompts, not automated screenshot or pixel-diff assertions:
 
 - the statue occupies roughly 70 percent of the composition;
 - the 64-layer dense statue is tall and countable;
