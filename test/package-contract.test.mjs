@@ -30,6 +30,7 @@ test("package contract locks the React profiler toolchain", async () => {
     react: "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "3.6.0",
+    three: "0.185.1",
     "tw-animate-css": "1.4.0",
   });
   assert.deepEqual(packageJson.devDependencies, {
