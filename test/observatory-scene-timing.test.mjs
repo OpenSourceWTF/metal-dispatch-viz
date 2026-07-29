@@ -104,6 +104,19 @@ test("a responsive resize explicitly invalidates a static WebGL frame", async ()
   );
 });
 
+test("the readable theater uses a fixed orthographic camera", async () => {
+  const source = await readFile(
+    new URL("../src/observatory/ObservatoryScene.jsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /new THREE\.OrthographicCamera\(/);
+  assert.doesNotMatch(source, /new THREE\.PerspectiveCamera\(/);
+  assert.doesNotMatch(
+    source,
+    /camera\.position\.x\s*=\s*Math\.sin/,
+  );
+});
+
 test("Retina rendering stays within X web video dimensions", () => {
   const pixelRatio = observatoryPixelRatio({
     devicePixelRatio: 2,

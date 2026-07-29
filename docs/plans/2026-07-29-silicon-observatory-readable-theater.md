@@ -463,7 +463,7 @@ git commit -m "feat: make Observatory progress and meaning explicit"
 **Does NOT cover:** A free camera, literal chip floorplan, physical core counts,
 or ambient animation unrelated to the active story frame.
 
-- [ ] **Step 1: Write failing label and renderer-contract tests**
+- [x] **Step 1: Write failing label and renderer-contract tests**
 
 Create formatting tests:
 
@@ -489,7 +489,7 @@ assert.match(source, /new THREE\\.OrthographicCamera\\(/);
 assert.doesNotMatch(source, /camera\\.position\\.x\\s*=\\s*Math\\.sin/);
 ```
 
-- [ ] **Step 2: Run focused tests and confirm failure**
+- [x] **Step 2: Run focused tests and confirm failure**
 
 Run:
 
@@ -501,7 +501,7 @@ node --test test/observatory-theater-labels.test.mjs \
 Expected: FAIL because the theater-label module and orthographic scene do not
 exist.
 
-- [ ] **Step 3: Implement export-visible label plates**
+- [x] **Step 3: Implement export-visible label plates**
 
 Create `theater-labels.js` with pure `buildTheaterLabels(storyFrame)` and
 Three.js canvas-texture helpers:
@@ -522,7 +522,7 @@ export function createTextPlate(THREE, {
 Canvas dimensions, font, alignment, padding, and colors are fixed constants so
 labels remain deterministic and readable in 1280×720 exports.
 
-- [ ] **Step 4: Construct the fixed architectural stage once**
+- [x] **Step 4: Construct the fixed architectural stage once**
 
 Replace the current floating scene with:
 
@@ -539,7 +539,7 @@ Use ambient and directional lighting strong enough for inactive geometry to
 remain visible. Remove scene fog, the SSD block, camera drift, model rotation,
 and ambient particle cloud.
 
-- [ ] **Step 5: Update only preinstalled scene objects per frame**
+- [x] **Step 5: Update only preinstalled scene objects per frame**
 
 The render update:
 
@@ -554,13 +554,13 @@ The render update:
 No model validation, environment reads, fallback routing, counters, or geometry
 allocation occurs in the animation loop.
 
-- [ ] **Step 6: Add responsive camera fitting and static invalidation**
+- [x] **Step 6: Add responsive camera fitting and static invalidation**
 
 Resize changes orthographic bounds while preserving the full reading order.
 Paused, hidden, and reduced-motion scenes render only when their frame, size, or
 visibility state changes.
 
-- [ ] **Step 7: Run focused tests and production build**
+- [x] **Step 7: Run focused tests and production build**
 
 Run:
 
@@ -574,7 +574,7 @@ npm run build
 
 Expected: all tests PASS and Vite completes the Observatory chunk.
 
-- [ ] **Step 8: Commit Task 3**
+- [x] **Step 8: Commit Task 3**
 
 ```sh
 git add src/observatory/ObservatoryScene.jsx \
