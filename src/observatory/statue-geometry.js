@@ -1302,6 +1302,112 @@ function createRibbons(THREE) {
   return ribbons;
 }
 
+function createRibbonCouriers(THREE, ribbons) {
+  const group = groupFor(THREE);
+  group.name = "DIRECTIONAL_HARDWARE_TRAFFIC";
+
+  const createLane = ({
+    name,
+    color,
+    capacity,
+    curve,
+    speed,
+    bidirectional = false,
+  }) => {
+    const mesh = new THREE.InstancedMesh(
+      new THREE.OctahedronGeometry(0.075, 0),
+      luminousMaterial(THREE, color, {
+        opacity: 0.88,
+        emissiveIntensity: 1.8,
+        metalness: 0.04,
+        roughness: 0.06,
+        blending: THREE.AdditiveBlending,
+      }),
+      capacity,
+    );
+    mesh.name = name;
+    mesh.count = 0;
+    mesh.material.depthTest = false;
+    mesh.renderOrder = 10;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.userData.curve = curve;
+    mesh.userData.speed = speed;
+    mesh.userData.bidirectional = bidirectional;
+    mesh.userData.transform = new THREE.Object3D();
+    mesh.userData.direction = new THREE.Vector3();
+    mesh.userData.axis = new THREE.Vector3(0, 1, 0);
+    for (let index = 0; index < capacity; index += 1) {
+      mesh.userData.transform.position.set(0, 0, 0);
+      mesh.userData.transform.scale.setScalar(0.001);
+      mesh.userData.transform.updateMatrix();
+      mesh.setMatrixAt(index, mesh.userData.transform.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    group.add(mesh);
+    return mesh;
+  };
+
+  return {
+    group,
+    memory: createLane({
+      name: "UNIFIED_MEMORY_READ_WRITE_TRAFFIC",
+      color: PALETTE.cyan,
+      capacity: 2,
+      curve: ribbons[0].curve,
+      speed: 0.27,
+      bidirectional: true,
+    }),
+    cpu: createLane({
+      name: "CPU_DISPATCH_TRAFFIC",
+      color: PALETTE.white,
+      capacity: 1,
+      curve: ribbons[1].curve,
+      speed: 0.42,
+    }),
+    gpu: createLane({
+      name: "PARALLEL_GPU_WORK_TRAFFIC",
+      color: PALETTE.amber,
+      capacity: 4,
+      curve: ribbons[2].curve,
+      speed: 0.36,
+    }),
+  };
+}
+
+function animateRibbonCouriers(statue, time, reducedMotion) {
+  const animateLane = (mesh, restProgress) => {
+    if (mesh.count === 0) return;
+    const curve = mesh.userData.curve;
+    const transform = mesh.userData.transform;
+    const direction = mesh.userData.direction;
+    const axis = mesh.userData.axis;
+    const baseProgress = reducedMotion
+      ? restProgress
+      : (time * mesh.userData.speed) % 1;
+    for (let index = 0; index < mesh.count; index += 1) {
+      const offset = index / mesh.count;
+      const reverse = mesh.userData.bidirectional && index % 2 === 1;
+      const forwardProgress = (baseProgress + offset) % 1;
+      const progress = reverse ? 1 - forwardProgress : forwardProgress;
+      curve.getPoint(progress, transform.position);
+      curve.getTangent(progress, direction);
+      if (reverse) direction.multiplyScalar(-1);
+      transform.quaternion.setFromUnitVectors(axis, direction.normalize());
+      const pulse = reducedMotion
+        ? 1
+        : 0.88 + Math.sin(time * 5.2 + index * 1.7) * 0.12;
+      transform.scale.set(0.72 * pulse, 1.8 * pulse, 0.72 * pulse);
+      transform.updateMatrix();
+      mesh.setMatrixAt(index, transform.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+
+  animateLane(statue.parts.memoryCouriers, 0.35);
+  animateLane(statue.parts.cpuCouriers, 0.58);
+  animateLane(statue.parts.gpuCouriers, 0.42);
+}
+
 function createSpeculationBranches(THREE) {
   const group = groupFor(THREE);
   group.name = "CONFIGURED_SPECULATION";
@@ -2209,6 +2315,23 @@ export function applyStatuePresentation(statue, presentation) {
           : presentation.hardware.gpu.active;
     material.opacity = active ? 0.42 : 0.045;
   });
+  statue.parts.memoryCouriers.count =
+    presentation.hardware.memory.active ? 2 : 0;
+  statue.parts.cpuCouriers.count =
+    presentation.hardware.cpu.dispatchPulse ? 1 : 0;
+  statue.parts.gpuCouriers.count = presentation.hardware.gpu.active
+    ? Math.min(
+        4,
+        Math.max(
+          1,
+          Math.ceil(presentation.hardware.gpu.laneCount / 4),
+        ),
+      )
+    : 0;
+  statue.parts.ribbonCouriers.visible =
+    statue.parts.memoryCouriers.count > 0 ||
+    statue.parts.cpuCouriers.count > 0 ||
+    statue.parts.gpuCouriers.count > 0;
   statue.parts.particles.visible = presentation.hardware.gpu.active;
   statue.parts.particles.material.opacity =
     0.12 + presentation.hardware.gpu.laneCount / 80;
@@ -2259,6 +2382,7 @@ export function animateStatueGeometry(
   statue.parts.kernel.rotation.y = time * 0.08;
   animateThoughtCycle(statue, time, reducedMotion, deltaSeconds);
   animateTerminalFlow(statue, time, reducedMotion, deltaSeconds);
+  animateRibbonCouriers(statue, time, reducedMotion);
   const activeCurve = statue.parts.activationFlow.userData.activeCurve;
   if (activeCurve && statue.parts.activationCourier.visible) {
     activeCurve.getPoint(
@@ -2338,6 +2462,7 @@ export function createStatueGeometry(THREE, presentation) {
   const hardware = createHardwareOrbitals(THREE);
   const glyph = createKernelGlyphs(THREE);
   const ribbons = createRibbons(THREE);
+  const ribbonCouriers = createRibbonCouriers(THREE, ribbons);
   const speculation = createSpeculationBranches(THREE);
   const particles = createParticleField(THREE);
   const activationFlow = createActivationFlow(
@@ -2355,6 +2480,7 @@ export function createStatueGeometry(THREE, presentation) {
     hardware.cpu,
     hardware.gpu,
     glyph.kernel,
+    ribbonCouriers.group,
     speculation.group,
     activationFlow.group,
     thoughtCycle.group,
@@ -2417,6 +2543,10 @@ export function createStatueGeometry(THREE, presentation) {
       kernelCage: glyph.cage,
       glyphs: glyph.glyphs,
       ribbons,
+      ribbonCouriers: ribbonCouriers.group,
+      memoryCouriers: ribbonCouriers.memory,
+      cpuCouriers: ribbonCouriers.cpu,
+      gpuCouriers: ribbonCouriers.gpu,
       speculation: speculation.group,
       speculationBranches: speculation.branches,
       activationFlow: activationFlow.group,

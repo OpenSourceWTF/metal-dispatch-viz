@@ -56,6 +56,9 @@ function presentation(architectureShape, {
   family = "attention",
   frameCount = 1,
   frameIndex = 0,
+  gridAvailable = true,
+  bindingIntensity = 0.8,
+  commandBufferChanged = true,
 } = {}) {
   return buildStatueFrame(
     {
@@ -69,14 +72,14 @@ function presentation(architectureShape, {
           dispatchMode: "threads",
           grid: [64, 8, 1],
           threadgroup: [32, 2, 1],
-          gridAvailable: true,
-          threadgroupAvailable: true,
-          bufferBinds: 4,
-          setBytesCalls: 2,
-          setBytesTotalBytes: 16,
-          bindingIntensity: 0.8,
+          gridAvailable,
+          threadgroupAvailable: gridAvailable,
+          bufferBinds: bindingIntensity > 0 ? 4 : 0,
+          setBytesCalls: bindingIntensity > 0 ? 2 : 0,
+          setBytesTotalBytes: bindingIntensity > 0 ? 16 : 0,
+          bindingIntensity,
           mathIntensity: 0.9,
-          commandBufferChanged: true,
+          commandBufferChanged,
         })),
       model: {
         estimatedWeightGigabytes:
@@ -219,6 +222,50 @@ test("frame updates reuse installed geometry and expose hardware activity", () =
   assert.equal(statue.parts.gpu.userData.active, true);
   assert.equal(statue.parts.cpu.userData.dispatchPulse, true);
   assert.equal(statue.parts.kernel.userData.exactName, "another_exact_kernel");
+  assert.equal(
+    statue.parts.memoryCouriers.count,
+    2,
+    "unified memory must show simultaneous reads and writes",
+  );
+  assert.equal(
+    statue.parts.cpuCouriers.count,
+    1,
+    "a CPU dispatch must travel toward the active layer",
+  );
+  assert.equal(
+    statue.parts.gpuCouriers.count,
+    Math.min(
+      4,
+      Math.max(1, Math.ceil(next.hardware.gpu.laneCount / 4)),
+    ),
+    "parallel GPU work must be derived from the active lane count",
+  );
+
+  animateStatueGeometry(statue, 0);
+  const start = new THREE.Matrix4();
+  statue.parts.memoryCouriers.getMatrixAt(0, start);
+  const startPosition = new THREE.Vector3().setFromMatrixPosition(start);
+  animateStatueGeometry(statue, 0.5);
+  const later = new THREE.Matrix4();
+  statue.parts.memoryCouriers.getMatrixAt(0, later);
+  const laterPosition = new THREE.Vector3().setFromMatrixPosition(later);
+  assert.notDeepEqual(
+    laterPosition.toArray(),
+    startPosition.toArray(),
+    "memory traffic must visibly travel along its installed ribbon",
+  );
+
+  applyStatuePresentation(
+    statue,
+    presentation(shape, {
+      gridAvailable: false,
+      bindingIntensity: 0,
+      commandBufferChanged: false,
+    }),
+  );
+  assert.equal(statue.parts.memoryCouriers.count, 0);
+  assert.equal(statue.parts.cpuCouriers.count, 0);
+  assert.equal(statue.parts.gpuCouriers.count, 0);
 
   disposeStatueGeometry(statue);
 });
