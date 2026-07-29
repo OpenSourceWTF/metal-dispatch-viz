@@ -1,3 +1,5 @@
+import { normalizeArchitecture } from "./architecture.js";
+
 const PARAMETER_COUNT_PATTERN =
   /(?:^|[^0-9])(\d+(?:\.\d+)?)\s*b(?:[^a-z]|$)/i;
 const QUANTIZATION_PATTERN = /(?:^|[^a-z0-9])o?q(\d+)(?:[^0-9]|$)/i;
@@ -25,6 +27,10 @@ function clamp(value, minimum = 0, maximum = 1) {
 
 function positiveFinite(value) {
   return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function nonNegativeFinite(value) {
+  return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 function stableTraceIdentity(trace) {
@@ -345,8 +351,24 @@ function buildFrames(dispatches, launch, speculationWidth) {
         }),
         kernel: stringValue(dispatch?.kernel) ?? "unnamed kernel",
         family: classifyKernelFamily(dispatch?.kernel),
+        dispatchMode:
+          dispatch?.dispatch === "threads" ||
+          dispatch?.dispatch === "threadgroups"
+            ? dispatch.dispatch
+            : null,
         grid: normalizedGrid(dispatch?.grid),
+        threadgroup: normalizedGrid(dispatch?.threadgroup),
         gridAvailable: hasRecordedGrid(dispatch?.grid),
+        threadgroupAvailable: hasRecordedGrid(dispatch?.threadgroup),
+        bufferBinds: nonNegativeFinite(dispatch?.bufferBinds),
+        setBytesCalls: nonNegativeFinite(dispatch?.setBytesCalls),
+        setBytesTotalBytes: nonNegativeFinite(
+          dispatch?.setBytesTotalBytes,
+        ),
+        commandBufferChanged:
+          index === 0 ||
+          dispatches[index - 1]?.commandBufferIndex !==
+            commandBufferIndex,
         progress: visualProgress,
         mathIntensity:
           Math.log1p(dispatchWork(dispatch)) / Math.log1p(maximumWork),
@@ -507,6 +529,9 @@ export function buildSceneModel({ trace = {}, dataset = {} } = {}) {
   const geometrySource =
     parameterBillions === null ? "trace topology" : "manifest metadata";
   const coverage = dispatchCoverage(dataset, launch);
+  const architecture = normalizeArchitecture(trace?.architecture, {
+    required: false,
+  });
 
   return Object.freeze({
     id: stableTraceIdentity(trace),
@@ -519,6 +544,7 @@ export function buildSceneModel({ trace = {}, dataset = {} } = {}) {
       stringValue(trace?.source_evidence_status) ??
       stringValue(trace?.evidence) ??
       "unspecified",
+    architecture,
     model: Object.freeze({
       parameterBillions,
       quantizationBits: bits,

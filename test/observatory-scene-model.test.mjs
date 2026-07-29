@@ -15,6 +15,7 @@ function qwenDataset() {
       record: "op",
       seq: 0,
       command_buffer_index: 0,
+      dispatch: "threads",
       kernel_name: "steel_gemm_fused_q4",
       grid: [64, 8, 1],
       threadgroup: [32, 1, 1],
@@ -26,6 +27,7 @@ function qwenDataset() {
       record: "op",
       seq: 1,
       command_buffer_index: 0,
+      dispatch: "threads",
       kernel_name: "rms_norm",
       grid: [32, 1, 1],
       threadgroup: [32, 1, 1],
@@ -61,6 +63,32 @@ function qwenDataset() {
       dropped_rows: 0,
     },
   ]);
+}
+
+function qwenDenseArchitecture() {
+  return {
+    source: "checkpoint-config",
+    model_type: "qwen3_5_text",
+    num_hidden_layers: 64,
+    hidden_size: 5120,
+    vocab_size: 248320,
+    layer_type_pattern: [
+      "linear_attention",
+      "linear_attention",
+      "linear_attention",
+      "full_attention",
+    ],
+    num_attention_heads: 24,
+    num_key_value_heads: 4,
+    head_dim: 256,
+    linear_num_key_heads: 16,
+    linear_num_value_heads: 48,
+    linear_key_head_dim: 128,
+    linear_value_head_dim: 128,
+    intermediate_size: 17408,
+    mtp_num_hidden_layers: 1,
+    mtp_use_dedicated_embeddings: false,
+  };
 }
 
 test("gallery discovery is metadata-driven and stable without fixed filenames or counts", () => {
@@ -122,10 +150,13 @@ test("scene geometry preserves measured order and labels every inference boundar
       mode: "MTP K3",
       quantization: "affine Q4 group 64 target with native MTP head",
       source_evidence_status: "verified-complete",
+      architecture: qwenDenseArchitecture(),
     },
     dataset: qwenDataset(),
   });
 
+  assert.equal(model.architecture.numHiddenLayers, 64);
+  assert.equal(model.architecture.hiddenSize, 5120);
   assert.equal(model.model.parameterBillions, 27);
   assert.equal(model.model.quantizationBits, 4);
   assert.equal(model.model.estimatedWeightGigabytes, 13.5);
@@ -139,7 +170,15 @@ test("scene geometry preserves measured order and labels every inference boundar
   assert.equal(model.parallelism.evidence, "measured command-buffer overlap");
 
   assert.equal(model.frames.length, 3);
+  assert.equal(model.frames[0].dispatchMode, "threads");
   assert.deepEqual(model.frames[0].grid, [64, 8, 1]);
+  assert.deepEqual(model.frames[0].threadgroup, [32, 1, 1]);
+  assert.equal(model.frames[0].threadgroupAvailable, true);
+  assert.equal(model.frames[0].bufferBinds, 4);
+  assert.equal(model.frames[0].setBytesCalls, 2);
+  assert.equal(model.frames[0].setBytesTotalBytes, 128);
+  assert.equal(model.frames[0].commandBufferChanged, true);
+  assert.equal(model.frames[1].commandBufferChanged, false);
   assert.deepEqual(model.frames[0].commandBuffer, {
     index: 0,
     position: 1,
@@ -197,6 +236,7 @@ test("missing architecture metadata uses topology without inventing model mass",
   assert.equal(model.model.quantizationBits, null);
   assert.equal(model.model.estimatedWeightGigabytes, null);
   assert.equal(model.model.geometrySource, "trace topology");
+  assert.equal(model.architecture, null);
   assert.equal(model.evidence.memory, "architecture metadata unavailable");
   assert.equal(model.speculation.configuredWidth, null);
   assert.equal(model.speculation.acceptanceMeasured, false);

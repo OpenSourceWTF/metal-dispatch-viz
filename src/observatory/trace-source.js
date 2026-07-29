@@ -1,7 +1,10 @@
 import { loadTraceRegistry, traceSourceUrl } from "../../public/app.js";
+import { normalizeArchitecture } from "./architecture.js";
 import { discoverObservatoryGallery } from "./scene-model.js";
 
 const LOCAL_TRACE_EXTENSION = /\.(?:jsonl|ndjson)$/i;
+const LOCAL_CONFIG_EXTENSION = /\.json$/i;
+const MAXIMUM_LOCAL_CONFIG_BYTES = 2 * 1024 * 1024;
 const NOOP = () => {};
 
 function defaultCreateObjectUrl(file) {
@@ -87,4 +90,36 @@ export function createLocalTraceSource(
     url,
     release,
   });
+}
+
+export async function readLocalArchitectureConfig(
+  file,
+  { maximumBytes = MAXIMUM_LOCAL_CONFIG_BYTES } = {},
+) {
+  if (
+    file === null ||
+    typeof file !== "object" ||
+    typeof file.name !== "string" ||
+    file.name.trim() === "" ||
+    typeof file.text !== "function"
+  ) {
+    throw new TypeError("Select a checkpoint config.json file.");
+  }
+  if (!LOCAL_CONFIG_EXTENSION.test(file.name.trim())) {
+    throw new TypeError("Checkpoint configuration must be a .json file.");
+  }
+  const safeMaximum = Number.isSafeInteger(maximumBytes) && maximumBytes > 0
+    ? Math.min(maximumBytes, MAXIMUM_LOCAL_CONFIG_BYTES)
+    : MAXIMUM_LOCAL_CONFIG_BYTES;
+  if (Number.isFinite(file.size) && file.size > safeMaximum) {
+    throw new RangeError("Checkpoint configuration must be 2 MiB or smaller.");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch {
+    throw new TypeError("Checkpoint configuration is not valid JSON.");
+  }
+  return normalizeArchitecture(parsed);
 }

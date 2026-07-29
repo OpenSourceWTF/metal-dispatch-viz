@@ -145,6 +145,12 @@ test("hosted build emits static UI, registry, and source traces", async (t) => {
       traces: {
         "nested/capture one.jsonl": {
           label: "Capture one",
+          architecture: {
+            source: "checkpoint-config",
+            model_type: "test_dense",
+            num_hidden_layers: 4,
+            hidden_size: 128,
+          },
         },
       },
     }),
@@ -195,6 +201,12 @@ test("hosted build emits static UI, registry, and source traces", async (t) => {
   assert.equal(registry.traces.length, 1);
   assert.equal(registry.traces[0].label, "Capture one");
   assert.equal(registry.traces[0].relativePath, "nested/capture one.jsonl");
+  assert.deepEqual(registry.traces[0].architecture, {
+    source: "checkpoint-config",
+    model_type: "test_dense",
+    num_hidden_layers: 4,
+    hidden_size: 128,
+  });
   assert.equal("sourceUrl" in registry.traces[0], false);
   for (const unpublished of [
     path.join(

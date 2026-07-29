@@ -81,6 +81,25 @@ test("bundled showcase is an exact five-trace manifest-to-folder bijection", asy
     assert.equal(typeof metadata.source_complete, metadata.source_complete === null ? "object" : "boolean");
     assert.equal(typeof metadata.valid_evidence, "boolean");
   }
+
+  const qwen27 =
+    manifest.traces["qwen36-27b-mtp-k3.jsonl"].architecture;
+  assert.equal(qwen27.num_hidden_layers, 64);
+  assert.equal(qwen27.hidden_size, 5120);
+  assert.equal(qwen27.linear_num_value_heads, 48);
+  assert.equal(qwen27.intermediate_size, 17408);
+  assert.equal(qwen27.mtp_num_hidden_layers, 1);
+
+  const qwen35 =
+    manifest.traces["qwen36-35b-a3b-k1.jsonl"].architecture;
+  assert.equal(qwen35.num_hidden_layers, 40);
+  assert.equal(qwen35.hidden_size, 2048);
+  assert.equal(qwen35.linear_num_value_heads, 32);
+  assert.equal(qwen35.num_experts, 256);
+  assert.equal(qwen35.num_experts_per_tok, 8);
+  assert.equal(qwen35.moe_intermediate_size, 512);
+  assert.equal(qwen35.shared_expert_intermediate_size, 512);
+  assert.equal(qwen35.mtp_num_hidden_layers, 1);
 });
 
 test("future showcase paths must use the model-contributor-date contract", async () => {

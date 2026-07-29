@@ -5,6 +5,7 @@ import {
   createGalleryTraceSource,
   createLocalTraceSource,
   loadObservatoryRegistry,
+  readLocalArchitectureConfig,
 } from "../src/observatory/trace-source.js";
 
 test("registry loading returns a metadata-discovered Qwen gallery", async () => {
@@ -131,4 +132,94 @@ test("local trace sources reject unsupported files before allocating a URL", () 
     /jsonl.*ndjson/i,
   );
   assert.equal(created, false);
+});
+
+test("local checkpoint config is normalized entirely from the selected file", async () => {
+  let networkRequests = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    networkRequests += 1;
+    throw new Error("Local config must not use the network");
+  };
+  try {
+    const source = {
+      text_config: {
+        model_type: "qwen3_5_text",
+        num_hidden_layers: 4,
+        hidden_size: 128,
+        vocab_size: 1024,
+        layer_types: [
+          "linear_attention",
+          "linear_attention",
+          "linear_attention",
+          "full_attention",
+        ],
+        num_attention_heads: 4,
+        num_key_value_heads: 2,
+        head_dim: 32,
+        linear_num_key_heads: 2,
+        linear_num_value_heads: 4,
+        linear_key_head_dim: 16,
+        linear_value_head_dim: 16,
+        intermediate_size: 384,
+        mtp_num_hidden_layers: 1,
+        mtp_use_dedicated_embeddings: false,
+      },
+    };
+    const serialized = JSON.stringify(source);
+    const architecture = await readLocalArchitectureConfig({
+      name: "config.json",
+      size: serialized.length,
+      text: async () => serialized,
+    });
+
+    assert.equal(architecture.numHiddenLayers, 4);
+    assert.equal(architecture.hiddenSize, 128);
+    assert.equal(architecture.feedForward.kind, "dense");
+    assert.equal(Object.isFrozen(architecture), true);
+    assert.equal(networkRequests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("local checkpoint config rejects unsafe files before scene installation", async () => {
+  await assert.rejects(
+    readLocalArchitectureConfig({
+      name: "config.txt",
+      size: 2,
+      text: async () => "{}",
+    }),
+    /\.json file/i,
+  );
+  await assert.rejects(
+    readLocalArchitectureConfig({
+      name: "config.json",
+      size: 9,
+      text: async () => "{not json",
+    }),
+    /not valid JSON/i,
+  );
+  await assert.rejects(
+    readLocalArchitectureConfig({
+      name: "config.json",
+      size: 2,
+      text: async () => "{}",
+    }),
+    /architecture configuration is required/i,
+  );
+
+  let readOversized = false;
+  await assert.rejects(
+    readLocalArchitectureConfig({
+      name: "config.json",
+      size: 2 * 1024 * 1024 + 1,
+      text: async () => {
+        readOversized = true;
+        return "{}";
+      },
+    }),
+    /2 MiB or smaller/i,
+  );
+  assert.equal(readOversized, false);
 });
